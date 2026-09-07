@@ -1,0 +1,6 @@
+{
+  "name": "Thumbi - Auth & KYC Microservice",
+  "description": "Plataforma de carpooling Thumbi en Go con Clean Architecture. Módulo 1 (Auth & KYC), Módulo 2 (Core Match & PostGIS), Módulo 3 (Reservas & Escrow), Módulo 4 (Liquidación, Reputación & Disputas) y Módulo 5 (Observabilidad Liveness/Readiness, Docker Multi-stage con PostGIS y CI/CD en GitHub Actions).",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
