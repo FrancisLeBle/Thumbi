@@ -21,8 +21,10 @@ import {
   Server,
   GitBranch,
   Cpu,
-  Check
+  Check,
+  MessageCircle
 } from 'lucide-react';
+import { WhatsAppTester } from './components/WhatsAppTester';
 
 interface SimulatedUser {
   id: string;
@@ -53,7 +55,7 @@ interface SimulatedVehicle {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'simulator' | 'architecture' | 'api-docs' | 'deployment'>('simulator');
+  const [activeTab, setActiveTab] = useState<'simulator' | 'whatsapp' | 'architecture' | 'api-docs' | 'deployment'>('simulator');
   const [session, setSession] = useState<SimulatedSession | null>(null);
   const [user, setUser] = useState<SimulatedUser | null>(null);
   const [kycAttempts, setKycAttempts] = useState(0);
@@ -313,6 +315,13 @@ export default function App() {
             className={`px-4 py-1.5 rounded-md font-medium transition ${activeTab === 'simulator' ? 'bg-emerald-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
           >
             Simulador de Casos de Uso
+          </button>
+          <button
+            onClick={() => setActiveTab('whatsapp')}
+            className={`px-4 py-1.5 rounded-md font-medium transition flex items-center space-x-1.5 ${activeTab === 'whatsapp' ? 'bg-emerald-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+          >
+            <MessageCircle className="w-4 h-4" />
+            <span>WhatsApp Deeplink</span>
           </button>
           <button
             onClick={() => setActiveTab('architecture')}
@@ -614,6 +623,9 @@ export default function App() {
           </div>
         )}
 
+        {/* Tab: WhatsApp Deeplink Generator & Tester */}
+        {activeTab === 'whatsapp' && <WhatsAppTester />}
+
         {/* Tab: Clean Architecture */}
         {activeTab === 'architecture' && (
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-6">
@@ -734,6 +746,16 @@ export default function App() {
                   <span className="text-xs text-slate-400">• RF-10, RF-11</span>
                 </div>
                 <p className="text-xs text-slate-300">Exige KYC aprobado. Registra el automóvil en estado <code>PENDING_VERIFICATION</code> para revisión asíncrona.</p>
+              </div>
+
+              {/* Endpoint: WhatsApp Deeplink para Pasajeros */}
+              <div className="bg-slate-950 p-4 rounded-lg border border-slate-800 space-y-2">
+                <div className="flex items-center space-x-3">
+                  <span className="px-2.5 py-0.5 rounded text-xs font-bold bg-emerald-500/20 text-emerald-400">GET</span>
+                  <code className="text-sm text-white font-mono">/api/v1/bookings/:id/contact-link</code>
+                  <span className="text-xs text-slate-400">• Deeplink WhatsApp (wa.me) Pasajero-Conductor</span>
+                </div>
+                <p className="text-xs text-slate-300">Genera enlace directo seguro wa.me con número normalizado y mensaje predeterminado codificado para coordinar el viaje.</p>
               </div>
 
               {/* Módulo 5: Endpoints de Salud y Observabilidad */}

@@ -197,12 +197,19 @@ type BookingDTO struct {
 	TripSummary        *BookingTripSummary  `json:"trip_summary,omitempty"`
 }
 
+// ContactLinkDTO representa el Deeplink de WhatsApp generado y el teléfono del conductor
+type ContactLinkDTO struct {
+	WhatsAppURL string `json:"whatsapp_url"`
+	DriverPhone string `json:"driver_phone"`
+}
+
 // BookingService define los casos de uso para gestión de reservas, pagos en Escrow y cancelaciones
 type BookingService interface {
 	CreateBooking(ctx context.Context, input CreateBookingInput) (*BookingDTO, error)
 	ConfirmBookingPayment(ctx context.Context, input ConfirmBookingPaymentInput) (*BookingDTO, error)
 	CancelBooking(ctx context.Context, input CancelBookingInput) (*domain.RefundTransaction, error)
 	GetBookingByID(ctx context.Context, bookingID, requestingUserID string) (*BookingDTO, error)
+	GetContactLink(ctx context.Context, bookingID, requestingUserID string) (*ContactLinkDTO, error)
 	ListPassengerBookings(ctx context.Context, passengerID string, limit, offset int) ([]*BookingDTO, error)
 	ListTripBookings(ctx context.Context, tripID, driverID string) ([]*BookingDTO, error)
 	ProcessExpiredBookings(ctx context.Context) (int, error)

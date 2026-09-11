@@ -378,3 +378,107 @@ func TestBookingService_CancelBooking(t *testing.T) {
 		bookingRepo.AssertExpectations(t)
 	})
 }
+
+func TestBookingService_GetContactLink(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("genera exitosamente el link de WhatsApp con el conductor y datos del viaje", func(t *testing.T) {
+		tripRepo := new(MockTripRepository)
+		bookingRepo := new(MockBookingRepository)
+		escrowRepo := new(MockEscrowRepository)
+		userRepo := new(MockUserRepository)
+		vehicleRepo := new(MockVehicleRepository)
+		gateway := new(MockPaymentGateway)
+		notifier := new(MockNotifier)
+
+		bookingID := "booking-99"
+		passengerID := "passenger-1"
+		driverID := "driver-1"
+
+		booking, _ := domain.NewBooking(domain.BookingParams{
+			ID:          bookingID,
+			TripID:      "trip-100",
+			PassengerID: passengerID,
+			DriverID:    driverID,
+			SeatsBooked: 2,
+			UnitPrice:   1500.0,
+		})
+
+		trip := createTestTrip(driverID, 2, 24)
+
+		driverUser := &domain.User{
+			ID:        driverID,
+			FirstName: "Carlos",
+			LastName:  "Gómez",
+			Phone:     "+54 9 11 9876-5432",
+		}
+
+		passengerUser := &domain.User{
+			ID:        passengerID,
+			FirstName: "María",
+			LastName:  "López",
+		}
+
+		bookingRepo.On("FindByID", ctx, bookingID).Return(booking, nil)
+		tripRepo.On("FindByID", ctx, "trip-100").Return(trip, nil)
+		userRepo.On("GetByID", ctx, driverID).Return(driverUser, nil)
+		userRepo.On("GetByID", ctx, passengerID).Return(passengerUser, nil)
+
+		service := services.NewBookingService(bookingRepo, escrowRepo, tripRepo, userRepo, vehicleRepo, gateway, notifier)
+
+		linkDTO, err := service.GetContactLink(ctx, bookingID, passengerID)
+		require.NoError(t, err)
+		require.NotNil(t, linkDTO)
+
+		assert.Equal(t, "+54 9 11 9876-5432", linkDTO.DriverPhone)
+		assert.Contains(t, linkDTO.WhatsAppURL, "https://wa.me/5491198765432?text=")
+		assert.Contains(t, linkDTO.WhatsAppURL, "Reserva")
+		assert.Contains(t, linkDTO.WhatsAppURL, "booking-99")
+	})
+
+	t.Run("rechaza con ErrUnauthorized si el solicitante no es el pasajero titular", func(t *testing.T) {
+		tripRepo := new(MockTripRepository)
+		bookingRepo := new(MockBookingRepository)
+		escrowRepo := new(MockEscrowRepository)
+		userRepo := new(MockUserRepository)
+		vehicleRepo := new(MockVehicleRepository)
+		gateway := new(MockPaymentGateway)
+		notifier := new(MockNotifier)
+
+		booking, _ := domain.NewBooking(domain.BookingParams{
+			ID:          "booking-99",
+			TripID:      "trip-100",
+			PassengerID: "passenger-original",
+			DriverID:    "driver-1",
+			SeatsBooked: 1,
+			UnitPrice:   1500.0,
+		})
+
+		bookingRepo.On("FindByID", ctx, "booking-99").Return(booking, nil)
+
+		service := services.NewBookingService(bookingRepo, escrowRepo, tripRepo, userRepo, vehicleRepo, gateway, notifier)
+
+		linkDTO, err := service.GetContactLink(ctx, "booking-99", "intruder-user")
+		assert.ErrorIs(t, err, domain.ErrUnauthorized)
+		assert.Nil(t, linkDTO)
+	})
+
+	t.Run("falla con ErrBookingNotFound si la reserva no existe", func(t *testing.T) {
+		tripRepo := new(MockTripRepository)
+		bookingRepo := new(MockBookingRepository)
+		escrowRepo := new(MockEscrowRepository)
+		userRepo := new(MockUserRepository)
+		vehicleRepo := new(MockVehicleRepository)
+		gateway := new(MockPaymentGateway)
+		notifier := new(MockNotifier)
+
+		bookingRepo.On("FindByID", ctx, "non-existent").Return(nil, nil)
+
+		service := services.NewBookingService(bookingRepo, escrowRepo, tripRepo, userRepo, vehicleRepo, gateway, notifier)
+
+		linkDTO, err := service.GetContactLink(ctx, "non-existent", "passenger-1")
+		assert.ErrorIs(t, err, domain.ErrBookingNotFound)
+		assert.Nil(t, linkDTO)
+	})
+}
+

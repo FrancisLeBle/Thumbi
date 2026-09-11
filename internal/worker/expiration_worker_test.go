@@ -64,6 +64,14 @@ func (m *MockBookingService) ListTripBookings(ctx context.Context, tripID, drive
 	return args.Get(0).([]*ports.BookingDTO), args.Error(1)
 }
 
+func (m *MockBookingService) GetContactLink(ctx context.Context, bookingID, requestingUserID string) (*ports.ContactLinkDTO, error) {
+	args := m.Called(ctx, bookingID, requestingUserID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*ports.ContactLinkDTO), args.Error(1)
+}
+
 func (m *MockBookingService) ProcessExpiredBookings(ctx context.Context) (int, error) {
 	args := m.Called(ctx)
 	return args.Int(0), args.Error(1)

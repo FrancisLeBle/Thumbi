@@ -37,6 +37,7 @@ type User struct {
 	Email        string       `json:"email"`
 	FirstName    string       `json:"first_name"`
 	LastName     string       `json:"last_name"`
+	Phone        string       `json:"phone,omitempty"`
 	AvatarURL    string       `json:"avatar_url,omitempty"`
 	Provider     AuthProvider `json:"provider"`
 	ProviderID   string       `json:"provider_id"`

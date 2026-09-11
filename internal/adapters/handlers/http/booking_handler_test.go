@@ -72,6 +72,14 @@ func (m *MockBookingService) ListTripBookings(ctx context.Context, tripID, drive
 	return args.Get(0).([]*ports.BookingDTO), args.Error(1)
 }
 
+func (m *MockBookingService) GetContactLink(ctx context.Context, bookingID, requestingUserID string) (*ports.ContactLinkDTO, error) {
+	args := m.Called(ctx, bookingID, requestingUserID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*ports.ContactLinkDTO), args.Error(1)
+}
+
 func (m *MockBookingService) ProcessExpiredBookings(ctx context.Context) (int, error) {
 	args := m.Called(ctx)
 	return args.Int(0), args.Error(1)
@@ -515,3 +523,85 @@ func TestBookingHandler_MyBookings(t *testing.T) {
 		assert.Contains(t, resp, "bookings")
 	})
 }
+
+func TestBookingHandler_GetContactLink(t *testing.T) {
+	t.Run("falla con 401 si no se provee token de autenticación", func(t *testing.T) {
+		mockSvc := new(MockBookingService)
+		router := setupBookingTestRouter(mockSvc, "passenger-123")
+
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/bookings/booking-1/contact-link", nil)
+		// Sin header Authorization
+
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+	})
+
+	t.Run("falla con 403 si la reserva no pertenece al usuario solicitante", func(t *testing.T) {
+		mockSvc := new(MockBookingService)
+		router := setupBookingTestRouter(mockSvc, "passenger-different")
+
+		mockSvc.On("GetContactLink", mock.Anything, "booking-1", "passenger-different").
+			Return(nil, domain.ErrUnauthorized)
+
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/bookings/booking-1/contact-link", nil)
+		req.Header.Set("Authorization", "Bearer valid-token")
+
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		var resp map[string]any
+		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		require.NoError(t, err)
+		assert.Equal(t, "FORBIDDEN", resp["code"])
+	})
+
+	t.Run("falla con 404 si la reserva no existe", func(t *testing.T) {
+		mockSvc := new(MockBookingService)
+		router := setupBookingTestRouter(mockSvc, "passenger-123")
+
+		mockSvc.On("GetContactLink", mock.Anything, "booking-notfound", "passenger-123").
+			Return(nil, domain.ErrBookingNotFound)
+
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/bookings/booking-notfound/contact-link", nil)
+		req.Header.Set("Authorization", "Bearer valid-token")
+
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		var resp map[string]any
+		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		require.NoError(t, err)
+		assert.Equal(t, "BOOKING_NOT_FOUND", resp["code"])
+	})
+
+	t.Run("retorna 200 OK con whatsapp_url y driver_phone para el pasajero autenticado", func(t *testing.T) {
+		mockSvc := new(MockBookingService)
+		router := setupBookingTestRouter(mockSvc, "passenger-123")
+
+		expectedDTO := &ports.ContactLinkDTO{
+			WhatsAppURL: "https://wa.me/5491112345678?text=%C2%A1Hola%21+Te+escribo+por+el+viaje+de+hoy...",
+			DriverPhone: "+54 9 11 1234-5678",
+		}
+
+		mockSvc.On("GetContactLink", mock.Anything, "booking-1", "passenger-123").
+			Return(expectedDTO, nil)
+
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/bookings/booking-1/contact-link", nil)
+		req.Header.Set("Authorization", "Bearer valid-token")
+
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp map[string]any
+		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		require.NoError(t, err)
+		assert.Equal(t, expectedDTO.WhatsAppURL, resp["whatsapp_url"])
+		assert.Equal(t, expectedDTO.DriverPhone, resp["driver_phone"])
+	})
+}
+

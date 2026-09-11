@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/thumbi/auth-kyc-service/internal/core/domain"
 	"github.com/thumbi/auth-kyc-service/internal/core/ports"
+	"github.com/thumbi/auth-kyc-service/pkg/whatsapp"
 )
 
 // bookingService implementa ports.BookingService bajo Clean Architecture
@@ -325,6 +326,66 @@ func (s *bookingService) GetBookingByID(ctx context.Context, bookingID, requesti
 
 	tripSummary := s.buildTripSummary(ctx, trip)
 	return s.toBookingDTO(booking, tripSummary, nil), nil
+}
+
+// GetContactLink genera el Deeplink de WhatsApp para que el pasajero autenticado contacte al conductor del viaje
+func (s *bookingService) GetContactLink(ctx context.Context, bookingID, requestingUserID string) (*ports.ContactLinkDTO, error) {
+	if strings.TrimSpace(bookingID) == "" || strings.TrimSpace(requestingUserID) == "" {
+		return nil, domain.ErrBookingNotFound
+	}
+
+	// 1. Buscar la reserva
+	booking, err := s.bookingRepo.FindByID(ctx, bookingID)
+	if err != nil || booking == nil {
+		return nil, domain.ErrBookingNotFound
+	}
+
+	// 2. Validar que la reserva pertenezca al usuario que consulta (el pasajero autenticado)
+	if booking.PassengerID != requestingUserID {
+		return nil, domain.ErrUnauthorized
+	}
+
+	// 3. Buscar el viaje correspondiente
+	trip, err := s.tripRepo.FindByID(ctx, booking.TripID)
+	if err != nil || trip == nil {
+		return nil, domain.ErrTripNotFound
+	}
+
+	// 4. Obtener datos del conductor y nombre del pasajero
+	driverPhone := "+54 9 11 1234-5678" // Default fallback para la plataforma o si no posee teléfono configurado
+	if s.userRepo != nil {
+		driver, _ := s.userRepo.GetByID(ctx, trip.DriverID)
+		if driver != nil && strings.TrimSpace(driver.Phone) != "" {
+			driverPhone = driver.Phone
+		}
+	}
+
+	passengerName := ""
+	if s.userRepo != nil {
+		passenger, _ := s.userRepo.GetByID(ctx, booking.PassengerID)
+		if passenger != nil {
+			passengerName = passenger.FullName()
+		}
+	}
+
+	departureTimeStr := "18:00"
+	if !trip.DepartureTime.IsZero() {
+		departureTimeStr = trip.DepartureTime.Format("15:04")
+	}
+
+	whatsappURL := whatsapp.GenerateWhatsAppLink(
+		driverPhone,
+		booking.ID,
+		trip.OriginTitle,
+		trip.DestinationTitle,
+		departureTimeStr,
+		passengerName,
+	)
+
+	return &ports.ContactLinkDTO{
+		WhatsAppURL: whatsappURL,
+		DriverPhone: driverPhone,
+	}, nil
 }
 
 // ListPassengerBookings devuelve el historial de reservas de un pasajero

@@ -353,3 +353,55 @@ func (h *BookingHandler) MyBookings(c *gin.Context) {
 		"offset":   offset,
 	})
 }
+
+// GetContactLink genera y devuelve el Deeplink de WhatsApp para que el pasajero contacte al conductor
+// GET /api/v1/bookings/:id/contact-link ó GET /v1/bookings/:id/contact-link
+func (h *BookingHandler) GetContactLink(c *gin.Context) {
+	passengerID, exists := middleware.GetUserID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": "usuario no autenticado",
+			"code":  "UNAUTHORIZED",
+		})
+		return
+	}
+
+	bookingID := strings.TrimSpace(c.Param("id"))
+	if bookingID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "id de reserva requerido",
+			"code":  "BAD_REQUEST",
+		})
+		return
+	}
+
+	dto, err := h.bookingService.GetContactLink(c.Request.Context(), bookingID, passengerID)
+	if err != nil {
+		switch {
+		case errors.Is(err, domain.ErrBookingNotFound):
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": "reserva no encontrada",
+				"code":  "BOOKING_NOT_FOUND",
+			})
+		case errors.Is(err, domain.ErrUnauthorized):
+			c.JSON(http.StatusForbidden, gin.H{
+				"error": "no tienes autorización para acceder al contacto de esta reserva",
+				"code":  "FORBIDDEN",
+			})
+		case errors.Is(err, domain.ErrTripNotFound):
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": "viaje asociado no encontrado",
+				"code":  "TRIP_NOT_FOUND",
+			})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "error interno al generar enlace de contacto",
+				"code":  "INTERNAL_SERVER_ERROR",
+			})
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, dto)
+}
+

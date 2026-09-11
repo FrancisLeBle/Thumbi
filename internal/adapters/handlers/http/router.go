@@ -111,6 +111,7 @@ func SetupRouter(cfg RouterConfig) *gin.Engine {
 				bookings.POST("/:id/cancel", cfg.BookingHandler.CancelBooking)
 				bookings.GET("/my-bookings", cfg.BookingHandler.MyBookings)
 				bookings.GET("/:id", cfg.BookingHandler.GetBookingByID)
+				bookings.GET("/:id/contact-link", cfg.BookingHandler.GetContactLink)
 			}
 		}
 
