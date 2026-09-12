@@ -69,26 +69,29 @@ type VehicleService interface {
 	ProcessAsyncResolution(ctx context.Context, vehicleID string, approved bool, reason string) error
 }
 
-// StopInput DTO para ingresar una parada intermedia al crear un viaje
-type StopInput struct {
+// CreateTripStopInput DTO para ingresar una parada intermedia al crear un viaje
+type CreateTripStopInput struct {
 	StopOrder            int                `json:"stop_order"`
 	LocationTitle        string             `json:"location_title"`
 	Coords               domain.Coordinates `json:"coords"`
 	EstimatedArrivalTime string             `json:"estimated_arrival_time"`
 }
 
+// StopInput es un alias retrocompatible para CreateTripStopInput
+type StopInput = CreateTripStopInput
+
 // CreateTripInput DTO para la publicación de un nuevo viaje por un conductor verificado
 type CreateTripInput struct {
-	DriverID          string             `json:"driver_id"`
-	VehicleID         string             `json:"vehicle_id"`
-	OriginTitle       string             `json:"origin_title"`
-	OriginCoords      domain.Coordinates `json:"origin_coords"`
-	DestinationTitle  string             `json:"destination_title"`
-	DestinationCoords domain.Coordinates `json:"destination_coords"`
-	DepartureTime     string             `json:"departure_time"` // ISO 8601 / RFC3339
-	SeatsOffered      int                `json:"seats_offered"`
-	PricePerSeat      float64            `json:"price_per_seat"`
-	Stops             []StopInput        `json:"stops,omitempty"`
+	DriverID          string                `json:"driver_id"`
+	VehicleID         string                `json:"vehicle_id"`
+	OriginTitle       string                `json:"origin_title"`
+	OriginCoords      domain.Coordinates    `json:"origin_coords"`
+	DestinationTitle  string                `json:"destination_title"`
+	DestinationCoords domain.Coordinates    `json:"destination_coords"`
+	DepartureTime     string                `json:"departure_time"` // ISO 8601 / RFC3339
+	SeatsOffered      int                   `json:"seats_offered"`
+	PricePerSeat      float64               `json:"price_per_seat"`
+	Stops             []CreateTripStopInput `json:"stops,omitempty"`
 }
 
 // SearchTripsQuery DTO con los parámetros de búsqueda enviados por el pasajero
