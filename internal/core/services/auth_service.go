@@ -9,7 +9,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/thumbi/auth-kyc-service/internal/core/domain"
 	"github.com/thumbi/auth-kyc-service/internal/core/ports"
-	"github.com/thumbi/auth-kyc-service/pkg/jwt"
 )
 
 // TokenProvider interfaz para el generador de tokens
