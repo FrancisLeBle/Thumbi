@@ -303,3 +303,5 @@ type CreateTripStopInput struct {
 	Coords               domain.Coordinates `json:"coords"`
 	EstimatedArrivalTime string             `json:"estimated_arrival_time"`
 }
+
+type StopInput = CreateTripStopInput
