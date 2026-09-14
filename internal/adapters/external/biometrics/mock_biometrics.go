@@ -1,10 +1,9 @@
 package biometrics
 
 import (
+	"github.com/thumbi/auth-kyc-service/internal/core/ports"
 	"context"
 	"strings"
-
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
 )
 
 // MockBiometricsProvider simula el motor de biometría y OCR para pruebas de vida y validación de DNI

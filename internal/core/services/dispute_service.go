@@ -170,24 +170,30 @@ func (s *disputeService) ResolveDispute(ctx context.Context, input ports.Resolve
 		}
 
 		// Reintegro en la pasarela de pagos
+		gatewayRefundRef := ""
 		if s.paymentGateway != nil && escrow.PaymentGatewayRef != "" {
-			_, _ = s.paymentGateway.ProcessRefund(ctx, escrow.PaymentGatewayRef, escrow.Amount, "Resolución de disputa favorable al pasajero")
+			refundResult, _ := s.paymentGateway.ProcessRefund(ctx, escrow.PaymentGatewayRef, escrow.Amount, "Resolución de disputa favorable al pasajero")
+			if refundResult != nil {
+				gatewayRefundRef = refundResult.GatewayRefundRef
+			}
 		}
 
 		// Registrar auditoría de reembolso
-	refundTx, err := domain.NewRefundTransaction(
-		dispute.ReporterID,
-		dispute.ID,
-		dispute.BookingID,
-		0.0,
-		0.0,
-		domain.RefundType("FULL"),
-		input.AdminNotes,
-	)
-	if err != nil {
-		return nil, err
-	}
-	_ = refundTx
+		refundTx, err := domain.NewRefundTransaction(
+			dispute.ReporterID,
+			dispute.ID,
+			dispute.BookingID,
+			dispute.Amount,
+			0.0,
+			domain.RefundTypeFull,
+			input.AdminNotes,
+		)
+		if err != nil {
+			return nil, err
+		}
+		_ = s.escrowRepo.RecordRefund(ctx, refundTx)
+
+	case domain.DisputeStatusResolvedDriverPayout:
 		// Dictamen a favor del conductor: Liberación de fondos
 		if err := dispute.ResolveDriverPayout(adminID, notes, now); err != nil {
 			return nil, err

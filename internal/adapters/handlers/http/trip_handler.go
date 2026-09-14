@@ -409,7 +409,7 @@ func (h *TripHandler) CompleteTrip(c *gin.Context) {
 		return
 	}
 
-	_, err := h.tripService.CompleteTrip(c.Request.Context(), tripID, driverID)
+	trip, err := h.tripService.CompleteTrip(c.Request.Context(), tripID, driverID)
 	if err != nil {
 		switch {
 		case errors.Is(err, domain.ErrTripNotFound):
@@ -445,6 +445,7 @@ func (h *TripHandler) CompleteTrip(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Viaje finalizado exitosamente y liquidación procesada",
 		"status":  "COMPLETED",
+		"trip":    trip,
 	})
 }
 

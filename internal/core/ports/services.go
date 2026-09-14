@@ -17,17 +17,17 @@ type AuthResult struct {
 
 // SocialAuthInput DTO para recibir el token social desde el cliente
 type SocialAuthInput struct {
-	Provider  domain.AuthProvider `json:"provider"`
-	IDToken   string              `json:"id_token"`
-	UserAgent string              `json:"user_agent"`
-	ClientIP  string              `json:"client_ip"`
+	Provider    domain.AuthProvider `json:"provider"`
+	IDToken     string              `json:"id_token"`
+	UserAgent   string              `json:"user_agent"`
+	ClientIP    string              `json:"client_ip"`
 }
 
 // KYCSubmissionInput DTO para la carga de documentos y selfie 3D
 type KYCSubmissionInput struct {
-	UserID           string `json:"user_id"`
-	DocumentType     string `json:"document_type"`
-	DocumentNumber   string `json:"document_number"`
+	UserID         string `json:"user_id"`
+	DocumentType   string `json:"document_type"`
+	DocumentNumber string `json:"document_number"`
 	FrontImageBase64 string `json:"front_image_base64"`
 	BackImageBase64  string `json:"back_image_base64"`
 	Selfie3DBase64   string `json:"selfie_3d_base64"`
@@ -35,16 +35,16 @@ type KYCSubmissionInput struct {
 
 // VehicleRegistrationInput DTO para el registro de vehículo
 type VehicleRegistrationInput struct {
-	UserID              string `json:"user_id"`
-	Brand               string `json:"brand"`
-	Model               string `json:"model"`
-	Year                int    `json:"year"`
-	PlateNumber         string `json:"plate_number"`
-	Color               string `json:"color"`
-	SeatCapacity        int    `json:"seat_capacity"`
+	UserID             string `json:"user_id"`
+	Brand              string `json:"brand"`
+	Model              string `json:"model"`
+	Year               int    `json:"year"`
+	PlateNumber        string `json:"plate_number"`
+	Color              string `json:"color"`
+	SeatCapacity       int    `json:"seat_capacity"`
 	DriverLicenseBase64 string `json:"driver_license_base64"`
 	VehicleCedulaBase64 string `json:"vehicle_cedula_base64"`
-	InsuranceBase64     string `json:"insurance_base64,omitempty"`
+	InsuranceBase64    string `json:"insurance_base64,omitempty"`
 }
 
 // AuthService define los casos de uso para autenticación social y ciclo de vida de sesiones
@@ -69,7 +69,7 @@ type VehicleService interface {
 	ProcessAsyncResolution(ctx context.Context, vehicleID string, approved bool, reason string) error
 }
 
-// StopInput DTO para ingresar una parada intermedia al crear un viaje
+// CreateTripStopInput DTO para ingresar una parada intermedia al crear un viaje
 type CreateTripStopInput struct {
 	StopOrder            int                `json:"stop_order"`
 	LocationTitle        string             `json:"location_title"`
@@ -77,20 +77,21 @@ type CreateTripStopInput struct {
 	EstimatedArrivalTime string             `json:"estimated_arrival_time"`
 }
 
+// StopInput es un alias retrocompatible para CreateTripStopInput
 type StopInput = CreateTripStopInput
 
 // CreateTripInput DTO para la publicación de un nuevo viaje por un conductor verificado
 type CreateTripInput struct {
-	DriverID          string             `json:"driver_id"`
-	VehicleID         string             `json:"vehicle_id"`
-	OriginTitle       string             `json:"origin_title"`
-	OriginCoords      domain.Coordinates `json:"origin_coords"`
-	DestinationTitle  string             `json:"destination_title"`
-	DestinationCoords domain.Coordinates `json:"destination_coords"`
-	DepartureTime     string             `json:"departure_time"` // ISO 8601 / RFC3339
-	SeatsOffered      int                `json:"seats_offered"`
-	PricePerSeat      float64            `json:"price_per_seat"`
-	Stops             []StopInput        `json:"stops,omitempty"`
+	DriverID          string                `json:"driver_id"`
+	VehicleID         string                `json:"vehicle_id"`
+	OriginTitle       string                `json:"origin_title"`
+	OriginCoords      domain.Coordinates    `json:"origin_coords"`
+	DestinationTitle  string                `json:"destination_title"`
+	DestinationCoords domain.Coordinates    `json:"destination_coords"`
+	DepartureTime     string                `json:"departure_time"` // ISO 8601 / RFC3339
+	SeatsOffered      int                   `json:"seats_offered"`
+	PricePerSeat      float64               `json:"price_per_seat"`
+	Stops             []CreateTripStopInput `json:"stops,omitempty"`
 }
 
 // SearchTripsQuery DTO con los parámetros de búsqueda enviados por el pasajero
@@ -146,11 +147,11 @@ type TripService interface {
 
 // CreateBookingInput DTO para solicitar la reserva de asientos en un viaje
 type CreateBookingInput struct {
-	TripID         string  `json:"trip_id"`
-	PassengerID    string  `json:"passenger_id"`
-	SeatsRequested int     `json:"seats_requested"`
-	PickupStopID   *string `json:"pickup_stop_id,omitempty"`
-	DropoffStopID  *string `json:"dropoff_stop_id,omitempty"`
+	TripID          string  `json:"trip_id"`
+	PassengerID     string  `json:"passenger_id"`
+	SeatsRequested  int     `json:"seats_requested"`
+	PickupStopID    *string `json:"pickup_stop_id,omitempty"`
+	DropoffStopID   *string `json:"dropoff_stop_id,omitempty"`
 }
 
 // ConfirmBookingPaymentInput DTO para acreditar la captura de pago de una reserva
@@ -168,15 +169,15 @@ type CancelBookingInput struct {
 
 // BookingTripSummary resumen contextual del viaje asociado a la reserva
 type BookingTripSummary struct {
-	TripID           string `json:"trip_id"`
-	OriginTitle      string `json:"origin_title"`
-	DestinationTitle string `json:"destination_title"`
-	DepartureTime    string `json:"departure_time"`
-	DriverID         string `json:"driver_id"`
-	DriverFullName   string `json:"driver_full_name"`
-	VehicleBrand     string `json:"vehicle_brand"`
-	VehicleModel     string `json:"vehicle_model"`
-	VehiclePlate     string `json:"vehicle_plate"`
+	TripID           string    `json:"trip_id"`
+	OriginTitle      string    `json:"origin_title"`
+	DestinationTitle string    `json:"destination_title"`
+	DepartureTime    string    `json:"departure_time"`
+	DriverID         string    `json:"driver_id"`
+	DriverFullName   string    `json:"driver_full_name"`
+	VehicleBrand     string    `json:"vehicle_brand"`
+	VehicleModel     string    `json:"vehicle_model"`
+	VehiclePlate     string    `json:"vehicle_plate"`
 }
 
 // BookingDTO proyección enriquecida de la reserva para el cliente y APIs
