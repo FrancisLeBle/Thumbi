@@ -179,7 +179,7 @@ func (s *disputeService) ResolveDispute(ctx context.Context, input ports.Resolve
 		dispute.ReporterID,
 		dispute.ID,
 		dispute.BookingID,
-		input.Amount,
+		0.0,
 		0.0,
 		domain.RefundType("FULL"),
 		input.AdminNotes,
