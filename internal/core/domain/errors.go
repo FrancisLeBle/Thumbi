@@ -15,6 +15,7 @@ var (
 	ErrKYCAlreadySubmitted         = errors.New("kyc already submitted")
 	ErrKYCNotFound                 = errors.New("kyc not found")
 	ErrKYCNotApproved              = errors.New("kyc not approved")
+	ErrDriverKYCRequired           = errors.New("driver kyc required")
 	ErrMaxRetriesExceeded          = errors.New("max retries exceeded")
 	ErrVehicleNotFound             = errors.New("vehicle not found")
 	ErrVehicleAlreadyExists        = errors.New("vehicle already exists")
