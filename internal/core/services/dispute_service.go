@@ -179,15 +179,15 @@ func (s *disputeService) ResolveDispute(ctx context.Context, input ports.Resolve
 		dispute.ReporterID,
 		dispute.ID,
 		dispute.BookingID,
-		dispute.Amount,
+		dispute.DisputedAmount,
 		0.0,
-		domain.RefundTypeFull,
+		domain.RefundType("FULL"),
 		input.AdminNotes,
 	)
 	if err != nil {
 		return nil, err
 	}
-	case domain.DisputeStatusResolvedDriverPayout:
+	_ = refundTx
 		// Dictamen a favor del conductor: Liberación de fondos
 		if err := dispute.ResolveDriverPayout(adminID, notes, now); err != nil {
 			return nil, err
