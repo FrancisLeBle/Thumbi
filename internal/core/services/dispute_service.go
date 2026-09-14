@@ -175,16 +175,18 @@ func (s *disputeService) ResolveDispute(ctx context.Context, input ports.Resolve
 		}
 
 		// Registrar auditoría de reembolso
-	refundTx, err := domain.NewRefundTransaction(dispute.ReporterID, dispute.ID, dispute.BookingID, dispute.Amount, 0.0, domain.RefundTypeFull, input.AdminNotes)
-			uuid.New().String(),
-			escrow.ID,
-			escrow.Amount,
-			0.0,
-			"Reembolso por dictamen de disputa",
-			now,
-		)
-		_ = s.escrowRepo.RecordRefund(ctx, refundTx)
-
+	refundTx, err := domain.NewRefundTransaction(
+		dispute.ReporterID,
+		dispute.ID,
+		dispute.BookingID,
+		dispute.Amount,
+		0.0,
+		domain.RefundTypeFull,
+		input.AdminNotes,
+	)
+	if err != nil {
+		return nil, err
+	}
 	case domain.DisputeStatusResolvedDriverPayout:
 		// Dictamen a favor del conductor: Liberación de fondos
 		if err := dispute.ResolveDriverPayout(adminID, notes, now); err != nil {
