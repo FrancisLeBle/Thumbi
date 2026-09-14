@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
 	"github.com/thumbi/auth-kyc-service/internal/core/ports"
 )
 

@@ -2,7 +2,6 @@ package domain
 
 import (
 	"errors"
-	"time"
 )
 
 // Errores tipados del dominio (Clean Architecture)

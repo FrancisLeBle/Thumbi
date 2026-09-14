@@ -1,6 +1,6 @@
 # Dockerfile multi-stage optimizado para Thumbi Core API
-# Etapa 1: Compilación basada en golang:1.24-alpine
-FROM golang:1.24-alpine AS builder
+# Etapa 1: Compilación basada en golang:1.25-alpine
+FROM golang:1.25-alpine AS builder
 
 WORKDIR /app
 
