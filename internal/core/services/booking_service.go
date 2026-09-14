@@ -197,7 +197,6 @@ func (s *bookingService) ConfirmBookingPayment(ctx context.Context, input ports.
 			UserID:  booking.PassengerID,
 			Title:   "Reserva Confirmada",
 			Message: "Tu pago ha sido custodiado exitosamente. ¡Buen viaje!",
-			Status:  "CONFIRMED",
 		})
 	}
 
@@ -455,7 +454,7 @@ func (s *bookingService) buildTripSummary(ctx context.Context, trip *domain.Trip
 		if vehicle != nil {
 			summary.VehicleBrand = vehicle.Brand
 			summary.VehicleModel = vehicle.Model
-			summary.VehiclePlate = vehicle.Plate
+			summary.VehiclePlate = vehicle.PlateNumber
 		}
 	}
 
@@ -483,7 +482,6 @@ func (s *bookingService) toBookingDTO(b *domain.Booking, tripSummary *ports.Book
 		SeatsBooked:        b.SeatsBooked,
 		UnitPrice:          b.UnitPrice,
 		TotalPrice:         b.TotalPrice,
-		Status:             b.Status,
 		PickupStopID:       b.PickupStopID,
 		DropoffStopID:      b.DropoffStopID,
 		ExpiresAt:          b.ExpiresAt.Format(time.RFC3339),
