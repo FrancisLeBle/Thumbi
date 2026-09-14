@@ -70,3 +70,9 @@ var (
 	ErrInvalidDisputeData        = errors.New("los datos de la disputa son incompletos o inválidos")
 	ErrDisputeSelfNotAllowed     = errors.New("no es posible iniciar una disputa contra uno mismo")
 )
+
+var (
+    ErrBookingAlreadyCancelled = errors.New("booking already cancelled")
+    ErrSeatsExceedCapacity     = errors.New("seats exceed capacity")
+    ErrCannotCancelStartedTrip = errors.New("cannot cancel started trip")
+)
