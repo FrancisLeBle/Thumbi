@@ -180,13 +180,13 @@ func (s *disputeService) ResolveDispute(ctx context.Context, input ports.Resolve
 
 		// Registrar auditoría de reembolso
 		refundTx, err := domain.NewRefundTransaction(
-			uuid.New().String(),
-			escrow.ID,
+			dispute.ReporterID,
+			dispute.ID,
 			dispute.BookingID,
-			escrow.Amount,
+			dispute.Amount,
 			0.0,
-			domain.RefundTypeAdminDispute,
-			gatewayRefundRef,
+			domain.RefundTypeFull,
+			input.AdminNotes,
 		)
 		if err != nil {
 			return nil, err
