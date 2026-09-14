@@ -170,7 +170,7 @@ func (s *disputeService) ResolveDispute(ctx context.Context, input ports.Resolve
 		}
 
 		// Reintegro en la pasarela de pagos
-		gatewayRefundRef := ""
+		_ = ""
 		if s.paymentGateway != nil && escrow.PaymentGatewayRef != "" {
 			refundResult, _ := s.paymentGateway.ProcessRefund(ctx, escrow.PaymentGatewayRef, escrow.Amount, "Resolución de disputa favorable al pasajero")
 			if refundResult != nil {
@@ -183,7 +183,7 @@ func (s *disputeService) ResolveDispute(ctx context.Context, input ports.Resolve
 			dispute.ReporterID,
 			dispute.ID,
 			dispute.BookingID,
-			input.Amount,
+			dispute.RefundAmount,
 			0.0,
 			domain.RefundTypeFull,
 			input.AdminNotes,
