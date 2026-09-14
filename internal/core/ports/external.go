@@ -24,12 +24,12 @@ type OAuthProvider interface {
 
 // BiometricEvaluationResult resultado devuelto por el motor biométrico / OCR de identidad
 type BiometricEvaluationResult struct {
-	IsValidDocument  bool    `json:"is_valid_document"`
-	LivenessScore    float64 `json:"liveness_score"`     // Escala 0.0 a 1.0 (>= 0.85 para pasar)
-	FaceMatchScore   float64 `json:"face_match_score"`   // Coincidencia entre rostro del DNI y selfie 3D
-	ExtractedDNI     string  `json:"extracted_dni"`      // OCR del DNI
-	ExtractedName    string  `json:"extracted_name"`
-	RejectionReason  string  `json:"rejection_reason,omitempty"`
+	IsValidDocument bool    `json:"is_valid_document"`
+	LivenessScore   float64 `json:"liveness_score"`   // Escala 0.0 a 1.0 (>= 0.85 para pasar)
+	FaceMatchScore  float64 `json:"face_match_score"` // Coincidencia entre rostro del DNI y selfie 3D
+	ExtractedDNI    string  `json:"extracted_dni"`    // OCR del DNI
+	ExtractedName   string  `json:"extracted_name"`
+	RejectionReason string  `json:"rejection_reason,omitempty"`
 }
 
 // BiometricsProvider contrato para comunicarse con el motor de prueba de vida y validación documental
@@ -39,12 +39,12 @@ type BiometricsProvider interface {
 
 // NotificationPayload contenido genérico de notificación para el usuario
 type NotificationPayload struct {
-	UserID    string            `json:"user_id"`
-	Email     string            `json:"email"`
-	Title     string            `json:"title"`
-	Message   string            `json:"message"`
-	Type      string            `json:"type"` // Ej: KYC_RESOLVED, VEHICLE_APPROVED, VEHICLE_REJECTED
-	Metadata  map[string]string `json:"metadata,omitempty"`
+	UserID   string            `json:"user_id"`
+	Email    string            `json:"email"`
+	Title    string            `json:"title"`
+	Message  string            `json:"message"`
+	Type     string            `json:"type"` // Ej: KYC_RESOLVED, VEHICLE_APPROVED, VEHICLE_REJECTED
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 // Notifier contrato para emisión de notificaciones asíncronas (Push, Email, Eventos de infraestructura)
@@ -61,12 +61,12 @@ type RouteCalculationRequest struct {
 
 // RouteDetails respuesta devuelta por el motor cartográfico (ej. OSRM, Valhalla o Google Maps)
 type RouteDetails struct {
-	RoutePath            domain.LineString `json:"route_path"`
-	DistanceKm           float64           `json:"distance_km"`
-	DurationMinutes      int               `json:"duration_minutes"`
-	EstimatedTollCost    float64           `json:"estimated_toll_cost"`
-	TollsCount           int               `json:"tolls_count"`
-	EstimatedFuelCost    float64           `json:"estimated_fuel_cost"`
+	RoutePath         domain.LineString `json:"route_path"`
+	DistanceKm        float64           `json:"distance_km"`
+	DurationMinutes   int               `json:"duration_minutes"`
+	EstimatedTollCost float64           `json:"estimated_toll_cost"`
+	TollsCount        int               `json:"tolls_count"`
+	EstimatedFuelCost float64           `json:"estimated_fuel_cost"`
 }
 
 // RoutingProvider contrato para consultar polilínea, distancias, peajes y tiempos estimados a un motor de rutas
