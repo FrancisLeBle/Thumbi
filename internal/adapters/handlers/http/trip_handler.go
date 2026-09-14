@@ -409,7 +409,7 @@ func (h *TripHandler) CompleteTrip(c *gin.Context) {
 		return
 	}
 
-	err := h.tripService.CompleteTrip(c.Request.Context(), tripID, driverID)
+	_, err := h.tripService.CompleteTrip(c.Request.Context(), tripID, driverID)
 	if err != nil {
 		switch {
 		case errors.Is(err, domain.ErrTripNotFound):

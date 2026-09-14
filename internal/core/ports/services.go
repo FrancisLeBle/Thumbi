@@ -295,3 +295,13 @@ type DisputeService interface {
 	GetDisputeByID(ctx context.Context, disputeID string) (*DisputeDTO, error)
 	ListDisputes(ctx context.Context, limit, offset int) ([]*DisputeDTO, error)
 }
+
+// CreateTripStopInput representa los datos para agregar una parada
+type CreateTripStopInput struct {
+	TripID        string  `json:"trip_id"`
+	LocationName  string  `json:"location_name"`
+	Latitude      float64 `json:"latitude"`
+	Longitude     float64 `json:"longitude"`
+	StopOrder     int     `json:"stop_order"`
+	EstimatedTime string  `json:"estimated_time"`
+}
