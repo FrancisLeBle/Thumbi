@@ -175,7 +175,7 @@ func (s *disputeService) ResolveDispute(ctx context.Context, input ports.Resolve
 		}
 
 		// Registrar auditoría de reembolso
-		refundTx := _, _ = domain.NewRefundTransaction(
+	refundTx, err := domain.NewRefundTransaction(dispute.ReporterID, dispute.ID, dispute.BookingID, dispute.Amount, 0.0, domain.RefundTypeFull, input.AdminNotes)
 			uuid.New().String(),
 			escrow.ID,
 			escrow.Amount,
