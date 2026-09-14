@@ -305,3 +305,13 @@ type CreateTripStopInput struct {
 	StopOrder     int     `json:"stop_order"`
 	EstimatedTime string  `json:"estimated_time"`
 }
+
+// CreateTripStopInput representa la estructura para paradas intermedias
+type CreateTripStopInput struct {
+	StopOrder            int                `json:"stop_order"`
+	LocationTitle        string             `json:"location_title"`
+	Coords               domain.Coordinates `json:"coords"`
+	EstimatedArrivalTime string             `json:"estimated_arrival_time"`
+}
+
+type StopInput = CreateTripStopInput
