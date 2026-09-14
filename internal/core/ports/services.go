@@ -71,8 +71,6 @@ type VehicleService interface {
 
 // StopInput DTO para ingresar una parada intermedia al crear un viaje
 type StopInput = CreateTripStopInput
-	StopOrder            int                `json:"stop_order"`
-	LocationTitle        string             `json:"location_title"`
 	Coords               domain.Coordinates `json:"coords"`
 	EstimatedArrivalTime string             `json:"estimated_arrival_time"`
 }
