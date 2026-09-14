@@ -482,7 +482,6 @@ func (s *bookingService) toBookingDTO(b *domain.Booking, tripSummary *ports.Book
 		SeatsBooked:        b.SeatsBooked,
 		UnitPrice:          b.UnitPrice,
 		TotalPrice:         b.TotalPrice,
-		Status:             b.Status,
 		PickupStopID:       b.PickupStopID,
 		DropoffStopID:      b.DropoffStopID,
 		ExpiresAt:          b.ExpiresAt.Format(time.RFC3339),

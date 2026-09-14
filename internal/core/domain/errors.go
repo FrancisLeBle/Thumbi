@@ -74,4 +74,9 @@ var (
     ErrBookingAlreadyCancelled = errors.New("booking already cancelled")
     ErrSeatsExceedCapacity     = errors.New("seats exceed capacity")
     ErrCannotCancelStartedTrip = errors.New("cannot cancel started trip")
+// Errores adicionales para handlers de booking y trip
+var (
+	ErrBookingAlreadyCancelled = errors.New("booking already cancelled")
+	ErrSeatsExceedCapacity     = errors.New("seats exceed capacity")
+	ErrCannotCancelStartedTrip = errors.New("cannot cancel started trip")
 )
