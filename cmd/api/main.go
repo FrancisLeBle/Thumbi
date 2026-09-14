@@ -129,8 +129,9 @@ func main() {
 	)
 	reputationService := services.NewReputationService(
 		reviewRepo,
-		tripRepo,
 		bookingRepo,
+		tripRepo,
+		userRepo,
 	)
 	disputeService := services.NewDisputeService(
 		disputeRepo,
