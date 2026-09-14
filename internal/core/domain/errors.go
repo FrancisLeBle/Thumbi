@@ -2,17 +2,26 @@ package domain
 
 import "errors"
 
+// Tipos de reembolso
+const (
+	RefundTypeFull    = "FULL"
+	RefundTypePartial = "PARTIAL"
+)
+
 var (
 	ErrUserNotFound                = errors.New("user not found")
 	ErrUserAlreadyExists           = errors.New("user already exists")
 	ErrInvalidCredentials          = errors.New("invalid credentials")
 	ErrInvalidToken                = errors.New("invalid token")
 	ErrTokenExpired                = errors.New("token expired")
+	ErrSessionExpired              = errors.New("session expired")
 	ErrUnauthorized                = errors.New("unauthorized")
 	ErrForbidden                   = errors.New("forbidden")
 	ErrInvalidInput                = errors.New("invalid input")
 	ErrInternal                    = errors.New("internal server error")
 	ErrKYCAlreadySubmitted         = errors.New("kyc already submitted")
+	ErrKYCAlreadyApproved          = errors.New("kyc already approved")
+	ErrKYCInManualReview           = errors.New("kyc in manual review")
 	ErrKYCNotFound                 = errors.New("kyc not found")
 	ErrKYCNotApproved              = errors.New("kyc not approved")
 	ErrDriverKYCRequired           = errors.New("driver kyc required")
@@ -32,6 +41,8 @@ var (
 	ErrBookingCannotBeCancelled    = errors.New("booking cannot be cancelled")
 	ErrCannotBookOwnTrip           = errors.New("cannot book own trip")
 	ErrInvalidSeatCount            = errors.New("invalid seat count")
+	ErrInsufficientSeats           = errors.New("insufficient seats")
+	ErrOverlappingTripBooking      = errors.New("overlapping trip booking")
 	ErrPriceExceedsCapPrice        = errors.New("price exceeds cap price")
 	ErrInvalidBookingStatus        = errors.New("invalid booking status")
 	ErrBookingExpired              = errors.New("booking expired")
@@ -42,6 +53,7 @@ var (
 	ErrInvalidRefundAmount         = errors.New("invalid refund amount")
 	ErrReviewNotFound              = errors.New("review not found")
 	ErrReviewAlreadyExists         = errors.New("review already exists")
+	ErrDuplicateReview             = errors.New("duplicate review")
 	ErrReviewSelfNotAllowed        = errors.New("review self not allowed")
 	ErrInvalidRating               = errors.New("invalid rating")
 	ErrTripNotCompletedForReview   = errors.New("trip not completed for review")
