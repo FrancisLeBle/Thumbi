@@ -10,20 +10,26 @@ import (
 )
 
 type DisputeService struct {
-	disputeRepo ports.DisputeRepository
-	escrowRepo  ports.EscrowRepository
-	bookingRepo ports.BookingRepository
+	disputeRepo    ports.DisputeRepository
+	escrowRepo     ports.EscrowRepository
+	bookingRepo    ports.BookingRepository
+	tripRepo       ports.TripRepository
+	paymentGateway ports.PaymentGateway
 }
 
 func NewDisputeService(
 	disputeRepo ports.DisputeRepository,
 	escrowRepo ports.EscrowRepository,
 	bookingRepo ports.BookingRepository,
+	tripRepo ports.TripRepository,
+	paymentGateway ports.PaymentGateway,
 ) ports.DisputeService {
 	return &DisputeService{
-		disputeRepo: disputeRepo,
-		escrowRepo:  escrowRepo,
-		bookingRepo: bookingRepo,
+		disputeRepo:    disputeRepo,
+		escrowRepo:     escrowRepo,
+		bookingRepo:    bookingRepo,
+		tripRepo:       tripRepo,
+		paymentGateway: paymentGateway,
 	}
 }
 
