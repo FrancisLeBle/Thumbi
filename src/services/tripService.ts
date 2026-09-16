@@ -22,6 +22,7 @@ export interface TripSearchResult extends Trip {
   driverRating: number;
   driverReviewsCount: number;
   driverVerified: boolean;
+  driverPhoneNumber?: string;
   driverAvatarUrl?: string;
   carModel: string;
   carColor?: string;
@@ -36,6 +37,7 @@ const MOCK_SEARCH_TRIPS: TripSearchResult[] = [
     driverRating: 4.9,
     driverReviewsCount: 38,
     driverVerified: true,
+    driverPhoneNumber: '+5491148291123',
     carModel: 'Toyota Corolla Blanco',
     durationMinutes: 45,
     origin: 'Palermo (Plaza Italia)',
@@ -206,10 +208,36 @@ export async function searchTrips(params: SearchTripsParams = {}): Promise<TripS
   return results;
 }
 
+/**
+ * Actualiza el estado de un viaje ofertado (ej: 'IN_PROGRESS', 'CANCELLED', 'COMPLETED').
+ * Endpoint: PATCH /v1/trips/:id/status
+ */
+export async function updateTripStatus(
+  tripId: string,
+  status: 'SCHEDULED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED'
+): Promise<Trip> {
+  try {
+    return await apiClient.patch<Trip>(`/v1/trips/${tripId}/status`, { status });
+  } catch {
+    // Retorno fallback simulado para modo offline o preview
+    return {
+      id: tripId,
+      driverId: 'drv-current-user',
+      origin: 'Palermo (Plaza Italia)',
+      destination: 'Pilar (Parque Industrial)',
+      pricePerSeat: 3500,
+      availableSeats: 3,
+      departureTime: new Date().toISOString(),
+      status,
+    };
+  }
+}
+
 export const tripService = {
   createTrip,
   getTrips,
   searchTrips,
+  updateTripStatus,
 };
 
 export default tripService;

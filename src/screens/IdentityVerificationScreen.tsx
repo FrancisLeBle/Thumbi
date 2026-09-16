@@ -1,16 +1,5 @@
-import React, { useState } from 'react';
-import {
-  ShieldCheck,
-  Upload,
-  Camera,
-  CheckCircle2,
-  FileCheck,
-  AlertCircle,
-  Loader2,
-  ArrowRight,
-  ArrowLeft,
-  Lock,
-} from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { Loader2, Check, Camera, RefreshCw } from 'lucide-react';
 import { Toast } from '../components/Toast';
 
 export interface IdentityVerificationScreenProps {
@@ -18,6 +7,7 @@ export interface IdentityVerificationScreenProps {
   userName?: string;
   onVerificationSuccess: () => void;
   onBack?: () => void;
+  onSkip?: () => void;
 }
 
 export const IdentityVerificationScreen: React.FC<IdentityVerificationScreenProps> = ({
@@ -25,57 +15,94 @@ export const IdentityVerificationScreen: React.FC<IdentityVerificationScreenProp
   userName = 'Sofía',
   onVerificationSuccess,
   onBack,
+  onSkip,
 }) => {
-  const [frontUploaded, setFrontUploaded] = useState<boolean>(false);
-  const [backUploaded, setBackUploaded] = useState<boolean>(false);
-  const [frontFileName, setFrontFileName] = useState<string>('');
-  const [backFileName, setBackFileName] = useState<string>('');
+  const [frontFile, setFrontFile] = useState<File | null>(null);
+  const [frontPreview, setFrontPreview] = useState<string | null>(null);
+  const [backFile, setBackFile] = useState<File | null>(null);
+  const [backPreview, setBackPreview] = useState<string | null>(null);
   const [isVerifying, setIsVerifying] = useState<boolean>(false);
   const [toast, setToast] = useState<{
     message: string;
     type: 'error' | 'success';
   } | null>(null);
 
-  const canSubmit = frontUploaded && backUploaded;
+  const frontInputRef = useRef<HTMLInputElement>(null);
+  const backInputRef = useRef<HTMLInputElement>(null);
 
-  const handleSimulateFrontUpload = () => {
-    setFrontUploaded(true);
-    setFrontFileName('dni_frente_verificado.jpg');
+  const handleFrontFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setFrontFile(file);
+      const previewUrl = URL.createObjectURL(file);
+      setFrontPreview(previewUrl);
+      setToast({
+        message: 'Frente del DNI cargado correctamente.',
+        type: 'success',
+      });
+    }
+  };
+
+  const handleBackFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setBackFile(file);
+      const previewUrl = URL.createObjectURL(file);
+      setBackPreview(previewUrl);
+      setToast({
+        message: 'Dorso del DNI cargado correctamente.',
+        type: 'success',
+      });
+    }
+  };
+
+  const handleSimulateFront = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setFrontPreview('simulated_front');
     setToast({
-      message: 'Frente del DNI capturado y legible.',
+      message: 'Frente del DNI capturado (simulación).',
       type: 'success',
     });
   };
 
-  const handleSimulateBackUpload = () => {
-    setBackUploaded(true);
-    setBackFileName('dni_dorso_verificado.jpg');
+  const handleSimulateBack = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setBackPreview('simulated_back');
     setToast({
-      message: 'Dorso del DNI capturado con código PDF417 legible.',
+      message: 'Dorso del DNI capturado (simulación).',
       type: 'success',
     });
   };
 
   const handleValidateAndLogin = async () => {
-    if (!canSubmit || isVerifying) return;
+    if (isVerifying) return;
+
+    if (!frontPreview || !backPreview) {
+      // Si el usuario presiona validar sin haber cargado ambos, le damos retroalimentación clara
+      setToast({
+        message: 'Por favor sube o escanea ambas caras de tu DNI (Frente y Dorso).',
+        type: 'error',
+      });
+      return;
+    }
 
     setIsVerifying(true);
 
     try {
-      // Simula la verificación biométrica y OCR de identidad con tiempo de cómputo seguro
-      await new Promise((resolve) => setTimeout(resolve, 1400));
+      // Simulación de procesamiento OCR, validación biométrica con Renaper / servicio de verificación
+      await new Promise((resolve) => setTimeout(resolve, 1500));
 
       setToast({
-        message: '¡Identidad verificada exitosamente! Tu cuenta está activa con DNI Verificado.',
+        message: '¡Identidad verificada exitosamente! Tu cuenta ha sido activada.',
         type: 'success',
       });
 
       setTimeout(() => {
         onVerificationSuccess();
-      }, 800);
+      }, 600);
     } catch {
       setToast({
-        message: 'Hubo un error al procesar los documentos. Inténtalo de nuevo.',
+        message: 'Hubo un error al procesar los documentos. Inténtalo nuevamente.',
         type: 'error',
       });
     } finally {
@@ -83,192 +110,330 @@ export const IdentityVerificationScreen: React.FC<IdentityVerificationScreenProp
     }
   };
 
+  const handleSkipLater = () => {
+    if (onSkip) {
+      onSkip();
+    } else {
+      onVerificationSuccess();
+    }
+  };
+
   return (
-    <div
-      id="identity-verification-screen"
-      className="min-h-screen py-8 px-4 sm:px-6 lg:px-8 max-w-md mx-auto flex flex-col justify-between"
-      style={{
-        backgroundColor: '#F7F9FA',
-        fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif',
-      }}
-    >
-      <div>
-        {/* Barra superior con navegación */}
-        <div className="flex items-center justify-between mb-6">
-          {onBack && (
-            <button
-              id="back-to-register-btn"
-              type="button"
-              onClick={onBack}
-              className="p-2 -ml-2 rounded-lg text-[#666666] hover:bg-slate-200/60 transition cursor-pointer"
-            >
-              <ArrowLeft className="w-5 h-5" />
-            </button>
-          )}
-          <span className="text-xs font-semibold text-[#00A896] bg-[#E6F6F4] px-2.5 py-1 rounded-full ml-auto">
-            Paso 2 de 2 • Onboarding
-          </span>
-        </div>
-
-        {/* Encabezado */}
-        <div className="text-center mb-6">
-          <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-[#E6F6F4] text-[#00A896] mb-3">
-            <ShieldCheck className="w-6 h-6 stroke-[2]" />
-          </div>
-          <h1 className="text-2xl font-bold tracking-tight text-[#1A1A1A]">
-            Verificación de Identidad
-          </h1>
-          <p className="mt-2 text-sm text-[#666666] leading-relaxed">
-            Para garantizar viajes seguros, todos los miembros de Thumbi deben validar su Documento Nacional de Identidad.
-          </p>
-        </div>
-
-        {/* Cajas de subida de DNI con border-dashed */}
-        <div className="space-y-4 mb-6">
-          {/* Frente de DNI */}
-          <div
-            id="dni-front-upload-box"
-            onClick={handleSimulateFrontUpload}
-            className={`rounded-[12px] p-5 border-2 border-dashed transition-all cursor-pointer flex flex-col items-center justify-center text-center ${
-              frontUploaded
-                ? 'border-[#00A896] bg-[#F0FAF8]'
-                : 'border-[#D0D7DE] bg-[#FFFFFF] hover:border-[#00A896]/60 hover:bg-[#FAFDFC]'
-            }`}
-            style={{
-              boxShadow: '0px 2px 8px rgba(0, 0, 0, 0.02)',
-            }}
-          >
-            {frontUploaded ? (
-              <div className="flex flex-col items-center">
-                <div className="w-10 h-10 rounded-full bg-[#00A896] text-white flex items-center justify-center mb-2">
-                  <CheckCircle2 className="w-5 h-5" />
-                </div>
-                <span className="text-xs font-bold text-[#00A896]">Frente del DNI Cargado</span>
-                <span className="text-[11px] text-[#666666] mt-0.5">{frontFileName}</span>
-                <span className="text-[10px] text-[#00A896] font-semibold mt-2 underline">
-                  Toca para volver a capturar
-                </span>
-              </div>
-            ) : (
-              <div className="flex flex-col items-center">
-                <div className="w-10 h-10 rounded-full bg-[#F3F4F6] text-[#666666] flex items-center justify-center mb-2">
-                  <Camera className="w-5 h-5" />
-                </div>
-                <span className="text-xs font-bold text-[#1A1A1A]">Subir o escanear Frente de DNI</span>
-                <span className="text-[11px] text-[#777777] mt-1">
-                  Foto nítida del frente con datos y fotografía visibles
-                </span>
-                <button
-                  type="button"
-                  className="mt-3 px-3 py-1 rounded-md bg-[#E6F6F4] text-[#00A896] text-xs font-semibold hover:bg-[#D5EFEA] transition"
-                >
-                  Capturar Frente
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Dorso de DNI */}
-          <div
-            id="dni-back-upload-box"
-            onClick={handleSimulateBackUpload}
-            className={`rounded-[12px] p-5 border-2 border-dashed transition-all cursor-pointer flex flex-col items-center justify-center text-center ${
-              backUploaded
-                ? 'border-[#00A896] bg-[#F0FAF8]'
-                : 'border-[#D0D7DE] bg-[#FFFFFF] hover:border-[#00A896]/60 hover:bg-[#FAFDFC]'
-            }`}
-            style={{
-              boxShadow: '0px 2px 8px rgba(0, 0, 0, 0.02)',
-            }}
-          >
-            {backUploaded ? (
-              <div className="flex flex-col items-center">
-                <div className="w-10 h-10 rounded-full bg-[#00A896] text-white flex items-center justify-center mb-2">
-                  <CheckCircle2 className="w-5 h-5" />
-                </div>
-                <span className="text-xs font-bold text-[#00A896]">Dorso del DNI Cargado</span>
-                <span className="text-[11px] text-[#666666] mt-0.5">{backFileName}</span>
-                <span className="text-[10px] text-[#00A896] font-semibold mt-2 underline">
-                  Toca para volver a capturar
-                </span>
-              </div>
-            ) : (
-              <div className="flex flex-col items-center">
-                <div className="w-10 h-10 rounded-full bg-[#F3F4F6] text-[#666666] flex items-center justify-center mb-2">
-                  <Upload className="w-5 h-5" />
-                </div>
-                <span className="text-xs font-bold text-[#1A1A1A]">Subir o escanear Dorso de DNI</span>
-                <span className="text-[11px] text-[#777777] mt-1">
-                  Asegúrate que el código de barras PDF417 no tenga reflejos
-                </span>
-                <button
-                  type="button"
-                  className="mt-3 px-3 py-1 rounded-md bg-[#E6F6F4] text-[#00A896] text-xs font-semibold hover:bg-[#D5EFEA] transition"
-                >
-                  Capturar Dorso
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Badge de Protección de Datos */}
-        <div
-          id="kyc-protection-badge"
-          className="rounded-[12px] p-4 bg-[#FFFFFF] border border-[#E8EEF2] flex items-start gap-3 shadow-xs"
-        >
-          <div className="p-1.5 rounded-lg bg-[#E6F6F4] text-[#00A896] shrink-0 mt-0.5">
-            <Lock className="w-4 h-4" />
-          </div>
-          <div>
-            <span className="text-xs font-bold text-[#1A1A1A] block">
-              Protección de Datos & Cifrado AES-256
-            </span>
-            <p className="text-[11px] text-[#666666] mt-1 leading-relaxed">
-              Tus documentos se cifran y procesan de acuerdo a las leyes de protección de datos personales. Thumbi nunca comparte tus imágenes con otros usuarios.
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* Botón Principal de Validación */}
-      <div className="pt-6">
-        <button
-          id="validate-and-login-btn"
-          type="button"
-          disabled={!canSubmit || isVerifying}
-          onClick={handleValidateAndLogin}
-          className="w-full flex items-center justify-center gap-2 py-3.5 px-4 rounded-[12px] text-white font-semibold text-sm transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#00A896] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer shadow-sm"
-          style={{ backgroundColor: '#00A896' }}
-        >
-          {isVerifying ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin" />
-              <span>Validando biometría y DNI...</span>
-            </>
-          ) : (
-            <>
-              <span>Validar e Iniciar Sesión</span>
-              <ArrowRight className="w-4 h-4" />
-            </>
-          )}
-        </button>
-
-        {!canSubmit && (
-          <p className="text-center text-[11px] text-[#888888] mt-2">
-            Debes capturar el frente y dorso del documento para habilitar la validación.
-          </p>
-        )}
-      </div>
-
+    <div className="min-h-screen flex items-center justify-center p-0 md:p-6 bg-slate-900 font-sans">
+      {/* Toast Notification */}
       {toast && (
         <Toast
-          id="identity-verification-toast"
           message={toast.message}
           type={toast.type}
           onClose={() => setToast(null)}
         />
       )}
+
+      {/* Hidden File Inputs for native camera / file picker */}
+      <input
+        type="file"
+        ref={frontInputRef}
+        onChange={handleFrontFileChange}
+        accept="image/*"
+        className="hidden"
+      />
+      <input
+        type="file"
+        ref={backInputRef}
+        onChange={handleBackFileChange}
+        accept="image/*"
+        className="hidden"
+      />
+
+      {/* BEGIN: PhoneFrame */}
+      <main
+        className="w-full max-w-[393px] h-[852px] bg-white text-gray-900 md:rounded-[44px] overflow-hidden shadow-2xl relative flex flex-col justify-between select-none border border-gray-200"
+        data-purpose="mobile-device-frame"
+      >
+        {/* Top Scrollable Container */}
+        <div className="w-full flex flex-col overflow-y-auto">
+          {/* BEGIN: iOSStatusBar */}
+          <header
+            className="w-full pt-3 px-7 flex justify-between items-center z-20 shrink-0 select-none"
+            data-purpose="ios-status-bar"
+          >
+            {/* Time */}
+            <span className="text-[15px] font-semibold tracking-tight text-black">9:41</span>
+            {/* System Icons */}
+            <div className="flex items-center space-x-1.5 text-black">
+              {/* Cellular Signal */}
+              <svg aria-label="Señal móvil" className="w-4 h-4 fill-current" viewBox="0 0 24 24">
+                <path d="M2 17h3v4H2v-4zm5-4h3v8H7v-8zm5-4h3v12h-3V9zm5-5h3v17h-3V4z" />
+              </svg>
+              {/* Wi-Fi */}
+              <svg aria-label="Wi-Fi" className="w-4 h-4 fill-current" viewBox="0 0 24 24">
+                <path d="M12 4C7.31 4 3.07 5.9 0 8.98L12 21 24 8.98C20.93 5.9 16.69 4 12 4zm0 3.5c3.78 0 7.21 1.48 9.77 3.93L12 18.2 2.23 11.43C4.79 8.98 8.22 7.5 12 7.5z" />
+              </svg>
+              {/* Battery */}
+              <div className="w-6 h-3 border border-black rounded-[4px] p-0.5 flex items-center relative">
+                <div className="h-full w-full bg-black rounded-[2px]" />
+                <div className="absolute -right-1 w-0.5 h-1.5 bg-black rounded-r-sm" />
+              </div>
+            </div>
+          </header>
+          {/* END: iOSStatusBar */}
+
+          {/* BEGIN: NavigationAndProgress */}
+          <section className="pt-2 px-6 pb-2 shrink-0" data-purpose="navigation-header">
+            {/* Top Bar: Back button + Title */}
+            <div className="relative flex items-center justify-center h-11">
+              {onBack && (
+                <button
+                  aria-label="Volver atrás"
+                  onClick={onBack}
+                  className="absolute left-0 p-1 -ml-1 text-gray-900 hover:opacity-70 transition-opacity cursor-pointer"
+                  type="button"
+                >
+                  <svg className="w-6 h-6 stroke-current stroke-[2.2] fill-none" viewBox="0 0 24 24">
+                    <path d="M15 19l-7-7 7-7" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
+              )}
+              <h1 className="text-[17px] font-bold tracking-tight text-gray-900">Crea tu cuenta</h1>
+            </div>
+
+            {/* Step Indicator & Category Labels */}
+            <div className="flex items-center justify-between text-[13px] mt-3 mb-2">
+              <span className="text-[#00A896] font-semibold">Paso 2 de 2</span>
+              <span className="text-gray-500 font-normal">Verificación de identidad</span>
+            </div>
+
+            {/* Linear Progress Bar: 100% Completed on Step 2 */}
+            <div className="w-full h-1 bg-gray-200 rounded-full overflow-hidden">
+              <div className="h-full bg-[#00A896] w-full rounded-full transition-all duration-300" />
+            </div>
+          </section>
+          {/* END: NavigationAndProgress */}
+
+          {/* BEGIN: MainContent */}
+          <section
+            className="flex-1 px-6 pt-4 flex flex-col justify-start"
+            data-purpose="verification-content"
+          >
+            {/* Header Titles */}
+            <div className="mb-4">
+              <h2 className="text-[22px] font-bold text-gray-900 tracking-tight leading-tight">
+                Verifica tu Identidad
+              </h2>
+              <p className="text-[13.5px] leading-snug text-gray-500 mt-1.5">
+                Escanea tu DNI para validar tu perfil y garantizar la seguridad de la comunidad.
+              </p>
+            </div>
+
+            {/* Upload Slots */}
+            <div className="space-y-3.5">
+              {/* Card 1: Frente del DNI */}
+              <div
+                id="dni-front-card"
+                onClick={() => frontInputRef.current?.click()}
+                className={`w-full min-h-[126px] p-3 rounded-2xl flex flex-col items-center justify-center cursor-pointer shadow-xs transition-all relative ${
+                  frontPreview
+                    ? 'bg-[#F0F9F8] border-[1.5px] border-[#00A896]'
+                    : 'bg-[#F7F9FA] border-[1.5px] border-dashed border-gray-300 hover:bg-gray-100/80 active:scale-[0.99]'
+                }`}
+                data-purpose="dni-front-upload"
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') frontInputRef.current?.click();
+                }}
+              >
+                {frontPreview ? (
+                  <div className="flex flex-col items-center justify-center text-center">
+                    <div className="w-9 h-9 rounded-full bg-[#00A896] text-white flex items-center justify-center mb-1.5 shadow-xs">
+                      <Check className="w-5 h-5 stroke-[2.5]" />
+                    </div>
+                    <span className="text-[15px] font-bold text-gray-900 tracking-tight">
+                      Frente del DNI cargado
+                    </span>
+                    <span className="text-[12px] text-[#00A896] font-medium mt-0.5">
+                      {frontFile ? frontFile.name : 'Documento escaneado y legible'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setFrontPreview(null);
+                        setFrontFile(null);
+                      }}
+                      className="mt-1 text-[11px] text-gray-500 hover:text-gray-800 underline flex items-center gap-1"
+                    >
+                      <RefreshCw className="w-3 h-3" /> Reemplazar imagen
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="text-[#00A896] mb-1.5">
+                      <svg className="w-7 h-7 stroke-current stroke-[1.8] fill-none" viewBox="0 0 24 24">
+                        <path
+                          d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                        <circle cx="12" cy="13" r="3.5" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </div>
+                    <span className="text-[15px] font-bold text-gray-900 tracking-tight">
+                      Frente del DNI
+                    </span>
+                    <span className="text-[12.5px] text-gray-500 mt-0.5">
+                      Toca para abrir la cámara o seleccionar archivo
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleSimulateFront}
+                      className="mt-2 text-[11px] font-medium text-[#00A896] bg-white border border-[#00A896]/30 px-2 py-0.5 rounded-md hover:bg-[#F0F9F8] transition"
+                    >
+                      Usar captura de prueba
+                    </button>
+                  </>
+                )}
+              </div>
+
+              {/* Card 2: Dorso del DNI */}
+              <div
+                id="dni-back-card"
+                onClick={() => backInputRef.current?.click()}
+                className={`w-full min-h-[126px] p-3 rounded-2xl flex flex-col items-center justify-center cursor-pointer shadow-xs transition-all relative ${
+                  backPreview
+                    ? 'bg-[#F0F9F8] border-[1.5px] border-[#00A896]'
+                    : 'bg-[#F7F9FA] border-[1.5px] border-dashed border-gray-300 hover:bg-gray-100/80 active:scale-[0.99]'
+                }`}
+                data-purpose="dni-back-upload"
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') backInputRef.current?.click();
+                }}
+              >
+                {backPreview ? (
+                  <div className="flex flex-col items-center justify-center text-center">
+                    <div className="w-9 h-9 rounded-full bg-[#00A896] text-white flex items-center justify-center mb-1.5 shadow-xs">
+                      <Check className="w-5 h-5 stroke-[2.5]" />
+                    </div>
+                    <span className="text-[15px] font-bold text-gray-900 tracking-tight">
+                      Dorso del DNI cargado
+                    </span>
+                    <span className="text-[12px] text-[#00A896] font-medium mt-0.5">
+                      {backFile ? backFile.name : 'Código PDF417 verificado'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setBackPreview(null);
+                        setBackFile(null);
+                      }}
+                      className="mt-1 text-[11px] text-gray-500 hover:text-gray-800 underline flex items-center gap-1"
+                    >
+                      <RefreshCw className="w-3 h-3" /> Reemplazar imagen
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="text-[#00A896] mb-1.5">
+                      <svg className="w-7 h-7 stroke-current stroke-[1.8] fill-none" viewBox="0 0 24 24">
+                        <path
+                          d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                        <circle cx="12" cy="13" r="3.5" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </div>
+                    <span className="text-[15px] font-bold text-gray-900 tracking-tight">
+                      Dorso del DNI
+                    </span>
+                    <span className="text-[12.5px] text-gray-500 mt-0.5">
+                      Toca para abrir la cámara o seleccionar archivo
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleSimulateBack}
+                      className="mt-2 text-[11px] font-medium text-[#00A896] bg-white border border-[#00A896]/30 px-2 py-0.5 rounded-md hover:bg-[#F0F9F8] transition"
+                    >
+                      Usar captura de prueba
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          </section>
+          {/* END: MainContent */}
+        </div>
+
+        {/* BEGIN: FooterActions */}
+        <footer
+          className="px-6 pb-3 pt-2 shrink-0 flex flex-col items-center bg-white border-t border-gray-100"
+          data-purpose="actions-and-security"
+        >
+          {/* Primary Action CTA */}
+          <button
+            id="validate-dni-submit-btn"
+            onClick={handleValidateAndLogin}
+            disabled={isVerifying}
+            className="w-full h-[52px] bg-[#00A896] hover:bg-[#008F80] active:scale-[0.98] transition-all text-white font-semibold text-[15.5px] rounded-xl flex items-center justify-center shadow-md cursor-pointer disabled:opacity-60"
+            data-purpose="submit-verification"
+            type="button"
+          >
+            {isVerifying ? (
+              <span className="flex items-center gap-2">
+                <Loader2 className="w-5 h-5 animate-spin" />
+                <span>Validando identidad...</span>
+              </span>
+            ) : (
+              'Validar e Iniciar Sesión'
+            )}
+          </button>
+
+          {/* Secondary Action Link: Hacer este paso más tarde */}
+          <button
+            id="skip-verification-btn"
+            onClick={handleSkipLater}
+            className="mt-3 mb-3 text-[#00A896] hover:underline text-[14px] font-medium transition cursor-pointer"
+            data-purpose="skip-step"
+            type="button"
+          >
+            Hacer este paso más tarde
+          </button>
+
+          {/* Security / Trust Badge */}
+          <div
+            className="flex items-center justify-center space-x-1.5 text-gray-500 mb-1"
+            data-purpose="security-note"
+          >
+            {/* Shield Icon */}
+            <svg
+              className="w-4 h-4 stroke-gray-400 fill-none shrink-0"
+              strokeWidth="2"
+              viewBox="0 0 24 24"
+            >
+              <path
+                d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+              <path d="M9 12l2 2 4-4" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <span className="text-[11.5px] text-gray-500 leading-none">
+              Tus datos están protegidos y solo se utilizarán para validación.
+            </span>
+          </div>
+
+          {/* iOS Home Indicator */}
+          <div
+            className="w-32 h-1 bg-black/80 rounded-full mt-2 mb-1"
+            data-purpose="ios-home-indicator"
+          />
+        </footer>
+        {/* END: FooterActions */}
+      </main>
+      {/* END: PhoneFrame */}
     </div>
   );
 };

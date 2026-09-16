@@ -100,6 +100,7 @@ export function logout(): void {
 }
 
 export const authService = {
+  login: loginWithEmail,
   loginWithEmail,
   registerWithEmail,
   logout,

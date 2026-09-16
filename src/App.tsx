@@ -29,7 +29,8 @@ import { WelcomeScreen } from './screens/WelcomeScreen';
 import { LoginScreen } from './screens/LoginScreen';
 import { RegisterScreen } from './screens/RegisterScreen';
 import { IdentityVerificationScreen } from './screens/IdentityVerificationScreen';
-import { HomeScreen, SearchQueryParams } from './screens/HomeScreen';
+import { HomeScreen } from './screens/HomeScreen';
+import { SearchDashboardScreen, SearchQueryParams } from './screens/SearchDashboardScreen';
 import { SearchResultsScreen } from './screens/SearchResultsScreen';
 import { BookingScreen } from './screens/BookingScreen';
 import { PublishTripScreen } from './screens/PublishTripScreen';
@@ -67,11 +68,12 @@ interface SimulatedVehicle {
 }
 
 export type AppView =
+  | 'home'
   | 'welcome'
   | 'login'
   | 'register'
   | 'identity-verification'
-  | 'home'
+  | 'search-dashboard'
   | 'search-results'
   | 'booking'
   | 'publish'
@@ -80,7 +82,7 @@ export type AppView =
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'app' | 'simulator' | 'whatsapp' | 'architecture' | 'api-docs' | 'deployment'>('app');
-  const [currentAppView, setCurrentAppView] = useState<AppView>('welcome');
+  const [currentAppView, setCurrentAppView] = useState<AppView>('home');
   const [searchParams, setSearchParams] = useState<SearchQueryParams>({
     origin: 'Palermo',
     destination: 'Pilar',
@@ -92,6 +94,7 @@ export default function App() {
   const [user, setUser] = useState<SimulatedUser | null>(null);
   const [kycAttempts, setKycAttempts] = useState(0);
   const [vehicle, setVehicle] = useState<SimulatedVehicle | null>(null);
+  const [isManagingCreatedTrip, setIsManagingCreatedTrip] = useState<boolean>(false);
   const [logs, setLogs] = useState<Array<{ time: string; type: 'auth' | 'kyc' | 'vehicle' | 'info'; message: string }>>([]);
 
   // Estados para simulación de Módulo 5 (Observabilidad / Health & Ready)
@@ -421,11 +424,11 @@ export default function App() {
               </div>
               <div className="flex flex-wrap items-center gap-1.5">
                 {[
-                  { view: 'welcome' as const, label: '1. Bienvenida' },
-                  { view: 'login' as const, label: '2. Iniciar Sesión' },
-                  { view: 'register' as const, label: '3. Registro' },
-                  { view: 'identity-verification' as const, label: '4. Validar DNI' },
-                  { view: 'home' as const, label: '5. Inicio (Buscar)' },
+                  { view: 'home' as const, label: '1. Inicio (Buscar)' },
+                  { view: 'welcome' as const, label: '2. Bienvenida' },
+                  { view: 'login' as const, label: '3. Iniciar Sesión' },
+                  { view: 'register' as const, label: '4. Registro' },
+                  { view: 'identity-verification' as const, label: '5. Validar DNI' },
                   { view: 'search-results' as const, label: '6. Resultados' },
                   { view: 'booking' as const, label: '7. Reservar' },
                   { view: 'publish' as const, label: '8. Publicar Viaje' },
@@ -452,15 +455,38 @@ export default function App() {
             <div className="w-full">
               {currentAppView === 'welcome' && (
                 <WelcomeScreen
+                  onLoginClick={() => setCurrentAppView('login')}
+                  onRegisterClick={() => setCurrentAppView('register')}
                   onNavigateToLogin={() => setCurrentAppView('login')}
                   onNavigateToRegister={() => setCurrentAppView('register')}
+                />
+              )}
+
+              {(currentAppView === 'home' || currentAppView === 'search-dashboard') && (
+                <HomeScreen
+                  userName={user ? user.firstName : 'Sofía'}
+                  isDriver={user?.role === 'DRIVER'}
+                  onSearch={(params) => {
+                    setSearchParams(params);
+                    setCurrentAppView('search-results');
+                  }}
+                  onNavigateToPublish={() => setCurrentAppView('publish')}
+                  onNavigateToTrips={() => setCurrentAppView('trips')}
+                  onNavigateToProfile={() => setCurrentAppView('profile')}
+                  onLogout={() => {
+                    setUser(null);
+                    setSession(null);
+                    setCurrentAppView('welcome');
+                  }}
+                  onLoginClick={() => setCurrentAppView('login')}
+                  onRegisterClick={() => setCurrentAppView('register')}
                 />
               )}
 
               {currentAppView === 'login' && (
                 <LoginScreen
                   onNavigateToRegister={() => setCurrentAppView('register')}
-                  onNavigateToWelcome={() => setCurrentAppView('welcome')}
+                  onNavigateToWelcome={() => setCurrentAppView('home')}
                   onLoginSuccess={(authData) => {
                     setUser({
                       id: authData.user.id,
@@ -480,7 +506,7 @@ export default function App() {
                       provider: 'GOOGLE',
                     });
                     addLog('auth', `Sesión iniciada con éxito para ${authData.user.email}`);
-                    setCurrentAppView('home');
+                    setCurrentAppView('search-dashboard');
                   }}
                 />
               )}
@@ -488,7 +514,7 @@ export default function App() {
               {currentAppView === 'register' && (
                 <RegisterScreen
                   onNavigateToLogin={() => setCurrentAppView('login')}
-                  onNavigateToWelcome={() => setCurrentAppView('welcome')}
+                  onNavigateToWelcome={() => setCurrentAppView('home')}
                   onRegisterSuccess={(authData) => {
                     setUser({
                       id: authData.user.id,
@@ -523,13 +549,17 @@ export default function App() {
                       setUser({ ...user, kycStatus: 'APPROVED' });
                     }
                     addLog('kyc', 'DNI Frente y Dorso aprobados exitosamente con validación biométrica.');
-                    setCurrentAppView('home');
+                    setCurrentAppView('search-dashboard');
+                  }}
+                  onSkip={() => {
+                    addLog('kyc', 'Validación de identidad postergada. Accediendo con verificación pendiente.');
+                    setCurrentAppView('search-dashboard');
                   }}
                 />
               )}
 
-              {currentAppView === 'home' && (
-                <HomeScreen
+              {currentAppView === 'search-dashboard' && (
+                <SearchDashboardScreen
                   userName={user ? user.firstName : 'Sofía'}
                   isDriver={user?.role === 'DRIVER'}
                   onSearch={(params) => {
@@ -542,7 +572,7 @@ export default function App() {
                   onLogout={() => {
                     setUser(null);
                     setSession(null);
-                    setCurrentAppView('welcome');
+                    setCurrentAppView('home');
                   }}
                 />
               )}
@@ -553,7 +583,7 @@ export default function App() {
                   initialDestination={searchParams.destination}
                   initialDate={searchParams.date}
                   initialSeats={searchParams.seats}
-                  onBackToHome={() => setCurrentAppView('home')}
+                  onBackToHome={() => setCurrentAppView('search-dashboard')}
                   onSelectTripToBook={(trip: TripSearchResult) => {
                     setSelectedTrip(trip as unknown as Trip);
                     setCurrentAppView('booking');
@@ -568,6 +598,8 @@ export default function App() {
                 <BookingScreen
                   trip={selectedTrip || undefined}
                   onBack={() => setCurrentAppView('search-results')}
+                  onNavigateToTrips={() => setCurrentAppView('trips')}
+                  onNavigateToHome={() => setCurrentAppView('search-dashboard')}
                   onBookingSuccess={(newBooking: Booking) => {
                     addLog('info', `Reserva ${newBooking.id} creada exitosamente con fondos en Escrow.`);
                     setCurrentAppView('trips');
@@ -577,9 +609,19 @@ export default function App() {
 
               {currentAppView === 'publish' && (
                 <PublishTripScreen
-                  onBack={() => setCurrentAppView('home')}
+                  onBack={() => setCurrentAppView('search-dashboard')}
+                  onNavigateToHome={() => setCurrentAppView('search-dashboard')}
+                  onNavigateToSearch={() => setCurrentAppView('search-dashboard')}
+                  onNavigateToTrips={() => setCurrentAppView('trips')}
+                  onNavigateToProfile={() => setCurrentAppView('profile')}
+                  userVehicle={
+                    vehicle
+                      ? { model: `${vehicle.brand} ${vehicle.model}`, plate: vehicle.plate }
+                      : { model: 'Toyota Corolla', plate: 'AA 123 CD', color: 'Blanco' }
+                  }
                   onTripCreated={() => {
                     addLog('info', 'Nuevo viaje publicado en la red.');
+                    setIsManagingCreatedTrip(true);
                     setCurrentAppView('trips');
                   }}
                 />
@@ -587,10 +629,23 @@ export default function App() {
 
               {currentAppView === 'trips' && (
                 <MyTripsScreen
-                  onNavigateToHome={() => setCurrentAppView('home')}
-                  onNavigateToSearch={() => setCurrentAppView('search-results')}
-                  onNavigateToPublish={() => setCurrentAppView('publish')}
-                  onNavigateToProfile={() => setCurrentAppView('profile')}
+                  initialManageTrip={isManagingCreatedTrip}
+                  onNavigateToHome={() => {
+                    setIsManagingCreatedTrip(false);
+                    setCurrentAppView('search-dashboard');
+                  }}
+                  onNavigateToSearch={() => {
+                    setIsManagingCreatedTrip(false);
+                    setCurrentAppView('search-results');
+                  }}
+                  onNavigateToPublish={() => {
+                    setIsManagingCreatedTrip(false);
+                    setCurrentAppView('publish');
+                  }}
+                  onNavigateToProfile={() => {
+                    setIsManagingCreatedTrip(false);
+                    setCurrentAppView('profile');
+                  }}
                 />
               )}
 
@@ -599,14 +654,14 @@ export default function App() {
                   userName={user ? `${user.firstName} ${user.lastName}` : 'Sofía Martínez'}
                   userEmail={user ? user.email : 'sofia.martinez@ejemplo.com'}
                   role={user?.role || 'PASSENGER'}
-                  onNavigateToHome={() => setCurrentAppView('home')}
+                  onNavigateToHome={() => setCurrentAppView('search-dashboard')}
                   onNavigateToSearch={() => setCurrentAppView('search-results')}
                   onNavigateToPublish={() => setCurrentAppView('publish')}
                   onNavigateToTrips={() => setCurrentAppView('trips')}
                   onLogout={() => {
                     setUser(null);
                     setSession(null);
-                    setCurrentAppView('welcome');
+                    setCurrentAppView('home');
                   }}
                   onToggleRole={() => {
                     if (user) {

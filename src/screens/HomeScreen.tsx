@@ -1,20 +1,19 @@
 import React, { useState } from 'react';
 import {
-  MapPin,
+  Bell,
   Calendar,
   Users,
   Search,
-  PlusCircle,
-  ShieldCheck,
-  ChevronRight,
-  Clock,
-  Sparkles,
-  ArrowRight,
+  MapPin,
   Car,
-  Bell,
-  CheckCircle2,
+  User,
+  PlusCircle,
+  Briefcase,
+  ChevronDown,
+  Loader2,
 } from 'lucide-react';
-import { BottomNav, BottomNavTab } from '../components/BottomNav';
+import { tripService } from '../services/tripService';
+import { Toast } from '../components/Toast';
 
 export interface SearchQueryParams {
   origin: string;
@@ -26,11 +25,13 @@ export interface SearchQueryParams {
 export interface HomeScreenProps {
   userName?: string;
   isDriver?: boolean;
-  onSearch: (params: SearchQueryParams) => void;
-  onNavigateToPublish: () => void;
-  onNavigateToTrips: () => void;
-  onNavigateToProfile: () => void;
+  onSearch?: (params: SearchQueryParams) => void;
+  onNavigateToPublish?: () => void;
+  onNavigateToTrips?: () => void;
+  onNavigateToProfile?: () => void;
   onLogout?: () => void;
+  onLoginClick?: () => void;
+  onRegisterClick?: () => void;
 }
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({
@@ -42,283 +43,550 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   onNavigateToProfile,
   onLogout,
 }) => {
-  const [origin, setOrigin] = useState<string>('Palermo');
-  const [destination, setDestination] = useState<string>('Pilar');
+  const [origin, setOrigin] = useState<string>('Palermo, CABA');
+  const [destination, setDestination] = useState<string>('Pilar, Buenos Aires');
   const [date, setDate] = useState<string>('2026-09-17');
   const [seats, setSeats] = useState<number>(1);
-  const [activeNavTab, setActiveNavTab] = useState<BottomNavTab>('home');
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [showDatePicker, setShowDatePicker] = useState<boolean>(false);
+  const [showSeatsPicker, setShowSeatsPicker] = useState<boolean>(false);
+  const [activeTab, setActiveTab] = useState<'search' | 'trips' | 'publish' | 'profile'>('search');
+  const [toast, setToast] = useState<{
+    message: string;
+    type: 'error' | 'success';
+  } | null>(null);
 
-  const frequentRoutes = [
-    { id: '1', origin: 'Palermo', destination: 'Pilar', label: 'Palermo → Pilar', subtitle: 'Km 50 / Parque Ind.' },
-    { id: '2', origin: 'Córdoba', destination: 'Carlos Paz', label: 'Córdoba → Carlos Paz', subtitle: 'Ruta 20' },
-    { id: '3', origin: 'Rosario', destination: 'Funes', label: 'Rosario → Funes', subtitle: 'Ruta 9' },
-    { id: '4', origin: 'Belgrano', destination: 'Nordelta', label: 'Belgrano → Nordelta', subtitle: 'Acceso Tigre' },
-  ];
+  // Iniciales del usuario
+  const initials = userName
+    .split(' ')
+    .map((n) => n[0])
+    .join('')
+    .substring(0, 2)
+    .toUpperCase() || 'SF';
 
-  const handleSelectFrequentRoute = (route: { origin: string; destination: string }) => {
-    setOrigin(route.origin);
-    setDestination(route.destination);
-    onSearch({
-      origin: route.origin,
-      destination: route.destination,
-      date,
-      seats,
+  // Autocompletado de rutas frecuentes
+  const handleFrequentRouteClick = (orig: string, dest: string, label: string) => {
+    setOrigin(orig);
+    setDestination(dest);
+    setToast({
+      message: `Ruta frecuente seleccionada: ${label}`,
+      type: 'success',
     });
   };
 
-  const handleSearchSubmit = (e: React.FormEvent) => {
+  const handleSearchSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    onSearch({
-      origin,
-      destination,
-      date,
-      seats,
-    });
-  };
+    if (isLoading) return;
 
-  const handleTabChange = (tab: BottomNavTab) => {
-    setActiveNavTab(tab);
-    if (tab === 'publish') onNavigateToPublish();
-    else if (tab === 'trips') onNavigateToTrips();
-    else if (tab === 'profile') onNavigateToProfile();
-    else if (tab === 'search') {
-      onSearch({ origin, destination, date, seats });
+    if (!origin.trim() || !destination.trim()) {
+      setToast({
+        message: 'Por favor ingresa un origen y destino para buscar.',
+        type: 'error',
+      });
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      // Invocamos la búsqueda en el servicio para sincronizar resultados
+      await tripService.searchTrips({
+        origin: origin.trim(),
+        destination: destination.trim(),
+        date,
+        seats,
+      });
+
+      if (onSearch) {
+        onSearch({
+          origin: origin.trim(),
+          destination: destination.trim(),
+          date,
+          seats,
+        });
+      }
+    } catch {
+      // Si ocurre un error de red se procede de todas formas a la vista con filtros
+      if (onSearch) {
+        onSearch({
+          origin: origin.trim(),
+          destination: destination.trim(),
+          date,
+          seats,
+        });
+      }
+    } finally {
+      setIsLoading(false);
     }
   };
 
   return (
-    <div
-      id="home-screen"
-      className="min-h-screen pb-24"
-      style={{
-        backgroundColor: '#F7F9FA',
-        fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, sans-serif',
-      }}
-    >
-      {/* Barra Superior de Bienvenida */}
-      <header className="bg-[#FFFFFF] border-b border-[#ECECEC] px-4 py-4 sm:px-6 sticky top-0 z-30 shadow-xs">
-        <div className="max-w-md mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-[#E6F6F4] text-[#00A896] font-bold text-sm flex items-center justify-center border border-[#00A896]/20">
-              {userName.substring(0, 2).toUpperCase()}
-            </div>
-            <div>
-              <div className="flex items-center gap-1.5">
-                <h1 className="text-lg font-bold text-[#1A1A1A]">¡Hola, {userName}!</h1>
-                <span className="inline-flex items-center px-1.5 py-0.2 rounded-full text-[10px] font-semibold bg-[#E6F6F4] text-[#00A896]">
-                  DNI Verificado
-                </span>
-              </div>
-              <p className="text-xs text-[#777777]">¿A dónde viajas hoy?</p>
-            </div>
+    <div className="min-h-screen flex items-center justify-center p-0 md:p-6 bg-slate-900 font-sans">
+      {/* Toast de Notificaciones */}
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast(null)}
+        />
+      )}
+
+      {/* iPhone 15 Pro Frame */}
+      <div
+        className="w-full max-w-[393px] h-[852px] bg-[#F8FAFC] relative overflow-hidden flex flex-col md:rounded-[54px] shadow-2xl border border-slate-700/50 select-none"
+        data-purpose="iphone-mockup"
+      >
+        {/* BEGIN: StatusBar */}
+        <header className="w-full pt-3 px-7 flex justify-between items-center z-30 select-none bg-[#F8FAFC] shrink-0">
+          {/* Time */}
+          <span className="text-[15px] font-semibold text-gray-900 tracking-tight">9:41</span>
+
+          {/* Dynamic Island Mockup */}
+          <div className="w-28 h-7 bg-black rounded-full absolute left-1/2 -translate-x-1/2 top-2.5 flex items-center justify-between px-2.5 z-40">
+            <div className="w-2.5 h-2.5 rounded-full bg-[#111] opacity-40" />
+            <div className="w-2.5 h-2.5 rounded-full bg-[#0a192f] border border-[#1e293b]" />
           </div>
 
-          <button
-            id="home-notifications-btn"
-            type="button"
-            aria-label="Notificaciones"
-            className="w-9 h-9 rounded-full bg-[#F3F4F6] text-[#444444] flex items-center justify-center hover:bg-slate-200 transition cursor-pointer"
-          >
-            <Bell className="w-4 h-4" />
-          </button>
-        </div>
-      </header>
+          {/* Network, WiFi & Battery Icons */}
+          <div className="flex items-center space-x-2 text-gray-900">
+            {/* Signal icon */}
+            <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
+              <path d="M2 17h3v4H2zm5-4h3v8H7zm5-4h3v12h-3zm5-5h3v17h-3z" />
+            </svg>
+            {/* Wifi icon */}
+            <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
+              <path d="M12 4C7.31 4 3.07 5.9 0 8.98L12 21 24 8.98C20.93 5.9 16.69 4 12 4zm0 3.32c3.84 0 7.33 1.54 9.89 4.04L12 18.9 2.11 11.36C4.67 8.86 8.16 7.32 12 7.32z" />
+            </svg>
+            {/* Battery icon */}
+            <div className="flex items-center">
+              <div className="w-6 h-3 rounded-[4px] border border-gray-900 p-0.5 flex items-center">
+                <div className="w-4 h-full bg-gray-900 rounded-[1px]" />
+              </div>
+              <div className="w-0.5 h-1.5 bg-gray-900 rounded-r-sm" />
+            </div>
+          </div>
+        </header>
+        {/* END: StatusBar */}
 
-      {/* Contenedor Central */}
-      <main className="max-w-md mx-auto px-4 pt-5 space-y-6">
-        {/* Tarjeta de Búsqueda de Viajes */}
-        <div
-          id="search-card"
-          className="rounded-[16px] p-5 sm:p-6 bg-[#FFFFFF]"
-          style={{
-            boxShadow: '0px 2px 10px rgba(0, 0, 0, 0.04)',
-            border: '1px solid #ECECEC',
-          }}
+        {/* Scrollable Content Area */}
+        <main
+          className="flex-1 overflow-y-auto px-5 pt-3 pb-28"
+          style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+          data-purpose="main-content"
         >
-          <div className="flex items-center justify-between mb-4">
-            <span className="text-xs font-bold uppercase tracking-wider text-[#00A896]">
-              Buscar Viaje Compartido
-            </span>
-            <span className="text-[11px] text-[#777777] flex items-center gap-1">
-              <ShieldCheck className="w-3.5 h-3.5 text-[#00A896]" />
-              Tarifas sin lucro
-            </span>
-          </div>
-
-          <form onSubmit={handleSearchSubmit} className="space-y-3.5">
-            {/* Origen */}
-            <div className="relative">
-              <label htmlFor="search-origin-input" className="sr-only">
-                Punto de Origen
-              </label>
-              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-[#00A896]">
-                <MapPin className="w-4 h-4" />
+          {/* BEGIN: HeaderGreeting */}
+          <section className="flex items-center justify-between mb-5" data-purpose="user-greeting">
+            <div className="flex items-center space-x-3.5">
+              {/* Avatar SF with Teal Background */}
+              <div className="w-12 h-12 rounded-full bg-[#00A896] flex items-center justify-center text-white font-bold text-lg shadow-sm shrink-0">
+                {initials}
               </div>
-              <input
-                id="search-origin-input"
-                type="text"
-                required
-                value={origin}
-                onChange={(e) => setOrigin(e.target.value)}
-                placeholder="Punto de partida (ej. Palermo)"
-                className="w-full pl-10 pr-4 py-2.5 bg-[#F9FAFB] border border-[#E5E7EB] rounded-[10px] text-sm text-[#1A1A1A] placeholder-[#9CA3AF] focus:outline-none focus:border-[#00A896] focus:bg-[#FFFFFF] transition-colors"
-              />
+              {/* Title & Subtitle */}
+              <div className="flex flex-col">
+                <h1 className="text-xl font-bold text-gray-900 leading-tight tracking-tight">
+                  ¡Hola, {userName}!
+                </h1>
+                <p className="text-sm text-gray-500 mt-0.5">
+                  ¿A dónde quieres ir hoy?
+                </p>
+              </div>
             </div>
 
-            {/* Destino */}
-            <div className="relative">
-              <label htmlFor="search-dest-input" className="sr-only">
-                Destino
-              </label>
-              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-[#E63946]">
-                <MapPin className="w-4 h-4" />
-              </div>
-              <input
-                id="search-dest-input"
-                type="text"
-                required
-                value={destination}
-                onChange={(e) => setDestination(e.target.value)}
-                placeholder="Destino (ej. Pilar)"
-                className="w-full pl-10 pr-4 py-2.5 bg-[#F9FAFB] border border-[#E5E7EB] rounded-[10px] text-sm text-[#1A1A1A] placeholder-[#9CA3AF] focus:outline-none focus:border-[#00A896] focus:bg-[#FFFFFF] transition-colors"
-              />
-            </div>
+            {/* Notification Bell Button */}
+            <button
+              aria-label="Notificaciones"
+              type="button"
+              onClick={() =>
+                setToast({
+                  message: 'No tienes notificaciones pendientes por el momento.',
+                  type: 'success',
+                })
+              }
+              className="w-11 h-11 rounded-full bg-white flex items-center justify-center text-gray-700 shadow-sm border border-gray-100 hover:bg-gray-50 active:scale-95 transition-all cursor-pointer"
+            >
+              <Bell className="w-5 h-5 text-gray-700" />
+            </button>
+          </section>
+          {/* END: HeaderGreeting */}
 
-            {/* Fecha y Asientos */}
-            <div className="grid grid-cols-2 gap-3">
-              {/* Fecha */}
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-[#666666]">
-                  <Calendar className="w-4 h-4" />
+          {/* BEGIN: SearchFormCard */}
+          <section
+            className="bg-white rounded-2xl p-4 shadow-[0px_4px_20px_rgba(0,0,0,0.05)] border border-gray-100/70 mb-6"
+            data-purpose="search-card"
+          >
+            <form onSubmit={handleSearchSubmit} className="space-y-3.5">
+              {/* Field: Origen */}
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-gray-500 tracking-wide ml-0.5 block">
+                  Origen
+                </label>
+                <div className="flex items-center bg-[#F7F9FA] rounded-xl px-3.5 py-3 border border-transparent focus-within:border-[#00A896] focus-within:bg-white transition-all">
+                  <div className="w-4 h-4 rounded-full border-2 border-[#00A896] mr-3 shrink-0" />
+                  <input
+                    aria-label="Origen del viaje"
+                    className="w-full bg-transparent border-0 p-0 text-sm font-medium text-gray-800 placeholder-gray-400 focus:outline-none"
+                    placeholder="Ej: Palermo, CABA"
+                    type="text"
+                    value={origin}
+                    onChange={(e) => setOrigin(e.target.value)}
+                  />
                 </div>
-                <input
-                  id="search-date-input"
-                  type="date"
-                  value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                  className="w-full pl-9 pr-2 py-2 bg-[#F9FAFB] border border-[#E5E7EB] rounded-[10px] text-xs font-medium text-[#1A1A1A] focus:outline-none focus:border-[#00A896] focus:bg-[#FFFFFF] transition-colors"
+              </div>
+
+              {/* Field: Destino */}
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-gray-500 tracking-wide ml-0.5 block">
+                  Destino
+                </label>
+                <div className="flex items-center bg-[#F7F9FA] rounded-xl px-3.5 py-3 border border-transparent focus-within:border-[#00A896] focus-within:bg-white transition-all">
+                  <MapPin className="w-4 h-4 text-[#00A896] mr-3 shrink-0" />
+                  <input
+                    aria-label="Destino del viaje"
+                    className="w-full bg-transparent border-0 p-0 text-sm font-medium text-gray-800 placeholder-gray-400 focus:outline-none"
+                    placeholder="Ej: Pilar, Buenos Aires"
+                    type="text"
+                    value={destination}
+                    onChange={(e) => setDestination(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {/* 2 Columns Grid: Fecha & Asientos */}
+              <div className="grid grid-cols-2 gap-3 pt-0.5">
+                {/* Column 1: Fecha */}
+                <div className="space-y-1 relative">
+                  <label className="text-xs font-semibold text-gray-500 tracking-wide ml-0.5 block">
+                    Fecha
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setShowDatePicker(!showDatePicker)}
+                    className="w-full flex items-center justify-between bg-[#F7F9FA] rounded-xl px-3 py-3 cursor-pointer hover:bg-gray-100 transition-colors text-left"
+                  >
+                    <div className="flex items-center min-w-0">
+                      <Calendar className="w-4 h-4 text-gray-500 mr-2 shrink-0" />
+                      <span className="text-xs font-medium text-gray-800 truncate">
+                        {date === '2026-09-17' ? 'Hoy, 18:30 hs' : date}
+                      </span>
+                    </div>
+                    <ChevronDown className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                  </button>
+
+                  {/* Inline Date Selector */}
+                  {showDatePicker && (
+                    <div className="absolute top-full left-0 mt-1 z-30 bg-white border border-gray-200 rounded-xl p-3 shadow-lg w-52 space-y-2">
+                      <span className="text-[11px] font-semibold text-gray-600">Seleccionar fecha:</span>
+                      <input
+                        type="date"
+                        value={date}
+                        onChange={(e) => {
+                          setDate(e.target.value);
+                          setShowDatePicker(false);
+                        }}
+                        className="w-full text-xs p-1.5 border border-gray-200 rounded-lg bg-gray-50"
+                      />
+                      <div className="flex gap-1 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDate('2026-09-17');
+                            setShowDatePicker(false);
+                          }}
+                          className="text-[10px] bg-[#E6F6F4] text-[#00A896] px-2 py-1 rounded font-medium hover:bg-[#00A896] hover:text-white transition"
+                        >
+                          Hoy
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDate('2026-09-18');
+                            setShowDatePicker(false);
+                          }}
+                          className="text-[10px] bg-gray-100 text-gray-700 px-2 py-1 rounded font-medium hover:bg-gray-200 transition"
+                        >
+                          Mañana
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Column 2: Asientos */}
+                <div className="space-y-1 relative">
+                  <label className="text-xs font-semibold text-gray-500 tracking-wide ml-0.5 block">
+                    Asientos
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setShowSeatsPicker(!showSeatsPicker)}
+                    className="w-full flex items-center justify-between bg-[#F7F9FA] rounded-xl px-3 py-3 cursor-pointer hover:bg-gray-100 transition-colors text-left"
+                  >
+                    <div className="flex items-center min-w-0">
+                      <Users className="w-4 h-4 text-gray-500 mr-2 shrink-0" />
+                      <span className="text-xs font-medium text-gray-800 truncate">
+                        {seats} {seats === 1 ? 'pasajero' : 'pasajeros'}
+                      </span>
+                    </div>
+                    <ChevronDown className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                  </button>
+
+                  {/* Inline Seats Counter Popover */}
+                  {showSeatsPicker && (
+                    <div className="absolute top-full right-0 mt-1 z-30 bg-white border border-gray-200 rounded-xl p-3 shadow-lg w-44">
+                      <span className="text-[11px] font-semibold text-gray-600 block mb-2">
+                        Plazas a reservar:
+                      </span>
+                      <div className="flex items-center justify-between">
+                        <button
+                          type="button"
+                          disabled={seats <= 1}
+                          onClick={() => setSeats(Math.max(1, seats - 1))}
+                          className="w-7 h-7 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold disabled:opacity-40 transition"
+                        >
+                          -
+                        </button>
+                        <span className="font-bold text-sm text-[#00A896]">{seats}</span>
+                        <button
+                          type="button"
+                          disabled={seats >= 4}
+                          onClick={() => setSeats(Math.min(4, seats + 1))}
+                          className="w-7 h-7 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold disabled:opacity-40 transition"
+                        >
+                          +
+                        </button>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setShowSeatsPicker(false)}
+                        className="w-full mt-2 text-[11px] text-center text-[#00A896] font-semibold hover:underline"
+                      >
+                        Aceptar
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Primary Action Button */}
+              <div className="pt-2">
+                <button
+                  id="search-trips-submit-btn"
+                  type="submit"
+                  disabled={isLoading}
+                  className="w-full bg-[#00A896] hover:bg-[#009081] active:scale-[0.99] text-white font-semibold text-[15px] py-3.5 rounded-xl shadow-[0px_4px_12px_rgba(0,168,150,0.25)] transition-all duration-150 flex items-center justify-center cursor-pointer disabled:opacity-60"
+                >
+                  {isLoading ? (
+                    <span className="flex items-center gap-2">
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      <span>Buscando viajes...</span>
+                    </span>
+                  ) : (
+                    'Buscar viajes'
+                  )}
+                </button>
+              </div>
+            </form>
+          </section>
+          {/* END: SearchFormCard */}
+
+          {/* BEGIN: FrequentRoutesSection */}
+          <section className="space-y-3" data-purpose="frequent-routes">
+            <h2 className="text-base font-bold text-gray-900 tracking-tight">
+              Tus rutas frecuentes
+            </h2>
+
+            {/* Horizontal scrollable chips row */}
+            <div
+              className="flex space-x-2.5 overflow-x-auto pb-1 -mx-5 px-5"
+              style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+            >
+              {/* Chip 1: Casa -> Trabajo */}
+              <button
+                type="button"
+                onClick={() =>
+                  handleFrequentRouteClick(
+                    'Palermo (Plaza Italia)',
+                    'Pilar (Parque Industrial)',
+                    'Casa → Trabajo'
+                  )
+                }
+                className="shrink-0 bg-white border border-gray-200/80 hover:border-[#00A896] px-3.5 py-2.5 rounded-xl flex items-center space-x-2 shadow-xs active:scale-95 transition-all cursor-pointer group"
+              >
+                <svg
+                  className="w-4 h-4 text-[#00A896] -rotate-45 group-hover:scale-110 transition-transform"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  viewBox="0 0 24 24"
+                >
+                  <path d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <span className="text-xs font-medium text-gray-800 whitespace-nowrap">
+                  Casa → Trabajo
+                </span>
+              </button>
+
+              {/* Chip 2: Trabajo -> Univ. */}
+              <button
+                type="button"
+                onClick={() =>
+                  handleFrequentRouteClick(
+                    'Microcentro (Catalinas)',
+                    'Ciudad Universitaria',
+                    'Trabajo → Univ.'
+                  )
+                }
+                className="shrink-0 bg-white border border-gray-200/80 hover:border-[#00A896] px-3.5 py-2.5 rounded-xl flex items-center space-x-2 shadow-xs active:scale-95 transition-all cursor-pointer group"
+              >
+                <svg
+                  className="w-4 h-4 text-[#00A896] -rotate-45 group-hover:scale-110 transition-transform"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  viewBox="0 0 24 24"
+                >
+                  <path d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <span className="text-xs font-medium text-gray-800 whitespace-nowrap">
+                  Trabajo → Univ.
+                </span>
+              </button>
+
+              {/* Chip 3: Casa -> Gym */}
+              <button
+                type="button"
+                onClick={() =>
+                  handleFrequentRouteClick('Palermo', 'Belgrano (Cabildo)', 'Casa → Gym')
+                }
+                className="shrink-0 bg-white border border-gray-200/80 hover:border-[#00A896] px-3.5 py-2.5 rounded-xl flex items-center space-x-2 shadow-xs active:scale-95 transition-all cursor-pointer group"
+              >
+                <svg
+                  className="w-4 h-4 text-[#00A896] -rotate-45 group-hover:scale-110 transition-transform"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  viewBox="0 0 24 24"
+                >
+                  <path d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <span className="text-xs font-medium text-gray-800 whitespace-nowrap">
+                  Casa → Gym
+                </span>
+              </button>
+            </div>
+          </section>
+          {/* END: FrequentRoutesSection */}
+        </main>
+
+        {/* BEGIN: BottomNavigationBar */}
+        <nav
+          className="absolute bottom-0 left-0 right-0 bg-white border-t border-gray-200/70 pt-2 pb-5 px-4 z-40"
+          data-purpose="bottom-nav"
+        >
+          <div className="grid grid-cols-4 items-center text-center">
+            {/* Tab 1: Buscar (Active) */}
+            <button
+              type="button"
+              onClick={() => setActiveTab('search')}
+              className="flex flex-col items-center group cursor-pointer focus:outline-none"
+            >
+              <div className="relative py-1">
+                <Search
+                  className={`w-5 h-5 transition-colors ${
+                    activeTab === 'search' ? 'text-[#00A896] stroke-[2.4]' : 'text-gray-400 group-hover:text-gray-600'
+                  }`}
                 />
               </div>
+              <span
+                className={`text-[11px] font-bold tracking-tight ${
+                  activeTab === 'search' ? 'text-[#00A896]' : 'text-gray-500 font-medium'
+                }`}
+              >
+                Buscar
+              </span>
+            </button>
 
-              {/* Asientos */}
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-[#666666]">
-                  <Users className="w-4 h-4" />
-                </div>
-                <select
-                  id="search-seats-select"
-                  value={seats}
-                  onChange={(e) => setSeats(Number(e.target.value))}
-                  className="w-full pl-9 pr-2 py-2 bg-[#F9FAFB] border border-[#E5E7EB] rounded-[10px] text-xs font-medium text-[#1A1A1A] focus:outline-none focus:border-[#00A896] focus:bg-[#FFFFFF] transition-colors appearance-none"
-                >
-                  <option value={1}>1 Asiento</option>
-                  <option value={2}>2 Asientos</option>
-                  <option value={3}>3 Asientos</option>
-                  <option value={4}>4 Asientos</option>
-                </select>
+            {/* Tab 2: Mis Viajes */}
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('trips');
+                if (onNavigateToTrips) onNavigateToTrips();
+              }}
+              className="flex flex-col items-center group cursor-pointer focus:outline-none"
+            >
+              <div className="relative py-1">
+                <Car
+                  className={`w-5 h-5 transition-colors ${
+                    activeTab === 'trips' ? 'text-[#00A896] stroke-[2.4]' : 'text-gray-400 group-hover:text-gray-600'
+                  }`}
+                />
               </div>
-            </div>
-
-            {/* Botón Buscar Viajes */}
-            <div className="pt-2">
-              <button
-                id="search-trips-submit-btn"
-                type="submit"
-                className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-[10px] text-white font-semibold text-sm transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#00A896] cursor-pointer shadow-sm"
-                style={{ backgroundColor: '#00A896' }}
+              <span
+                className={`text-[11px] font-medium transition-colors ${
+                  activeTab === 'trips' ? 'text-[#00A896] font-bold' : 'text-gray-500 group-hover:text-gray-700'
+                }`}
               >
-                <Search className="w-4 h-4" />
-                <span>Buscar Viajes Disponibles</span>
-              </button>
-            </div>
-          </form>
-        </div>
+                Mis Viajes
+              </span>
+            </button>
 
-        {/* Sección: Tus rutas frecuentes (Chips scrolleables horizontalmente) */}
-        <div>
-          <div className="flex items-center justify-between mb-2.5">
-            <h2 className="text-sm font-bold text-[#1A1A1A]">Tus rutas frecuentes</h2>
-            <span className="text-[11px] text-[#00A896] font-medium">Histórico</span>
-          </div>
-
-          <div
-            id="frequent-routes-container"
-            className="flex items-center gap-2.5 overflow-x-auto pb-2 scrollbar-none"
-          >
-            {frequentRoutes.map((r) => (
-              <button
-                key={r.id}
-                id={`frequent-route-chip-${r.id}`}
-                type="button"
-                onClick={() => handleSelectFrequentRoute(r)}
-                className="shrink-0 text-left px-3.5 py-2.5 rounded-[12px] bg-[#FFFFFF] border border-[#E8EEF2] hover:border-[#00A896] hover:bg-[#F0FAF8] transition-all cursor-pointer shadow-2xs group"
+            {/* Tab 3: Publicar */}
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('publish');
+                if (onNavigateToPublish) onNavigateToPublish();
+              }}
+              className="flex flex-col items-center group cursor-pointer focus:outline-none"
+            >
+              <div className="relative py-1">
+                <PlusCircle
+                  className={`w-5 h-5 transition-colors ${
+                    activeTab === 'publish' ? 'text-[#00A896] stroke-[2.4]' : 'text-gray-400 group-hover:text-gray-600'
+                  }`}
+                />
+              </div>
+              <span
+                className={`text-[11px] font-medium transition-colors ${
+                  activeTab === 'publish' ? 'text-[#00A896] font-bold' : 'text-gray-500 group-hover:text-gray-700'
+                }`}
               >
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs font-bold text-[#1A1A1A] group-hover:text-[#00A896]">
-                    {r.label}
-                  </span>
-                  <ChevronRight className="w-3.5 h-3.5 text-[#9CA3AF] group-hover:text-[#00A896]" />
-                </div>
-                <span className="text-[10px] text-[#777777] block mt-0.5">
-                  {r.subtitle}
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
+                Publicar
+              </span>
+            </button>
 
-        {/* Banner para Conductores: ¿Vas en auto? Publica tu viaje */}
-        <div
-          id="publish-prompt-card"
-          className="rounded-[16px] p-5 bg-gradient-to-r from-[#00A896] to-[#028090] text-white shadow-sm flex items-center justify-between gap-4"
-        >
-          <div>
-            <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/20 text-[10px] font-semibold mb-1.5 backdrop-blur-xs">
-              <Car className="w-3 h-3" />
-              <span>Modo Conductor</span>
-            </div>
-            <h3 className="text-sm font-bold">¿Tienes asientos libres?</h3>
-            <p className="text-xs text-white/85 mt-0.5 max-w-xs">
-              Publica tu trayecto y comparte gastos de combustible y peajes con pasajeros verificados.
-            </p>
-          </div>
-
-          <button
-            id="home-publish-trip-btn"
-            type="button"
-            onClick={onNavigateToPublish}
-            className="shrink-0 px-3.5 py-2 rounded-[10px] bg-[#FFFFFF] text-[#00A896] text-xs font-bold hover:bg-white/95 transition shadow-xs cursor-pointer"
-          >
-            Publicar
-          </button>
-        </div>
-
-        {/* Garantías y Protección de Custodia Escrow */}
-        <div className="rounded-[12px] p-4 bg-[#FFFFFF] border border-[#ECECEC] space-y-3 shadow-xs">
-          <div className="flex items-center gap-2 text-xs font-bold text-[#1A1A1A]">
-            <Sparkles className="w-4 h-4 text-[#00A896]" />
-            <span>Por qué viajar con Thumbi</span>
+            {/* Tab 4: Perfil */}
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('profile');
+                if (onNavigateToProfile) onNavigateToProfile();
+              }}
+              className="flex flex-col items-center group cursor-pointer focus:outline-none"
+            >
+              <div className="relative py-1">
+                <User
+                  className={`w-5 h-5 transition-colors ${
+                    activeTab === 'profile' ? 'text-[#00A896] stroke-[2.4]' : 'text-gray-400 group-hover:text-gray-600'
+                  }`}
+                />
+              </div>
+              <span
+                className={`text-[11px] font-medium transition-colors ${
+                  activeTab === 'profile' ? 'text-[#00A896] font-bold' : 'text-gray-500 group-hover:text-gray-700'
+                }`}
+              >
+                Perfil
+              </span>
+            </button>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 text-xs text-[#555555]">
-            <div className="flex items-start gap-2">
-              <CheckCircle2 className="w-3.5 h-3.5 text-[#00A896] shrink-0 mt-0.5" />
-              <span>Pagos en custodia Escrow hasta completar viaje</span>
-            </div>
-            <div className="flex items-start gap-2">
-              <CheckCircle2 className="w-3.5 h-3.5 text-[#00A896] shrink-0 mt-0.5" />
-              <span>Conductor y pasajeros con DNI y selfie validada</span>
-            </div>
-          </div>
-        </div>
-      </main>
-
-      {/* Barra de navegación inferior fija */}
-      <BottomNav
-        activeTab={activeNavTab}
-        onTabChange={handleTabChange}
-        isDriver={isDriver}
-      />
+          {/* iOS Home Indicator */}
+          <div className="w-32 h-1 bg-black/80 rounded-full mx-auto mt-3" />
+        </nav>
+        {/* END: BottomNavigationBar */}
+      </div>
     </div>
   );
 };
