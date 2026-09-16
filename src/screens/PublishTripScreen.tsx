@@ -1,9 +1,14 @@
 import React, { useState } from 'react';
-import { MapPin, DollarSign, Users, Calendar, ArrowRight, Loader2 } from 'lucide-react';
+import { MapPin, DollarSign, Users, Calendar, ArrowRight, ArrowLeft, Loader2, Car, ShieldCheck } from 'lucide-react';
 import { tripService } from '../services/tripService';
 import { ApiClientError } from '../services/apiClient';
 import { getErrorMessage } from '../utils/errorHelpers';
 import { Toast } from '../components/Toast';
+
+export interface PublishTripScreenProps {
+  onBack?: () => void;
+  onTripCreated?: () => void;
+}
 
 interface FormState {
   origin: string;
@@ -21,7 +26,10 @@ const initialFormState: FormState = {
   departureTime: '',
 };
 
-export const PublishTripScreen: React.FC = () => {
+export const PublishTripScreen: React.FC<PublishTripScreenProps> = ({
+  onBack,
+  onTripCreated,
+}) => {
   const [formData, setFormData] = useState<FormState>(initialFormState);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [toast, setToast] = useState<{
@@ -66,6 +74,12 @@ export const PublishTripScreen: React.FC = () => {
         type: 'success',
       });
       setFormData(initialFormState);
+
+      if (onTripCreated) {
+        setTimeout(() => {
+          onTripCreated();
+        }, 1000);
+      }
     } catch (err: unknown) {
       let message = 'No se pudo publicar el viaje. Inténtalo nuevamente.';
 
@@ -87,15 +101,34 @@ export const PublishTripScreen: React.FC = () => {
   return (
     <div
       id="publish-trip-screen"
-      className="min-h-screen py-10 px-4 sm:px-6 lg:px-8 flex flex-col justify-center items-center"
-      style={{ backgroundColor: '#F7F9FA' }}
+      className="min-h-screen py-8 px-4 sm:px-6 lg:px-8 flex flex-col justify-center items-center"
+      style={{
+        backgroundColor: '#F7F9FA',
+        fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif',
+      }}
     >
       <div className="w-full max-w-xl">
-        <div className="mb-8 text-center sm:text-left">
+        {onBack && (
+          <button
+            id="publish-back-btn"
+            type="button"
+            onClick={onBack}
+            className="mb-4 inline-flex items-center gap-1.5 text-xs font-semibold text-[#666666] hover:text-[#1A1A1A] p-2 -ml-2 rounded-lg hover:bg-slate-200/50 transition cursor-pointer"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            <span>Volver a Inicio</span>
+          </button>
+        )}
+
+        <div className="mb-6 text-center sm:text-left">
+          <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-[#E6F6F4] text-[#00A896] text-xs font-bold mb-2">
+            <Car className="w-3.5 h-3.5" />
+            <span>Modo Conductor Verificado</span>
+          </div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[#1A1A1A]">
             Publicar un viaje
           </h1>
-          <p className="mt-2 text-sm text-[#666666]">
+          <p className="mt-1.5 text-sm text-[#666666]">
             Comparte los gastos de tu trayecto ofreciendo asientos disponibles a otros pasajeros.
           </p>
         </div>
@@ -126,7 +159,7 @@ export const PublishTripScreen: React.FC = () => {
                   name="origin"
                   type="text"
                   required
-                  placeholder="Ej: Córdoba Capital"
+                  placeholder="Ej: Palermo (Plaza Italia)"
                   value={formData.origin}
                   onChange={handleChange}
                   className="w-full pl-10 pr-4 py-2.5 bg-[#FFFFFF] border border-[#E0E0E0] rounded-lg text-sm text-[#1A1A1A] placeholder-[#999999] focus:outline-none focus:border-[#00A896] focus:ring-1 focus:ring-[#00A896] transition-colors"
@@ -151,7 +184,7 @@ export const PublishTripScreen: React.FC = () => {
                   name="destination"
                   type="text"
                   required
-                  placeholder="Ej: Villa Carlos Paz"
+                  placeholder="Ej: Pilar (Parque Industrial / Km 50)"
                   value={formData.destination}
                   onChange={handleChange}
                   className="w-full pl-10 pr-4 py-2.5 bg-[#FFFFFF] border border-[#E0E0E0] rounded-lg text-sm text-[#1A1A1A] placeholder-[#999999] focus:outline-none focus:border-[#00A896] focus:ring-1 focus:ring-[#00A896] transition-colors"
@@ -166,7 +199,7 @@ export const PublishTripScreen: React.FC = () => {
                   htmlFor="price-input"
                   className="block text-xs font-semibold uppercase tracking-wider text-[#4A4A4A] mb-1.5"
                 >
-                  Precio por Asiento (USD)
+                  Precio por Asiento (ARS / Cap Price)
                 </label>
                 <div className="relative rounded-lg">
                   <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-[#888888]">
@@ -177,9 +210,9 @@ export const PublishTripScreen: React.FC = () => {
                     name="pricePerSeat"
                     type="number"
                     min="1"
-                    step="0.5"
+                    step="50"
                     required
-                    placeholder="0.00"
+                    placeholder="1800"
                     value={formData.pricePerSeat}
                     onChange={handleChange}
                     className="w-full pl-10 pr-4 py-2.5 bg-[#FFFFFF] border border-[#E0E0E0] rounded-lg text-sm text-[#1A1A1A] placeholder-[#999999] focus:outline-none focus:border-[#00A896] focus:ring-1 focus:ring-[#00A896] transition-colors"
@@ -243,7 +276,7 @@ export const PublishTripScreen: React.FC = () => {
                 id="submit-publish-trip-btn"
                 type="submit"
                 disabled={!isFormValid || isLoading}
-                className="w-full flex items-center justify-center py-3 px-4 rounded-[8px] text-white font-medium text-sm transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#00A896] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                className="w-full flex items-center justify-center py-3.5 px-4 rounded-[12px] text-white font-semibold text-sm transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#00A896] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer shadow-sm"
                 style={{
                   backgroundColor: '#00A896',
                 }}

@@ -25,10 +25,18 @@ import {
   MessageCircle
 } from 'lucide-react';
 import { WhatsAppTester } from './components/WhatsAppTester';
-import { PublishTripScreen } from './screens/PublishTripScreen';
-import { BookingScreen } from './screens/BookingScreen';
+import { WelcomeScreen } from './screens/WelcomeScreen';
 import { LoginScreen } from './screens/LoginScreen';
 import { RegisterScreen } from './screens/RegisterScreen';
+import { IdentityVerificationScreen } from './screens/IdentityVerificationScreen';
+import { HomeScreen, SearchQueryParams } from './screens/HomeScreen';
+import { SearchResultsScreen } from './screens/SearchResultsScreen';
+import { BookingScreen } from './screens/BookingScreen';
+import { PublishTripScreen } from './screens/PublishTripScreen';
+import { MyTripsScreen } from './screens/MyTripsScreen';
+import { ProfileScreen } from './screens/ProfileScreen';
+import { TripSearchResult } from './services/tripService';
+import { Trip, Booking } from './types/api';
 
 interface SimulatedUser {
   id: string;
@@ -58,8 +66,28 @@ interface SimulatedVehicle {
   rejectionReason?: string;
 }
 
+export type AppView =
+  | 'welcome'
+  | 'login'
+  | 'register'
+  | 'identity-verification'
+  | 'home'
+  | 'search-results'
+  | 'booking'
+  | 'publish'
+  | 'trips'
+  | 'profile';
+
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'simulator' | 'login' | 'register' | 'publish' | 'booking' | 'whatsapp' | 'architecture' | 'api-docs' | 'deployment'>('simulator');
+  const [activeTab, setActiveTab] = useState<'app' | 'simulator' | 'whatsapp' | 'architecture' | 'api-docs' | 'deployment'>('app');
+  const [currentAppView, setCurrentAppView] = useState<AppView>('welcome');
+  const [searchParams, setSearchParams] = useState<SearchQueryParams>({
+    origin: 'Palermo',
+    destination: 'Pilar',
+    date: '2026-09-17',
+    seats: 1,
+  });
+  const [selectedTrip, setSelectedTrip] = useState<Trip | null>(null);
   const [session, setSession] = useState<SimulatedSession | null>(null);
   const [user, setUser] = useState<SimulatedUser | null>(null);
   const [kycAttempts, setKycAttempts] = useState(0);
@@ -315,57 +343,64 @@ export default function App() {
         {/* Pestañas de Navegación */}
         <div className="flex bg-slate-800/80 p-1 rounded-lg border border-slate-700/60 text-sm overflow-x-auto">
           <button
+            onClick={() => setActiveTab('app')}
+            className={`px-3 py-1.5 rounded-md font-medium transition flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
+              activeTab === 'app'
+                ? 'bg-[#00A896] text-white shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Smartphone className="w-4 h-4" />
+            <span>📱 App Stitch (Flujo Completo)</span>
+          </button>
+          <button
             onClick={() => setActiveTab('simulator')}
-            className={`px-3 py-1.5 rounded-md font-medium transition whitespace-nowrap ${activeTab === 'simulator' ? 'bg-emerald-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+            className={`px-3 py-1.5 rounded-md font-medium transition whitespace-nowrap cursor-pointer ${
+              activeTab === 'simulator'
+                ? 'bg-emerald-600 text-white shadow'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
           >
             Simulador de Casos de Uso
           </button>
           <button
-            onClick={() => setActiveTab('login')}
-            className={`px-3 py-1.5 rounded-md font-medium transition whitespace-nowrap ${activeTab === 'login' ? 'bg-[#00A896] text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
-          >
-            Iniciar Sesión (Stitch UI)
-          </button>
-          <button
-            onClick={() => setActiveTab('register')}
-            className={`px-3 py-1.5 rounded-md font-medium transition whitespace-nowrap ${activeTab === 'register' ? 'bg-[#00A896] text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
-          >
-            Registrarse (Stitch UI)
-          </button>
-          <button
-            onClick={() => setActiveTab('publish')}
-            className={`px-3 py-1.5 rounded-md font-medium transition whitespace-nowrap ${activeTab === 'publish' ? 'bg-[#00A896] text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
-          >
-            Publicar Viaje (Stitch UI)
-          </button>
-          <button
-            onClick={() => setActiveTab('booking')}
-            className={`px-3 py-1.5 rounded-md font-medium transition whitespace-nowrap ${activeTab === 'booking' ? 'bg-[#00A896] text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
-          >
-            Reservar Asiento (Stitch UI)
-          </button>
-          <button
             onClick={() => setActiveTab('whatsapp')}
-            className={`px-3 py-1.5 rounded-md font-medium transition flex items-center space-x-1.5 whitespace-nowrap ${activeTab === 'whatsapp' ? 'bg-emerald-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+            className={`px-3 py-1.5 rounded-md font-medium transition flex items-center space-x-1.5 whitespace-nowrap cursor-pointer ${
+              activeTab === 'whatsapp'
+                ? 'bg-emerald-600 text-white shadow'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
           >
             <MessageCircle className="w-4 h-4" />
             <span>WhatsApp Deeplink</span>
           </button>
           <button
             onClick={() => setActiveTab('architecture')}
-            className={`px-3 py-1.5 rounded-md font-medium transition whitespace-nowrap ${activeTab === 'architecture' ? 'bg-emerald-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+            className={`px-3 py-1.5 rounded-md font-medium transition whitespace-nowrap cursor-pointer ${
+              activeTab === 'architecture'
+                ? 'bg-emerald-600 text-white shadow'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
           >
             Clean Architecture (Go)
           </button>
           <button
             onClick={() => setActiveTab('api-docs')}
-            className={`px-3 py-1.5 rounded-md font-medium transition whitespace-nowrap ${activeTab === 'api-docs' ? 'bg-emerald-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+            className={`px-3 py-1.5 rounded-md font-medium transition whitespace-nowrap cursor-pointer ${
+              activeTab === 'api-docs'
+                ? 'bg-emerald-600 text-white shadow'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
           >
             Contratos REST / Gin
           </button>
           <button
             onClick={() => setActiveTab('deployment')}
-            className={`px-3 py-1.5 rounded-md font-medium transition whitespace-nowrap ${activeTab === 'deployment' ? 'bg-emerald-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+            className={`px-3 py-1.5 rounded-md font-medium transition whitespace-nowrap cursor-pointer ${
+              activeTab === 'deployment'
+                ? 'bg-emerald-600 text-white shadow'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
           >
             Módulo 5: Docker, Health & CI/CD
           </button>
@@ -373,72 +408,220 @@ export default function App() {
       </header>
 
       {/* Contenido Principal */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
-        {activeTab === 'login' && (
-          <div className="w-full flex justify-center">
-            <LoginScreen
-              onNavigateToRegister={() => setActiveTab('register')}
-              onLoginSuccess={(authData) => {
-                setUser({
-                  id: authData.user.id,
-                  email: authData.user.email,
-                  firstName: authData.user.firstName,
-                  lastName: authData.user.lastName,
-                  role: (authData.user.role as 'PASSENGER' | 'DRIVER' | 'ADMIN') || 'PASSENGER',
-                  kycStatus: (authData.user.kycStatus as 'PENDING_VERIFICATION' | 'APPROVED' | 'REJECTED') || 'PENDING_VERIFICATION',
-                  isDriverActive: authData.user.isDriverActive,
-                  token: authData.accessToken,
-                });
-                setSession({
-                  token: authData.accessToken,
-                  expiresInSeconds: authData.expiresIn || 1200,
-                  provider: 'EMAIL',
-                  createdAt: new Date(),
-                });
-                addLog('auth', `Sesión iniciada con éxito para ${authData.user.email}`);
-                setActiveTab('simulator');
-              }}
-            />
-          </div>
-        )}
+      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 space-y-6">
+        {activeTab === 'app' && (
+          <div className="w-full space-y-4">
+            {/* Barra de accesos directos al ciclo de vida de Stitch */}
+            <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2">
+                <span className="font-semibold text-white">Navegación del Flujo:</span>
+                <span className="text-[#00A896] bg-[#00A896]/10 px-2 py-0.5 rounded font-mono font-bold uppercase tracking-wider">
+                  {currentAppView}
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {[
+                  { view: 'welcome' as const, label: '1. Bienvenida' },
+                  { view: 'login' as const, label: '2. Iniciar Sesión' },
+                  { view: 'register' as const, label: '3. Registro' },
+                  { view: 'identity-verification' as const, label: '4. Validar DNI' },
+                  { view: 'home' as const, label: '5. Inicio (Buscar)' },
+                  { view: 'search-results' as const, label: '6. Resultados' },
+                  { view: 'booking' as const, label: '7. Reservar' },
+                  { view: 'publish' as const, label: '8. Publicar Viaje' },
+                  { view: 'trips' as const, label: '9. Mis Viajes' },
+                  { view: 'profile' as const, label: '10. Perfil' },
+                ].map((item) => (
+                  <button
+                    key={item.view}
+                    type="button"
+                    onClick={() => setCurrentAppView(item.view)}
+                    className={`px-2.5 py-1 rounded-md font-medium transition cursor-pointer ${
+                      currentAppView === item.view
+                        ? 'bg-[#00A896] text-white shadow-sm font-semibold'
+                        : 'bg-slate-800/80 text-slate-300 hover:bg-slate-700 hover:text-white'
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
 
-        {activeTab === 'register' && (
-          <div className="w-full flex justify-center">
-            <RegisterScreen
-              onNavigateToLogin={() => setActiveTab('login')}
-              onRegisterSuccess={(authData) => {
-                setUser({
-                  id: authData.user.id,
-                  email: authData.user.email,
-                  firstName: authData.user.firstName,
-                  lastName: authData.user.lastName,
-                  role: (authData.user.role as 'PASSENGER' | 'DRIVER' | 'ADMIN') || 'PASSENGER',
-                  kycStatus: (authData.user.kycStatus as 'PENDING_VERIFICATION' | 'APPROVED' | 'REJECTED') || 'PENDING_VERIFICATION',
-                  isDriverActive: authData.user.isDriverActive,
-                  token: authData.accessToken,
-                });
-                setSession({
-                  token: authData.accessToken,
-                  expiresInSeconds: authData.expiresIn || 1200,
-                  provider: 'EMAIL',
-                  createdAt: new Date(),
-                });
-                addLog('auth', `Registro completado e inicio de sesión para ${authData.user.email}`);
-                setActiveTab('simulator');
-              }}
-            />
-          </div>
-        )}
+            {/* Renderizado de Pantalla Activa según Router */}
+            <div className="w-full">
+              {currentAppView === 'welcome' && (
+                <WelcomeScreen
+                  onNavigateToLogin={() => setCurrentAppView('login')}
+                  onNavigateToRegister={() => setCurrentAppView('register')}
+                />
+              )}
 
-        {activeTab === 'publish' && (
-          <div className="w-full flex justify-center">
-            <PublishTripScreen />
-          </div>
-        )}
+              {currentAppView === 'login' && (
+                <LoginScreen
+                  onNavigateToRegister={() => setCurrentAppView('register')}
+                  onNavigateToWelcome={() => setCurrentAppView('welcome')}
+                  onLoginSuccess={(authData) => {
+                    setUser({
+                      id: authData.user.id,
+                      email: authData.user.email,
+                      firstName: authData.user.firstName,
+                      lastName: authData.user.lastName,
+                      role: (authData.user.role as 'PASSENGER' | 'DRIVER') || 'PASSENGER',
+                      kycStatus: 'APPROVED',
+                      isDriverActive: authData.user.isDriverActive,
+                      canBookRides: true,
+                      canPublishRides: authData.user.role === 'DRIVER',
+                    });
+                    setSession({
+                      token: authData.accessToken,
+                      expiresInSeconds: authData.expiresIn || 1200,
+                      initialSeconds: authData.expiresIn || 1200,
+                      provider: 'GOOGLE',
+                    });
+                    addLog('auth', `Sesión iniciada con éxito para ${authData.user.email}`);
+                    setCurrentAppView('home');
+                  }}
+                />
+              )}
 
-        {activeTab === 'booking' && (
-          <div className="w-full flex justify-center">
-            <BookingScreen />
+              {currentAppView === 'register' && (
+                <RegisterScreen
+                  onNavigateToLogin={() => setCurrentAppView('login')}
+                  onNavigateToWelcome={() => setCurrentAppView('welcome')}
+                  onRegisterSuccess={(authData) => {
+                    setUser({
+                      id: authData.user.id,
+                      email: authData.user.email,
+                      firstName: authData.user.firstName,
+                      lastName: authData.user.lastName,
+                      role: (authData.user.role as 'PASSENGER' | 'DRIVER') || 'PASSENGER',
+                      kycStatus: 'PENDING_VERIFICATION',
+                      isDriverActive: authData.user.isDriverActive,
+                      canBookRides: true,
+                      canPublishRides: authData.user.role === 'DRIVER',
+                    });
+                    setSession({
+                      token: authData.accessToken,
+                      expiresInSeconds: authData.expiresIn || 1200,
+                      initialSeconds: authData.expiresIn || 1200,
+                      provider: 'GOOGLE',
+                    });
+                    addLog('auth', `Registro completado para ${authData.user.email}. Pasando a validación de identidad.`);
+                    setCurrentAppView('identity-verification');
+                  }}
+                />
+              )}
+
+              {currentAppView === 'identity-verification' && (
+                <IdentityVerificationScreen
+                  userEmail={user?.email || 'sofia.martinez@ejemplo.com'}
+                  userName={user ? `${user.firstName} ${user.lastName}` : 'Sofía Martínez'}
+                  onBack={() => setCurrentAppView('register')}
+                  onVerificationSuccess={() => {
+                    if (user) {
+                      setUser({ ...user, kycStatus: 'APPROVED' });
+                    }
+                    addLog('kyc', 'DNI Frente y Dorso aprobados exitosamente con validación biométrica.');
+                    setCurrentAppView('home');
+                  }}
+                />
+              )}
+
+              {currentAppView === 'home' && (
+                <HomeScreen
+                  userName={user ? user.firstName : 'Sofía'}
+                  isDriver={user?.role === 'DRIVER'}
+                  onSearch={(params) => {
+                    setSearchParams(params);
+                    setCurrentAppView('search-results');
+                  }}
+                  onNavigateToPublish={() => setCurrentAppView('publish')}
+                  onNavigateToTrips={() => setCurrentAppView('trips')}
+                  onNavigateToProfile={() => setCurrentAppView('profile')}
+                  onLogout={() => {
+                    setUser(null);
+                    setSession(null);
+                    setCurrentAppView('welcome');
+                  }}
+                />
+              )}
+
+              {currentAppView === 'search-results' && (
+                <SearchResultsScreen
+                  initialOrigin={searchParams.origin}
+                  initialDestination={searchParams.destination}
+                  initialDate={searchParams.date}
+                  initialSeats={searchParams.seats}
+                  onBackToHome={() => setCurrentAppView('home')}
+                  onSelectTripToBook={(trip: TripSearchResult) => {
+                    setSelectedTrip(trip as unknown as Trip);
+                    setCurrentAppView('booking');
+                  }}
+                  onNavigateToPublish={() => setCurrentAppView('publish')}
+                  onNavigateToTrips={() => setCurrentAppView('trips')}
+                  onNavigateToProfile={() => setCurrentAppView('profile')}
+                />
+              )}
+
+              {currentAppView === 'booking' && (
+                <BookingScreen
+                  trip={selectedTrip || undefined}
+                  onBack={() => setCurrentAppView('search-results')}
+                  onBookingSuccess={(newBooking: Booking) => {
+                    addLog('info', `Reserva ${newBooking.id} creada exitosamente con fondos en Escrow.`);
+                    setCurrentAppView('trips');
+                  }}
+                />
+              )}
+
+              {currentAppView === 'publish' && (
+                <PublishTripScreen
+                  onBack={() => setCurrentAppView('home')}
+                  onTripCreated={() => {
+                    addLog('info', 'Nuevo viaje publicado en la red.');
+                    setCurrentAppView('trips');
+                  }}
+                />
+              )}
+
+              {currentAppView === 'trips' && (
+                <MyTripsScreen
+                  onNavigateToHome={() => setCurrentAppView('home')}
+                  onNavigateToSearch={() => setCurrentAppView('search-results')}
+                  onNavigateToPublish={() => setCurrentAppView('publish')}
+                  onNavigateToProfile={() => setCurrentAppView('profile')}
+                />
+              )}
+
+              {currentAppView === 'profile' && (
+                <ProfileScreen
+                  userName={user ? `${user.firstName} ${user.lastName}` : 'Sofía Martínez'}
+                  userEmail={user ? user.email : 'sofia.martinez@ejemplo.com'}
+                  role={user?.role || 'PASSENGER'}
+                  onNavigateToHome={() => setCurrentAppView('home')}
+                  onNavigateToSearch={() => setCurrentAppView('search-results')}
+                  onNavigateToPublish={() => setCurrentAppView('publish')}
+                  onNavigateToTrips={() => setCurrentAppView('trips')}
+                  onLogout={() => {
+                    setUser(null);
+                    setSession(null);
+                    setCurrentAppView('welcome');
+                  }}
+                  onToggleRole={() => {
+                    if (user) {
+                      const nextRole = user.role === 'DRIVER' ? 'PASSENGER' : 'DRIVER';
+                      setUser({
+                        ...user,
+                        role: nextRole,
+                        canPublishRides: nextRole === 'DRIVER',
+                      });
+                      addLog('info', `Rol alternado a ${nextRole}`);
+                    }
+                  }}
+                />
+              )}
+            </div>
           </div>
         )}
 

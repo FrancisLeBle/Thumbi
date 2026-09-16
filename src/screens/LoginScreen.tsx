@@ -8,11 +8,13 @@ import { Toast } from '../components/Toast';
 export interface LoginScreenProps {
   onLoginSuccess?: (authData: AuthResponse) => void;
   onNavigateToRegister?: () => void;
+  onNavigateToWelcome?: () => void;
 }
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({
   onLoginSuccess,
   onNavigateToRegister,
+  onNavigateToWelcome,
 }) => {
   const [email, setEmail] = useState<string>('');
   const [password, setPassword] = useState<string>('');
@@ -74,6 +76,17 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
       <div className="w-full max-w-md">
         {/* Cabecera / Identidad */}
         <div className="mb-8 text-center">
+          {onNavigateToWelcome && (
+            <div className="flex items-center justify-start mb-4">
+              <button
+                type="button"
+                onClick={onNavigateToWelcome}
+                className="p-2 -ml-2 rounded-lg text-[#666666] hover:bg-slate-200/60 transition cursor-pointer"
+              >
+                <ArrowRight className="w-5 h-5 rotate-180" />
+              </button>
+            </div>
+          )}
           <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-[#E6F6F4] text-[#00A896] mb-3">
             <LogIn className="w-6 h-6" />
           </div>
@@ -157,7 +170,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                 id="submit-login-btn"
                 type="submit"
                 disabled={!isFormValid || isLoading}
-                className="w-full flex items-center justify-center py-3 px-4 rounded-[8px] text-white font-medium text-sm transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#00A896] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                className="w-full flex items-center justify-center py-3.5 px-4 rounded-[12px] text-white font-semibold text-sm transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#00A896] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer shadow-sm"
                 style={{
                   backgroundColor: '#00A896',
                 }}

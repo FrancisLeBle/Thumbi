@@ -10,6 +10,8 @@ export interface RegisterPayload {
   password?: string;
   firstName?: string;
   lastName?: string;
+  phone?: string;
+  role?: 'PASSENGER' | 'DRIVER';
 }
 
 export interface AuthResponse {
@@ -21,6 +23,7 @@ export interface AuthResponse {
     email: string;
     firstName: string;
     lastName: string;
+    phone?: string;
     role: string;
     kycStatus: string;
     isDriverActive: boolean;

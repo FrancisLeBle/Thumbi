@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Mail, Lock, User, Loader2, UserPlus, ArrowLeft, ShieldCheck, Check } from 'lucide-react';
+import { Mail, Lock, User, Phone, Car, Users, Loader2, UserPlus, ArrowLeft, ArrowRight, ShieldCheck, Check } from 'lucide-react';
 import { authService, AuthResponse } from '../services/authService';
 import { ApiClientError } from '../services/apiClient';
 import { getErrorMessage } from '../utils/errorHelpers';
@@ -8,15 +8,19 @@ import { Toast } from '../components/Toast';
 export interface RegisterScreenProps {
   onRegisterSuccess?: (authData: AuthResponse) => void;
   onNavigateToLogin?: () => void;
+  onContinueToVerification?: (userData: { email: string; name: string; role: 'PASSENGER' | 'DRIVER' }) => void;
 }
 
 export const RegisterScreen: React.FC<RegisterScreenProps> = ({
   onRegisterSuccess,
   onNavigateToLogin,
+  onContinueToVerification,
 }) => {
   const [firstName, setFirstName] = useState<string>('');
   const [lastName, setLastName] = useState<string>('');
   const [email, setEmail] = useState<string>('');
+  const [phone, setPhone] = useState<string>('');
+  const [role, setRole] = useState<'PASSENGER' | 'DRIVER'>('PASSENGER');
   const [password, setPassword] = useState<string>('');
   const [confirmPassword, setConfirmPassword] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -53,15 +57,25 @@ export const RegisterScreen: React.FC<RegisterScreenProps> = ({
         password,
         firstName: firstName.trim(),
         lastName: lastName.trim(),
+        phone: phone.trim(),
+        role,
       });
 
       setToast({
-        message: '¡Cuenta creada con éxito! Bienvenido a Thumbi. Tu rol base es Pasajero.',
+        message: `¡Cuenta pre-registrada! Continuando al Paso 2: Verificación de Identidad.`,
         type: 'success',
       });
 
       if (onRegisterSuccess) {
         onRegisterSuccess(response);
+      }
+
+      if (onContinueToVerification) {
+        onContinueToVerification({
+          email: email.trim(),
+          name: firstName.trim(),
+          role,
+        });
       }
     } catch (err: unknown) {
       let message = 'No se pudo completar el registro. Inténtalo nuevamente.';
@@ -92,15 +106,29 @@ export const RegisterScreen: React.FC<RegisterScreenProps> = ({
     >
       <div className="w-full max-w-lg">
         {/* Cabecera / Identidad */}
-        <div className="mb-8 text-center">
-          <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-[#E6F6F4] text-[#00A896] mb-3">
+        <div className="mb-6 text-center">
+          <div className="flex items-center justify-between mb-4">
+            {onNavigateToLogin && (
+              <button
+                type="button"
+                onClick={onNavigateToLogin}
+                className="p-2 -ml-2 rounded-lg text-[#666666] hover:bg-slate-200/60 transition cursor-pointer"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+            )}
+            <span className="text-xs font-semibold text-[#00A896] bg-[#E6F6F4] px-2.5 py-1 rounded-full ml-auto">
+              Paso 1 de 2 • Datos Personales
+            </span>
+          </div>
+          <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-[#E6F6F4] text-[#00A896] mb-2">
             <UserPlus className="w-6 h-6" />
           </div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[#1A1A1A]">
             Crear Cuenta
           </h1>
-          <p className="mt-2 text-sm text-[#666666]">
-            Regístrate en la red de viajes compartidos segura y verificada.
+          <p className="mt-1 text-sm text-[#666666]">
+            Completa tus datos para unirte a la comunidad Thumbi.
           </p>
         </div>
 
@@ -114,6 +142,42 @@ export const RegisterScreen: React.FC<RegisterScreenProps> = ({
           }}
         >
           <form id="register-form" onSubmit={handleSubmit} className="space-y-4">
+            {/* Selector de Rol: Pasajero / Conductor */}
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-[#4A4A4A] mb-1.5">
+                Quiero usar Thumbi como
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  id="role-passenger-btn"
+                  type="button"
+                  onClick={() => setRole('PASSENGER')}
+                  className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-[10px] border text-xs font-semibold transition cursor-pointer ${
+                    role === 'PASSENGER'
+                      ? 'border-[#00A896] bg-[#E6F6F4] text-[#00A896] ring-1 ring-[#00A896]'
+                      : 'border-[#E0E0E0] bg-[#FFFFFF] text-[#555555] hover:bg-slate-50'
+                  }`}
+                >
+                  <Users className="w-4 h-4" />
+                  <span>Pasajero</span>
+                </button>
+
+                <button
+                  id="role-driver-btn"
+                  type="button"
+                  onClick={() => setRole('DRIVER')}
+                  className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-[10px] border text-xs font-semibold transition cursor-pointer ${
+                    role === 'DRIVER'
+                      ? 'border-[#00A896] bg-[#E6F6F4] text-[#00A896] ring-1 ring-[#00A896]'
+                      : 'border-[#E0E0E0] bg-[#FFFFFF] text-[#555555] hover:bg-slate-50'
+                  }`}
+                >
+                  <Car className="w-4 h-4" />
+                  <span>Conductor</span>
+                </button>
+              </div>
+            </div>
+
             {/* Nombre y Apellido */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
@@ -133,7 +197,7 @@ export const RegisterScreen: React.FC<RegisterScreenProps> = ({
                     type="text"
                     required
                     autoComplete="given-name"
-                    placeholder="Ej: Juan"
+                    placeholder="Ej: Sofía"
                     value={firstName}
                     onChange={(e) => setFirstName(e.target.value)}
                     disabled={isLoading}
@@ -159,13 +223,39 @@ export const RegisterScreen: React.FC<RegisterScreenProps> = ({
                     type="text"
                     required
                     autoComplete="family-name"
-                    placeholder="Ej: Pérez"
+                    placeholder="Ej: Martínez"
                     value={lastName}
                     onChange={(e) => setLastName(e.target.value)}
                     disabled={isLoading}
                     className="w-full pl-10 pr-4 py-2.5 bg-[#FFFFFF] border border-[#E0E0E0] rounded-lg text-sm text-[#1A1A1A] placeholder-[#999999] focus:outline-none focus:border-[#00A896] focus:ring-1 focus:ring-[#00A896] transition-colors"
                   />
                 </div>
+              </div>
+            </div>
+
+            {/* Teléfono Móvil */}
+            <div>
+              <label
+                htmlFor="register-phone-input"
+                className="block text-xs font-semibold uppercase tracking-wider text-[#4A4A4A] mb-1.5"
+              >
+                Teléfono Móvil
+              </label>
+              <div className="relative rounded-lg">
+                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-[#888888]">
+                  <Phone className="w-4 h-4" />
+                </div>
+                <input
+                  id="register-phone-input"
+                  name="phone"
+                  type="tel"
+                  autoComplete="tel"
+                  placeholder="Ej: +54 9 11 2345-6789"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  disabled={isLoading}
+                  className="w-full pl-10 pr-4 py-2.5 bg-[#FFFFFF] border border-[#E0E0E0] rounded-lg text-sm text-[#1A1A1A] placeholder-[#999999] focus:outline-none focus:border-[#00A896] focus:ring-1 focus:ring-[#00A896] transition-colors"
+                />
               </div>
             </div>
 
@@ -258,24 +348,27 @@ export const RegisterScreen: React.FC<RegisterScreenProps> = ({
               )}
             </div>
 
-            {/* Botón Principal (type="submit") */}
+            {/* Botón Principal: Continuar a Verificación (type="submit") */}
             <div className="pt-3">
               <button
-                id="submit-register-btn"
+                id="continue-to-verification-btn"
                 type="submit"
                 disabled={!isFormValid || isLoading}
-                className="w-full flex items-center justify-center py-3 px-4 rounded-[8px] text-white font-medium text-sm transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#00A896] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                className="w-full flex items-center justify-center gap-2 py-3.5 px-4 rounded-[12px] text-white font-semibold text-sm transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#00A896] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer shadow-sm"
                 style={{
                   backgroundColor: '#00A896',
                 }}
               >
                 {isLoading ? (
                   <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Creando cuenta...
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Guardando datos...</span>
                   </>
                 ) : (
-                  'Registrarse'
+                  <>
+                    <span>Continuar a Verificación</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </>
                 )}
               </button>
             </div>
@@ -302,10 +395,10 @@ export const RegisterScreen: React.FC<RegisterScreenProps> = ({
         <div className="mt-6 space-y-2 text-center">
           <div className="flex items-center justify-center gap-1.5 text-xs text-[#888888]">
             <ShieldCheck className="w-4 h-4 text-[#00A896]" />
-            <span>Datos cifrados y validación biométrica para conductores</span>
+            <span>Datos protegidos bajo estrictas normas de privacidad</span>
           </div>
           <p className="text-[11px] text-[#999999]">
-            Al registrarte aceptas las políticas de uso responsable y protección de pagos en Escrow.
+            En el siguiente paso validaremos tu documento de identidad oficial.
           </p>
         </div>
       </div>
