@@ -1,6 +1,6 @@
 import { ApiErrorResponse } from '../types/api';
 import { keysToCamelCase } from '../utils/apiHelpers';
-import { getErrorMessage } from '../utils/errorHelpers';
+import { ERROR_MESSAGES, getErrorMessage } from '../utils/errorHelpers';
 
 const BASE_URL = '/api';
 const TOKEN_KEY = 'thumbi_auth_token';
@@ -133,7 +133,7 @@ async function request<T = unknown>(endpoint: string, options: RequestOptions = 
     }
 
     const errorCode = errorData.code || (response.status === 401 ? 'UNAUTHORIZED' : 'UNKNOWN_ERROR');
-    const localizedMessage = errorData.message && errorData.code && errorData.code in (await import('../utils/errorHelpers')).ERROR_MESSAGES
+    const localizedMessage = errorData.message && errorData.code && errorData.code in ERROR_MESSAGES
       ? getErrorMessage(errorData.code)
       : errorData.message || getErrorMessage(errorCode);
 

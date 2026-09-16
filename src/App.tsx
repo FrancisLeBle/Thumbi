@@ -27,6 +27,8 @@ import {
 import { WhatsAppTester } from './components/WhatsAppTester';
 import { PublishTripScreen } from './screens/PublishTripScreen';
 import { BookingScreen } from './screens/BookingScreen';
+import { LoginScreen } from './screens/LoginScreen';
+import { RegisterScreen } from './screens/RegisterScreen';
 
 interface SimulatedUser {
   id: string;
@@ -57,7 +59,7 @@ interface SimulatedVehicle {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'simulator' | 'publish' | 'booking' | 'whatsapp' | 'architecture' | 'api-docs' | 'deployment'>('simulator');
+  const [activeTab, setActiveTab] = useState<'simulator' | 'login' | 'register' | 'publish' | 'booking' | 'whatsapp' | 'architecture' | 'api-docs' | 'deployment'>('simulator');
   const [session, setSession] = useState<SimulatedSession | null>(null);
   const [user, setUser] = useState<SimulatedUser | null>(null);
   const [kycAttempts, setKycAttempts] = useState(0);
@@ -319,6 +321,18 @@ export default function App() {
             Simulador de Casos de Uso
           </button>
           <button
+            onClick={() => setActiveTab('login')}
+            className={`px-3 py-1.5 rounded-md font-medium transition whitespace-nowrap ${activeTab === 'login' ? 'bg-[#00A896] text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+          >
+            Iniciar Sesión (Stitch UI)
+          </button>
+          <button
+            onClick={() => setActiveTab('register')}
+            className={`px-3 py-1.5 rounded-md font-medium transition whitespace-nowrap ${activeTab === 'register' ? 'bg-[#00A896] text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+          >
+            Registrarse (Stitch UI)
+          </button>
+          <button
             onClick={() => setActiveTab('publish')}
             className={`px-3 py-1.5 rounded-md font-medium transition whitespace-nowrap ${activeTab === 'publish' ? 'bg-[#00A896] text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
           >
@@ -360,6 +374,62 @@ export default function App() {
 
       {/* Contenido Principal */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
+        {activeTab === 'login' && (
+          <div className="w-full flex justify-center">
+            <LoginScreen
+              onNavigateToRegister={() => setActiveTab('register')}
+              onLoginSuccess={(authData) => {
+                setUser({
+                  id: authData.user.id,
+                  email: authData.user.email,
+                  firstName: authData.user.firstName,
+                  lastName: authData.user.lastName,
+                  role: (authData.user.role as 'PASSENGER' | 'DRIVER' | 'ADMIN') || 'PASSENGER',
+                  kycStatus: (authData.user.kycStatus as 'PENDING_VERIFICATION' | 'APPROVED' | 'REJECTED') || 'PENDING_VERIFICATION',
+                  isDriverActive: authData.user.isDriverActive,
+                  token: authData.accessToken,
+                });
+                setSession({
+                  token: authData.accessToken,
+                  expiresInSeconds: authData.expiresIn || 1200,
+                  provider: 'EMAIL',
+                  createdAt: new Date(),
+                });
+                addLog('auth', `Sesión iniciada con éxito para ${authData.user.email}`);
+                setActiveTab('simulator');
+              }}
+            />
+          </div>
+        )}
+
+        {activeTab === 'register' && (
+          <div className="w-full flex justify-center">
+            <RegisterScreen
+              onNavigateToLogin={() => setActiveTab('login')}
+              onRegisterSuccess={(authData) => {
+                setUser({
+                  id: authData.user.id,
+                  email: authData.user.email,
+                  firstName: authData.user.firstName,
+                  lastName: authData.user.lastName,
+                  role: (authData.user.role as 'PASSENGER' | 'DRIVER' | 'ADMIN') || 'PASSENGER',
+                  kycStatus: (authData.user.kycStatus as 'PENDING_VERIFICATION' | 'APPROVED' | 'REJECTED') || 'PENDING_VERIFICATION',
+                  isDriverActive: authData.user.isDriverActive,
+                  token: authData.accessToken,
+                });
+                setSession({
+                  token: authData.accessToken,
+                  expiresInSeconds: authData.expiresIn || 1200,
+                  provider: 'EMAIL',
+                  createdAt: new Date(),
+                });
+                addLog('auth', `Registro completado e inicio de sesión para ${authData.user.email}`);
+                setActiveTab('simulator');
+              }}
+            />
+          </div>
+        )}
+
         {activeTab === 'publish' && (
           <div className="w-full flex justify-center">
             <PublishTripScreen />
