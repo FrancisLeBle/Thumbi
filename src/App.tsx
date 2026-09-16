@@ -25,6 +25,8 @@ import {
   MessageCircle
 } from 'lucide-react';
 import { WhatsAppTester } from './components/WhatsAppTester';
+import { PublishTripScreen } from './screens/PublishTripScreen';
+import { BookingScreen } from './screens/BookingScreen';
 
 interface SimulatedUser {
   id: string;
@@ -55,7 +57,7 @@ interface SimulatedVehicle {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'simulator' | 'whatsapp' | 'architecture' | 'api-docs' | 'deployment'>('simulator');
+  const [activeTab, setActiveTab] = useState<'simulator' | 'publish' | 'booking' | 'whatsapp' | 'architecture' | 'api-docs' | 'deployment'>('simulator');
   const [session, setSession] = useState<SimulatedSession | null>(null);
   const [user, setUser] = useState<SimulatedUser | null>(null);
   const [kycAttempts, setKycAttempts] = useState(0);
@@ -309,35 +311,47 @@ export default function App() {
         </div>
 
         {/* Pestañas de Navegación */}
-        <div className="flex bg-slate-800/80 p-1 rounded-lg border border-slate-700/60 text-sm">
+        <div className="flex bg-slate-800/80 p-1 rounded-lg border border-slate-700/60 text-sm overflow-x-auto">
           <button
             onClick={() => setActiveTab('simulator')}
-            className={`px-4 py-1.5 rounded-md font-medium transition ${activeTab === 'simulator' ? 'bg-emerald-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+            className={`px-3 py-1.5 rounded-md font-medium transition whitespace-nowrap ${activeTab === 'simulator' ? 'bg-emerald-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
           >
             Simulador de Casos de Uso
           </button>
           <button
+            onClick={() => setActiveTab('publish')}
+            className={`px-3 py-1.5 rounded-md font-medium transition whitespace-nowrap ${activeTab === 'publish' ? 'bg-[#00A896] text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+          >
+            Publicar Viaje (Stitch UI)
+          </button>
+          <button
+            onClick={() => setActiveTab('booking')}
+            className={`px-3 py-1.5 rounded-md font-medium transition whitespace-nowrap ${activeTab === 'booking' ? 'bg-[#00A896] text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+          >
+            Reservar Asiento (Stitch UI)
+          </button>
+          <button
             onClick={() => setActiveTab('whatsapp')}
-            className={`px-4 py-1.5 rounded-md font-medium transition flex items-center space-x-1.5 ${activeTab === 'whatsapp' ? 'bg-emerald-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+            className={`px-3 py-1.5 rounded-md font-medium transition flex items-center space-x-1.5 whitespace-nowrap ${activeTab === 'whatsapp' ? 'bg-emerald-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
           >
             <MessageCircle className="w-4 h-4" />
             <span>WhatsApp Deeplink</span>
           </button>
           <button
             onClick={() => setActiveTab('architecture')}
-            className={`px-4 py-1.5 rounded-md font-medium transition ${activeTab === 'architecture' ? 'bg-emerald-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+            className={`px-3 py-1.5 rounded-md font-medium transition whitespace-nowrap ${activeTab === 'architecture' ? 'bg-emerald-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
           >
             Clean Architecture (Go)
           </button>
           <button
             onClick={() => setActiveTab('api-docs')}
-            className={`px-4 py-1.5 rounded-md font-medium transition ${activeTab === 'api-docs' ? 'bg-emerald-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+            className={`px-3 py-1.5 rounded-md font-medium transition whitespace-nowrap ${activeTab === 'api-docs' ? 'bg-emerald-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
           >
             Contratos REST / Gin
           </button>
           <button
             onClick={() => setActiveTab('deployment')}
-            className={`px-4 py-1.5 rounded-md font-medium transition ${activeTab === 'deployment' ? 'bg-emerald-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+            className={`px-3 py-1.5 rounded-md font-medium transition whitespace-nowrap ${activeTab === 'deployment' ? 'bg-emerald-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
           >
             Módulo 5: Docker, Health & CI/CD
           </button>
@@ -346,6 +360,18 @@ export default function App() {
 
       {/* Contenido Principal */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
+        {activeTab === 'publish' && (
+          <div className="w-full flex justify-center">
+            <PublishTripScreen />
+          </div>
+        )}
+
+        {activeTab === 'booking' && (
+          <div className="w-full flex justify-center">
+            <BookingScreen />
+          </div>
+        )}
+
         {activeTab === 'simulator' && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Columna Izquierda: Controles Interactivos */}
