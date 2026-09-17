@@ -1,27 +1,16 @@
 import React, { useState } from 'react';
 import {
-  Car,
   Calendar,
-  Clock,
-  MapPin,
-  ShieldCheck,
-  AlertTriangle,
   ChevronRight,
-  PlusCircle,
-  Receipt,
-  Users,
-  CheckCircle2,
   ArrowLeft,
   Share2,
-  MessageSquare,
-  Star,
+  Users,
   Check,
-  Phone,
-  Search,
-  User,
+  Star,
+  MessageSquare,
+  AlertTriangle,
   Loader2,
 } from 'lucide-react';
-import { BottomNav, BottomNavTab } from '../components/BottomNav';
 import { CreateDisputeModal } from '../components/CreateDisputeModal';
 import { ContactDriverModal } from '../components/ContactDriverModal';
 import { Toast } from '../components/Toast';
@@ -34,20 +23,6 @@ export interface MyTripsScreenProps {
   onNavigateToProfile: () => void;
   onSelectBookingForDispute?: (bookingId: string) => void;
   initialManageTrip?: boolean;
-}
-
-interface SimulatedTripItem {
-  id: string;
-  bookingId: string;
-  driverName: string;
-  origin: string;
-  destination: string;
-  date: string;
-  time: string;
-  seats: number;
-  totalPrice: number;
-  status: 'CONFIRMED' | 'IN_ESCROW' | 'COMPLETED' | 'DISPUTED';
-  carInfo: string;
 }
 
 interface PassengerItem {
@@ -80,12 +55,23 @@ export const MyTripsScreen: React.FC<MyTripsScreenProps> = ({
   onNavigateToProfile,
   initialManageTrip = false,
 }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'upcoming' | 'past'>('upcoming');
+  // Estado local para conmutar entre 'Como Pasajero' y 'Como Conductor'
+  const [activeTab, setActiveTab] = useState<'passenger' | 'driver'>('passenger');
+
+  // Estado para la subpantalla de gestión de viaje
+  const [isManagingView, setIsManagingView] = useState<boolean>(initialManageTrip);
+
+  // Estados interactivos para modales y notificaciones
+  const [isCancelConfirmOpen, setIsCancelConfirmOpen] = useState<boolean>(false);
+  const [isContactModalOpen, setIsContactModalOpen] = useState<boolean>(false);
+  const [contactTarget, setContactTarget] = useState<{
+    name: string;
+    phone: string;
+    destination: string;
+  } | null>(null);
+
   const [selectedDisputeBookingId, setSelectedDisputeBookingId] = useState<string | null>(null);
   const [isDisputeModalOpen, setIsDisputeModalOpen] = useState<boolean>(false);
-  const [isCancelConfirmOpen, setIsCancelConfirmOpen] = useState<boolean>(false);
-  const [isContactPassengerModalOpen, setIsContactPassengerModalOpen] = useState<boolean>(false);
-  const [selectedPassenger, setSelectedPassenger] = useState<PassengerItem | null>(null);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState<boolean>(false);
 
   const [toast, setToast] = useState<{
@@ -93,11 +79,11 @@ export const MyTripsScreen: React.FC<MyTripsScreenProps> = ({
     type: 'error' | 'success';
   } | null>(null);
 
-  // Estado para el viaje publicado gestionado por el conductor
+  // Datos del viaje activo gestionado como Conductor
   const [managedTrip, setManagedTrip] = useState<ManagedTrip>({
     id: 'trip-published-pilar',
-    origin: 'Palermo',
-    destination: 'Pilar',
+    origin: 'Palermo, CABA',
+    destination: 'Pilar, Bs. As.',
     departureTimeText: 'Hoy, 18:30 hs',
     totalSeats: 3,
     occupiedSeats: 1,
@@ -117,70 +103,7 @@ export const MyTripsScreen: React.FC<MyTripsScreenProps> = ({
     ],
   });
 
-  // Si está en modo vista de gestión de viaje
-  const [isManagingView, setIsManagingView] = useState<boolean>(initialManageTrip);
-
-  // Lista de viajes de pasajero
-  const [tripsList, setTripsList] = useState<SimulatedTripItem[]>([
-    {
-      id: 'trip-101',
-      bookingId: 'book-palermo-pilar-01',
-      driverName: 'Martín Rodríguez',
-      origin: 'Palermo (Plaza Italia)',
-      destination: 'Pilar (Parque Industrial)',
-      date: 'Mañana, 17 Sep',
-      time: '08:00 hs',
-      seats: 2,
-      totalPrice: 3600,
-      status: 'IN_ESCROW',
-      carInfo: 'Toyota Corolla • AF 342 TR',
-    },
-    {
-      id: 'trip-102',
-      bookingId: 'book-belgrano-tigre-02',
-      driverName: 'Carla Méndez',
-      origin: 'Belgrano (Cabildo y Juramento)',
-      destination: 'Nordelta (Centro Comercial)',
-      date: 'Viernes, 19 Sep',
-      time: '18:30 hs',
-      seats: 1,
-      totalPrice: 1950,
-      status: 'CONFIRMED',
-      carInfo: 'Chevrolet Onix • AC 882 LK',
-    },
-    {
-      id: 'trip-100',
-      bookingId: 'book-centro-la-plata-99',
-      driverName: 'Mariano Benítez',
-      origin: 'Retiro (Torre de los Ingleses)',
-      destination: 'La Plata (Plaza Moreno)',
-      date: '10 Sep 2026',
-      time: '09:00 hs',
-      seats: 1,
-      totalPrice: 2200,
-      status: 'COMPLETED',
-      carInfo: 'Volkswagen Gol Trend • AB 551 OP',
-    },
-  ]);
-
-  const handleOpenDispute = (bookingId: string) => {
-    setSelectedDisputeBookingId(bookingId);
-    setIsDisputeModalOpen(true);
-  };
-
-  const handleDisputeSuccess = () => {
-    if (selectedDisputeBookingId) {
-      setTripsList((prev) =>
-        prev.map((t) =>
-          t.bookingId === selectedDisputeBookingId
-            ? { ...t, status: 'DISPUTED' as const }
-            : t
-        )
-      );
-    }
-  };
-
-  // Acciones del Conductor sobre el viaje publicado
+  // Acciones de Conductor sobre el viaje publicado
   const handleStartTrip = async () => {
     if (isUpdatingStatus) return;
     setIsUpdatingStatus(true);
@@ -232,9 +155,7 @@ export const MyTripsScreen: React.FC<MyTripsScreenProps> = ({
           text: `Sumate a mi viaje compartido a ${managedTrip.destination} hoy a las ${managedTrip.departureTimeText}. Asientos disponibles a $${managedTrip.pricePerSeat}.`,
           url: window.location.href,
         })
-        .catch(() => {
-          // Si el usuario cancela la ventana de compartir nativa
-        });
+        .catch(() => {});
     } else {
       if (navigator.clipboard) {
         navigator.clipboard.writeText(
@@ -248,19 +169,6 @@ export const MyTripsScreen: React.FC<MyTripsScreenProps> = ({
     }
   };
 
-  const handleOpenPassengerContact = (passenger: PassengerItem) => {
-    setSelectedPassenger(passenger);
-    setIsContactPassengerModalOpen(true);
-  };
-
-  const handleBottomNavChange = (tab: BottomNavTab) => {
-    if (tab === 'home') onNavigateToHome();
-    else if (tab === 'search') onNavigateToSearch();
-    else if (tab === 'publish') onNavigateToPublish();
-    else if (tab === 'profile') onNavigateToProfile();
-  };
-
-  // Cálculo de asientos libres restantes
   const availableRemainingSeats = Math.max(
     0,
     managedTrip.totalSeats - managedTrip.occupiedSeats
@@ -270,17 +178,12 @@ export const MyTripsScreen: React.FC<MyTripsScreenProps> = ({
     Math.round((managedTrip.occupiedSeats / managedTrip.totalSeats) * 100)
   );
 
-  const upcomingTrips = tripsList.filter((t) => t.status !== 'COMPLETED');
-  const pastTrips = tripsList.filter((t) => t.status === 'COMPLETED');
-  const displayTrips = activeSubTab === 'upcoming' ? upcomingTrips : pastTrips;
-
   // =========================================================================
   // SUBPANTALLA: GESTIÓN DEL VIAJE PUBLICADO (ManageTripReact.md)
   // =========================================================================
   if (isManagingView) {
     return (
       <div className="min-h-screen flex items-center justify-center p-0 md:p-6 bg-slate-900 font-sans antialiased select-none">
-        {/* Toast Notificación */}
         {toast && (
           <Toast
             id="manage-trip-toast"
@@ -323,87 +226,77 @@ export const MyTripsScreen: React.FC<MyTripsScreenProps> = ({
         )}
 
         {/* Modal de Contacto con Pasajero */}
-        {selectedPassenger && (
+        {contactTarget && (
           <ContactDriverModal
-            isOpen={isContactPassengerModalOpen}
+            isOpen={isContactModalOpen}
             onClose={() => {
-              setIsContactPassengerModalOpen(false);
-              setSelectedPassenger(null);
+              setIsContactModalOpen(false);
+              setContactTarget(null);
             }}
-            driverName={selectedPassenger.name}
-            driverPhoneNumber={selectedPassenger.phone}
-            destinationCity={managedTrip.destination}
+            driverName={contactTarget.name}
+            driverPhoneNumber={contactTarget.phone}
+            destinationCity={contactTarget.destination}
           />
         )}
 
-        {/* BEGIN: MobileDeviceContainer */}
+        {/* iPhone 15/16 Container */}
         <main
-          className="w-full max-w-[393px] h-[852px] bg-[#F7F9FA] text-[#1A1A1A] flex flex-col relative overflow-hidden md:rounded-[48px] shadow-2xl border-0 md:border-[8px] md:border-slate-800"
-          data-purpose="ios-frame"
+          className="relative w-full max-w-[393px] h-[852px] bg-[#F7F9FA] text-[#1A1A1A] flex flex-col overflow-hidden md:rounded-[44px] shadow-2xl border-0 md:border-[8px] md:border-neutral-800"
+          data-purpose="manage-trip-container"
         >
-          {/* BEGIN: iOSStatusBar */}
-          <header className="w-full pt-3 px-7 flex justify-between items-center z-30 shrink-0 select-none">
-            {/* Time */}
+          {/* iOS Status Bar */}
+          <div className="pt-3 px-7 flex justify-between items-center z-30 shrink-0 select-none">
             <span className="text-[15px] font-semibold tracking-tight text-[#1A1A1A]">
               9:41
             </span>
-
-            {/* Dynamic Island spacer */}
-            <div className="w-28 h-6 bg-black rounded-full mx-auto self-start -mt-0.5 hidden sm:block" />
-
-            {/* Right Status Icons */}
-            <div className="flex items-center space-x-1.5 text-[#1A1A1A]">
-              {/* Cellular Signal Icon */}
+            <div className="w-[124px] h-[34px] bg-black rounded-full absolute left-1/2 -translate-x-1/2 top-3 hidden sm:block" />
+            <div className="flex items-center space-x-2 text-[#1A1A1A]">
               <svg className="w-4 h-3.5 fill-current" viewBox="0 0 17 12">
-                <rect height="3.5" rx="0.5" width="2.5" x="0" y="8.5" />
-                <rect height="6" rx="0.5" width="2.5" x="4.5" y="6" />
-                <rect height="9" rx="0.5" width="2.5" x="9" y="3" />
-                <rect height="12" rx="0.5" width="2.5" x="13.5" y="0" />
+                <rect height="4" rx="0.75" width="2.5" x="0" y="8" />
+                <rect height="6.5" rx="0.75" width="2.5" x="4.5" y="5.5" />
+                <rect height="9" rx="0.75" width="2.5" x="9" y="3" />
+                <rect height="11.5" rx="0.75" width="2.5" x="13.5" y="0.5" />
               </svg>
-
-              {/* Wifi Icon */}
-              <svg className="w-3.5 h-3.5 fill-current" viewBox="0 0 16 12">
-                <path d="M8 12a1.8 1.8 0 1 1 0-3.6 1.8 1.8 0 0 1 0 3.6Zm5.16-5.87a7.5 7.5 0 0 0-10.32 0 .75.75 0 1 1-1.04-1.08 9 9 0 0 1 12.4 0 .75.75 0 0 1-1.04 1.08Zm-2.58 2.6a4.2 4.2 0 0 0-5.16 0 .75.75 0 1 1-1-1.12 5.7 5.7 0 0 1 7.16 0 .75.75 0 1 1-1 1.12Z" />
+              <svg className="w-4 h-3.5 fill-current" viewBox="0 0 16 12">
+                <path
+                  clipRule="evenodd"
+                  d="M8 2.5C5.1 2.5 2.5 3.7 0.7 5.6L0 4.9C2 2.7 4.9 1.5 8 1.5C11.1 1.5 14 2.7 16 4.9L15.3 5.6C13.5 3.7 10.9 2.5 8 2.5ZM8 6.5C6.3 6.5 4.8 7.2 3.7 8.3L3 7.6C4.3 6.3 6.1 5.5 8 5.5C9.9 5.5 11.7 6.3 13 7.6L12.3 8.3C11.2 7.2 9.7 6.5 8 6.5ZM8 10C7.2 10 6.5 10.4 6 11L8 13L10 11C9.5 10.4 8.8 10 8 10Z"
+                  fillRule="evenodd"
+                />
               </svg>
-
-              {/* Battery Icon */}
-              <div className="flex items-center">
-                <div className="w-5 h-[11px] border border-[#1A1A1A] rounded-[3.5px] p-[1px] flex items-center">
-                  <div className="w-full h-full bg-[#1A1A1A] rounded-[1.5px]" />
-                </div>
-                <div className="w-[1.5px] h-1 bg-[#1A1A1A] rounded-r-sm -ml-[0.5px]" />
+              <div className="w-6 h-[11.5px] border border-[#1A1A1A] rounded-[3.5px] p-[1.5px] flex items-center">
+                <div className="h-full w-full bg-[#1A1A1A] rounded-[1.5px]" />
               </div>
             </div>
-          </header>
-          {/* END: iOSStatusBar */}
+          </div>
 
-          {/* BEGIN: NavigationHeader */}
+          {/* Navigation Header */}
           <nav
             className="w-full px-5 pt-3 pb-3 flex items-center justify-between z-20 shrink-0"
             data-purpose="top-navigation-bar"
           >
-            {/* Back Chevron Button */}
             <button
               id="manage-trip-back-btn"
               aria-label="Volver"
-              onClick={() => setIsManagingView(false)}
+              onClick={() => {
+                setIsManagingView(false);
+                setActiveTab('driver');
+              }}
               className="w-9 h-9 flex items-center justify-center -ml-2 rounded-full hover:bg-black/5 active:bg-black/10 transition-colors text-[#1A1A1A] cursor-pointer"
               type="button"
             >
               <ArrowLeft className="w-5 h-5 stroke-[2.5]" />
             </button>
 
-            {/* Center Title and Timestamp */}
             <div className="flex flex-col items-center justify-center text-center">
               <h1 className="text-[17px] font-bold text-[#1A1A1A] leading-tight tracking-tight">
-                Viaje a {managedTrip.destination}
+                Viaje a {managedTrip.destination.split(',')[0]}
               </h1>
               <span className="text-xs text-[#6B7280] font-normal mt-0.5">
                 {managedTrip.departureTimeText}
               </span>
             </div>
 
-            {/* Right Action / Share Button */}
             <button
               id="manage-trip-share-btn"
               aria-label="Compartir viaje"
@@ -414,21 +307,15 @@ export const MyTripsScreen: React.FC<MyTripsScreenProps> = ({
               <Share2 className="w-5 h-5 text-[#6B7280]" />
             </button>
           </nav>
-          {/* END: NavigationHeader */}
 
-          {/* BEGIN: ScrollableContent */}
+          {/* Scrollable Content */}
           <div
             className="flex-1 overflow-y-auto px-4 pt-2 pb-4 flex flex-col justify-between"
             style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
-            data-purpose="screen-body-content"
           >
-            <div className="flex flex-col">
-              {/* BEGIN: CapacityProgressCard */}
-              <section
-                className="bg-white rounded-xl p-4 shadow-[0_4px_20px_-2px_rgba(0,0,0,0.04)] border border-slate-100/70"
-                data-purpose="capacity-overview"
-              >
-                {/* Top Row info */}
+            <div className="flex flex-col space-y-5">
+              {/* Capacity Progress Card */}
+              <section className="bg-white rounded-xl p-4 shadow-[0_2px_8px_rgba(0,0,0,0.04)] border border-[#E5E9EB]/60">
                 <div className="flex justify-between items-center mb-2.5">
                   <span className="text-sm font-bold text-[#1A1A1A]">
                     Lugares ocupados
@@ -438,7 +325,6 @@ export const MyTripsScreen: React.FC<MyTripsScreenProps> = ({
                   </span>
                 </div>
 
-                {/* Progress Bar Track */}
                 <div
                   aria-valuemax={100}
                   aria-valuemin={0}
@@ -446,123 +332,104 @@ export const MyTripsScreen: React.FC<MyTripsScreenProps> = ({
                   className="w-full h-2 bg-[#E6F7F5] rounded-full overflow-hidden"
                   role="progressbar"
                 >
-                  {/* Active Fill */}
                   <div
                     className="h-full bg-[#00A896] rounded-full transition-all duration-300"
                     style={{ width: `${occupancyPercentage}%` }}
                   />
                 </div>
 
-                {/* Footnote helper */}
                 <p className="text-[11px] text-[#6B7280] mt-2">
                   {availableRemainingSeats === 1
                     ? '1 lugar restante disponible para reserva'
                     : `${availableRemainingSeats} lugares restantes disponibles para reserva`}
                 </p>
               </section>
-              {/* END: CapacityProgressCard */}
 
-              {/* BEGIN: ConfirmedPassengersSection */}
-              <section className="mt-5" data-purpose="confirmed-passengers-list">
+              {/* Confirmed Passengers */}
+              <section>
                 <h2 className="text-xs font-semibold text-[#6B7280] uppercase tracking-wider mb-2.5 px-0.5">
                   Pasajeros Confirmados ({managedTrip.passengers.length})
                 </h2>
 
-                {/* Confirmed Passenger Cards */}
-                {managedTrip.passengers.length === 0 ? (
-                  <div className="bg-white rounded-xl p-4 border border-dashed border-gray-200 text-center text-xs text-gray-400">
-                    Aún no hay pasajeros confirmados en este trayecto.
-                  </div>
-                ) : (
-                  managedTrip.passengers.map((passenger) => (
-                    <div
-                      key={passenger.id}
-                      className="bg-white rounded-xl p-3.5 shadow-[0_4px_20px_-2px_rgba(0,0,0,0.04)] border border-slate-100/70 flex items-center justify-between"
-                    >
-                      {/* Left & Details Container */}
-                      <div className="flex items-center gap-3">
-                        {/* Avatar with Initials */}
-                        <div className="w-[42px] h-[42px] rounded-full bg-[#E6F7F5] text-[#00A896] font-bold text-sm flex items-center justify-center shrink-0">
-                          {passenger.initials}
+                {managedTrip.passengers.map((passenger) => (
+                  <div
+                    key={passenger.id}
+                    className="bg-white rounded-xl p-3.5 shadow-[0_2px_8px_rgba(0,0,0,0.04)] border border-[#E5E9EB]/60 flex items-center justify-between"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-[42px] h-[42px] rounded-full bg-[#E6F7F5] text-[#00A896] font-bold text-sm flex items-center justify-center shrink-0">
+                        {passenger.initials}
+                      </div>
+                      <div className="flex flex-col justify-center">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-sm text-[#1A1A1A] leading-snug">
+                            {passenger.name}
+                          </span>
+                          <span className="text-xs text-amber-500 font-semibold flex items-center">
+                            {passenger.rating}{' '}
+                            <Star className="w-2.5 h-2.5 fill-amber-500 ml-0.5" />
+                          </span>
                         </div>
-
-                        {/* Passenger Information */}
-                        <div className="flex flex-col justify-center">
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-sm text-[#1A1A1A] leading-snug">
-                              {passenger.name}
+                        <div className="mt-0.5">
+                          {passenger.verified && (
+                            <span className="bg-[#E6F7F5] text-[#00A896] text-[11px] font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1">
+                              <Check className="w-2.5 h-2.5 stroke-[2.5]" />
+                              DNI Verificado
                             </span>
-                            <span className="text-xs text-amber-500 font-semibold flex items-center">
-                              {passenger.rating}{' '}
-                              <Star className="w-2.5 h-2.5 fill-amber-500 ml-0.5" />
-                            </span>
-                          </div>
-
-                          {/* Verification Tag */}
-                          <div className="mt-0.5">
-                            {passenger.verified && (
-                              <span className="bg-[#E6F7F5] text-[#00A896] text-[11px] font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1">
-                                <Check className="w-2.5 h-2.5 stroke-[2.5]" />
-                                DNI Verificado
-                              </span>
-                            )}
-                          </div>
+                          )}
                         </div>
                       </div>
-
-                      {/* Chat / Message Action Button */}
-                      <button
-                        id={`btn-chat-passenger-${passenger.id}`}
-                        aria-label={`Enviar mensaje a ${passenger.name}`}
-                        onClick={() => handleOpenPassengerContact(passenger)}
-                        className="w-[38px] h-[38px] rounded-full bg-slate-100 hover:bg-slate-200 active:bg-slate-300 transition-colors flex items-center justify-center text-slate-700 cursor-pointer"
-                        type="button"
-                      >
-                        <MessageSquare className="w-5 h-5 text-slate-600 stroke-[1.8]" />
-                      </button>
                     </div>
-                  ))
-                )}
-              </section>
-              {/* END: ConfirmedPassengersSection */}
 
-              {/* BEGIN: AvailableSeatsSection */}
-              <section className="mt-5" data-purpose="unoccupied-seats-list">
+                    <button
+                      id={`btn-chat-passenger-${passenger.id}`}
+                      aria-label={`Enviar mensaje a ${passenger.name}`}
+                      onClick={() => {
+                        setContactTarget({
+                          name: passenger.name,
+                          phone: passenger.phone,
+                          destination: managedTrip.destination,
+                        });
+                        setIsContactModalOpen(true);
+                      }}
+                      className="w-[38px] h-[38px] rounded-full bg-slate-100 hover:bg-slate-200 active:bg-slate-300 transition-colors flex items-center justify-center text-slate-700 cursor-pointer"
+                      type="button"
+                    >
+                      <MessageSquare className="w-5 h-5 text-slate-600 stroke-[1.8]" />
+                    </button>
+                  </div>
+                ))}
+              </section>
+
+              {/* Available Seats */}
+              <section>
                 <h2 className="text-xs font-semibold text-[#6B7280] uppercase tracking-wider mb-2.5 px-0.5">
                   Asientos Libres ({availableRemainingSeats})
                 </h2>
 
-                {availableRemainingSeats === 0 ? (
-                  <div className="bg-[#E6F7F5] text-[#00A896] rounded-xl p-3 text-center text-xs font-semibold">
-                    ¡Auto completo! Todos los asientos están reservados.
-                  </div>
-                ) : (
-                  Array.from({ length: availableRemainingSeats }).map((_, index) => {
-                    const seatNumber = managedTrip.occupiedSeats + index + 1;
-                    return (
-                      <div
-                        key={`available-seat-${seatNumber}`}
-                        className={`border border-dashed border-slate-300 bg-white/70 rounded-xl p-3.5 flex items-center gap-3 ${
-                          index > 0 ? 'mt-2.5' : ''
-                        }`}
-                      >
-                        <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center shrink-0">
-                          <Users className="w-4 h-4 text-slate-400 stroke-[1.8]" />
-                        </div>
-                        <span className="text-xs text-[#6B7280] italic font-normal">
-                          Asiento {seatNumber}: Esperando reservas...
-                        </span>
+                {Array.from({ length: availableRemainingSeats }).map((_, index) => {
+                  const seatNumber = managedTrip.occupiedSeats + index + 1;
+                  return (
+                    <div
+                      key={`available-seat-${seatNumber}`}
+                      className={`border border-dashed border-slate-300 bg-white/70 rounded-xl p-3.5 flex items-center gap-3 ${
+                        index > 0 ? 'mt-2.5' : ''
+                      }`}
+                    >
+                      <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center shrink-0">
+                        <Users className="w-4 h-4 text-slate-400 stroke-[1.8]" />
                       </div>
-                    );
-                  })
-                )}
+                      <span className="text-xs text-[#6B7280] italic font-normal">
+                        Asiento {seatNumber}: Esperando reservas...
+                      </span>
+                    </div>
+                  );
+                })}
               </section>
-              {/* END: AvailableSeatsSection */}
             </div>
 
-            {/* BEGIN: ActionButtonsGroup */}
-            <section className="mt-6 flex flex-col w-full" data-purpose="trip-control-actions">
-              {/* Start Trip Primary Action */}
+            {/* Action Buttons */}
+            <section className="mt-6 flex flex-col w-full">
               {managedTrip.status === 'IN_PROGRESS' ? (
                 <div className="w-full bg-[#E6F7F5] text-[#00A896] border border-[#00A896]/30 font-bold py-3.5 rounded-xl text-center text-[15px] flex items-center justify-center gap-2">
                   <span className="w-2.5 h-2.5 rounded-full bg-[#00A896] animate-pulse" />
@@ -591,7 +458,6 @@ export const MyTripsScreen: React.FC<MyTripsScreenProps> = ({
                 </button>
               )}
 
-              {/* Cancel Trip Secondary Action */}
               {managedTrip.status !== 'CANCELLED' && managedTrip.status !== 'COMPLETED' && (
                 <button
                   id="manage-trip-cancel-btn"
@@ -604,309 +470,69 @@ export const MyTripsScreen: React.FC<MyTripsScreenProps> = ({
                 </button>
               )}
             </section>
-            {/* END: ActionButtonsGroup */}
           </div>
-          {/* END: ScrollableContent */}
 
-          {/* BEGIN: BottomNavigationBar */}
-          <footer
-            className="w-full bg-white border-t border-slate-100 shrink-0 pt-2 pb-1 z-30"
-            data-purpose="mobile-tab-bar"
-          >
-            <nav className="grid grid-cols-4 items-center">
-              {/* Tab: Buscar */}
+          {/* Bottom Nav */}
+          <nav className="bg-white border-t border-[#E5E9EB] pt-2.5 px-6 shrink-0 safe-area-bottom">
+            <div className="flex justify-between items-center max-w-sm mx-auto">
               <button
-                id="manage-nav-search-btn"
                 type="button"
                 onClick={onNavigateToSearch}
-                className="flex flex-col items-center justify-center py-1 group cursor-pointer"
+                className="flex flex-col items-center group py-1 text-[#6B7280] cursor-pointer"
               >
-                <Search className="w-6 h-6 text-[#6B7280] group-hover:text-[#1A1A1A] transition-colors stroke-[1.8]" />
-                <span className="text-[11px] font-medium text-[#6B7280] mt-1 group-hover:text-[#1A1A1A] transition-colors">
-                  Buscar
-                </span>
+                <svg className="w-6 h-6 stroke-current" fill="none" strokeWidth="2" viewBox="0 0 24 24">
+                  <circle cx="11" cy="11" r="8" />
+                  <line x1="21" x2="16.65" y1="21" y2="16.65" />
+                </svg>
+                <span className="text-[10px] font-medium mt-1">Buscar</span>
               </button>
 
-              {/* Tab: Mis Viajes (Active) */}
               <button
-                id="manage-nav-trips-active-btn"
                 type="button"
-                className="flex flex-col items-center justify-center py-1 cursor-default"
+                className="flex flex-col items-center group py-1 text-[#00A896] cursor-default"
               >
-                <Car className="w-6 h-6 text-[#00A896] stroke-[1.8]" />
-                <span className="text-[11px] font-semibold text-[#00A896] mt-1">
-                  Mis Viajes
-                </span>
+                <svg className="w-6 h-6 stroke-current fill-[#00A896]/10" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <span className="text-[10px] font-semibold mt-1">Mis Viajes</span>
               </button>
 
-              {/* Tab: Publicar */}
               <button
-                id="manage-nav-publish-btn"
                 type="button"
                 onClick={onNavigateToPublish}
-                className="flex flex-col items-center justify-center py-1 group cursor-pointer"
+                className="flex flex-col items-center group py-1 text-[#6B7280] cursor-pointer"
               >
-                <PlusCircle className="w-6 h-6 text-[#6B7280] group-hover:text-[#1A1A1A] transition-colors stroke-[1.8]" />
-                <span className="text-[11px] font-medium text-[#6B7280] mt-1 group-hover:text-[#1A1A1A] transition-colors">
-                  Publicar
-                </span>
+                <svg className="w-6 h-6 stroke-current" fill="none" strokeWidth="2" viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="9" />
+                  <line x1="12" x2="12" y1="8" y2="16" />
+                  <line x1="8" x2="16" y1="12" y2="12" />
+                </svg>
+                <span className="text-[10px] font-medium mt-1">Publicar</span>
               </button>
 
-              {/* Tab: Perfil */}
               <button
-                id="manage-nav-profile-btn"
                 type="button"
                 onClick={onNavigateToProfile}
-                className="flex flex-col items-center justify-center py-1 group cursor-pointer"
+                className="flex flex-col items-center group py-1 text-[#6B7280] cursor-pointer"
               >
-                <User className="w-6 h-6 text-[#6B7280] group-hover:text-[#1A1A1A] transition-colors stroke-[1.8]" />
-                <span className="text-[11px] font-medium text-[#6B7280] mt-1 group-hover:text-[#1A1A1A] transition-colors">
-                  Perfil
-                </span>
+                <svg className="w-6 h-6 stroke-current" fill="none" strokeWidth="2" viewBox="0 0 24 24">
+                  <path d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <span className="text-[10px] font-medium mt-1">Perfil</span>
               </button>
-            </nav>
-
-            {/* iOS Home Bar Indicator */}
-            <div className="w-full flex justify-center pb-1 pt-2">
-              <div className="w-36 h-1 bg-slate-300 rounded-full" />
             </div>
-          </footer>
-          {/* END: BottomNavigationBar */}
+            <div className="w-32 h-1 bg-[#1A1A1A]/20 rounded-full mx-auto mt-3 mb-1" />
+          </nav>
         </main>
-        {/* END: MobileDeviceContainer */}
       </div>
     );
   }
 
   // =========================================================================
-  // VISTA GENERAL: LISTADO DE MIS VIAJES (Historial + Próximos)
+  // VISTA PRINCIPAL: MIS VIAJES (STITCH EXACT RESTRUCTURE)
   // =========================================================================
   return (
-    <div
-      id="my-trips-screen"
-      className="min-h-screen pb-28 pt-6 px-4 sm:px-6 max-w-xl mx-auto"
-      style={{
-        backgroundColor: '#F7F9FA',
-        fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif',
-      }}
-    >
-      {/* Encabezado */}
-      <div className="mb-5 flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-[#1A1A1A]">
-            Mis Viajes
-          </h1>
-          <p className="text-xs text-[#666666] mt-1">
-            Historial y viajes activos con fondos protegidos por el contrato Escrow.
-          </p>
-        </div>
-
-        {/* Botón rápido para acceder al viaje publicado si existe */}
-        {managedTrip.status !== 'CANCELLED' && (
-          <button
-            type="button"
-            onClick={() => setIsManagingView(true)}
-            className="px-3 py-1.5 bg-[#00A896] hover:bg-[#008f80] text-white rounded-xl text-xs font-bold transition flex items-center gap-1 shadow-xs cursor-pointer"
-          >
-            <span>Gestionar mi viaje</span>
-            <ChevronRight className="w-3.5 h-3.5" />
-          </button>
-        )}
-      </div>
-
-      {/* Tarjeta Destacada: Viaje que ofrecés como Conductor */}
-      {managedTrip.status !== 'CANCELLED' && (
-        <div className="mb-5 bg-white border border-[#E6F7F5] rounded-2xl p-4 shadow-sm relative overflow-hidden">
-          <div className="absolute top-0 right-0 bg-[#E6F7F5] text-[#00A896] text-[10px] font-bold px-3 py-1 rounded-bl-xl uppercase tracking-wider">
-            Sos el conductor
-          </div>
-
-          <div className="flex items-center gap-2 mb-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-[#00A896]" />
-            <h2 className="text-sm font-bold text-[#1A1A1A]">
-              {managedTrip.origin} ➔ {managedTrip.destination}
-            </h2>
-          </div>
-
-          <div className="text-xs text-gray-500 mb-3 flex items-center gap-3">
-            <span>{managedTrip.departureTimeText}</span>
-            <span>•</span>
-            <span className="font-semibold text-[#00A896]">
-              {managedTrip.occupiedSeats} de {managedTrip.totalSeats} asientos reservados
-            </span>
-          </div>
-
-          <div className="flex items-center justify-between pt-2 border-t border-gray-100">
-            <span className="text-xs font-bold text-gray-700">
-              ${managedTrip.pricePerSeat.toLocaleString()} por lugar
-            </span>
-            <button
-              id="list-manage-my-trip-btn"
-              type="button"
-              onClick={() => setIsManagingView(true)}
-              className="text-xs font-bold text-[#00A896] hover:text-[#008375] inline-flex items-center gap-1 cursor-pointer"
-            >
-              <span>Ver gestión y pasajeros</span>
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Tabs Sub-Navegación */}
-      <div className="flex bg-[#EAEAEA]/80 p-1 rounded-[10px] mb-5">
-        <button
-          type="button"
-          onClick={() => setActiveSubTab('upcoming')}
-          className={`flex-1 py-2 text-xs font-semibold rounded-[8px] transition-all cursor-pointer ${
-            activeSubTab === 'upcoming'
-              ? 'bg-[#FFFFFF] text-[#1A1A1A] shadow-sm'
-              : 'text-[#666666] hover:text-[#1A1A1A]'
-          }`}
-        >
-          Próximos ({upcomingTrips.length})
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveSubTab('past')}
-          className={`flex-1 py-2 text-xs font-semibold rounded-[8px] transition-all cursor-pointer ${
-            activeSubTab === 'past'
-              ? 'bg-[#FFFFFF] text-[#1A1A1A] shadow-sm'
-              : 'text-[#666666] hover:text-[#1A1A1A]'
-          }`}
-        >
-          Historial ({pastTrips.length})
-        </button>
-      </div>
-
-      {/* Lista de Viajes */}
-      <div className="space-y-4">
-        {displayTrips.length === 0 ? (
-          <div className="bg-[#FFFFFF] border border-[#EFEFEF] rounded-[12px] p-8 text-center">
-            <Car className="w-10 h-10 text-[#CCCCCC] mx-auto mb-3" />
-            <p className="text-sm font-semibold text-[#1A1A1A]">No tienes viajes en esta sección</p>
-            <p className="text-xs text-[#888888] mt-1">
-              Busca trayectos disponibles o publica una ruta para compartir tus gastos.
-            </p>
-            <button
-              type="button"
-              onClick={onNavigateToSearch}
-              className="mt-4 px-4 py-2 bg-[#00A896] text-white rounded-[10px] text-xs font-semibold hover:bg-[#008f80] transition"
-            >
-              Explorar viajes
-            </button>
-          </div>
-        ) : (
-          displayTrips.map((item) => (
-            <div
-              key={item.id}
-              className="bg-[#FFFFFF] border border-[#EFEFEF] rounded-[12px] p-5 shadow-sm space-y-4"
-            >
-              {/* Encabezado de la Tarjeta */}
-              <div className="flex items-center justify-between pb-3 border-b border-[#F0F0F0]">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-full bg-[#E6F6F4] flex items-center justify-center text-[#00A896] font-bold text-xs">
-                    {item.driverName.charAt(0)}
-                  </div>
-                  <div>
-                    <h3 className="text-xs font-bold text-[#1A1A1A]">{item.driverName}</h3>
-                    <p className="text-[11px] text-[#777777]">{item.carInfo}</p>
-                  </div>
-                </div>
-
-                {/* Badge de Estado Escrow */}
-                {item.status === 'IN_ESCROW' && (
-                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                    <ShieldCheck className="w-3 h-3 text-[#00A896]" />
-                    <span>Fondos en Custodia</span>
-                  </span>
-                )}
-                {item.status === 'CONFIRMED' && (
-                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-blue-50 text-blue-700 border border-blue-200">
-                    <CheckCircle2 className="w-3 h-3" />
-                    <span>Confirmado</span>
-                  </span>
-                )}
-                {item.status === 'COMPLETED' && (
-                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-gray-100 text-gray-700">
-                    <span>Completado</span>
-                  </span>
-                )}
-                {item.status === 'DISPUTED' && (
-                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
-                    <AlertTriangle className="w-3 h-3" />
-                    <span>Disputa en Revisión</span>
-                  </span>
-                )}
-              </div>
-
-              {/* Itinerario */}
-              <div className="space-y-2 text-xs">
-                <div className="flex items-start gap-2.5">
-                  <div className="w-2 h-2 rounded-full bg-emerald-500 mt-1.5 shrink-0" />
-                  <div>
-                    <span className="text-[10px] text-[#888888] uppercase font-semibold block">Origen</span>
-                    <span className="font-semibold text-[#1A1A1A]">{item.origin}</span>
-                  </div>
-                </div>
-                <div className="flex items-start gap-2.5">
-                  <div className="w-2 h-2 rounded-full bg-[#00A896] mt-1.5 shrink-0" />
-                  <div>
-                    <span className="text-[10px] text-[#888888] uppercase font-semibold block">Destino</span>
-                    <span className="font-semibold text-[#1A1A1A]">{item.destination}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Metadatos y Monto */}
-              <div className="flex items-center justify-between pt-3 border-t border-[#F5F5F5] text-xs">
-                <div className="flex items-center gap-3 text-[#666666]">
-                  <span className="flex items-center gap-1">
-                    <Calendar className="w-3.5 h-3.5 text-[#888888]" />
-                    {item.date} • {item.time}
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <Users className="w-3.5 h-3.5 text-[#888888]" />
-                    {item.seats} asiento(s)
-                  </span>
-                </div>
-                <span className="font-bold text-sm text-[#00A896]">
-                  ${item.totalPrice.toLocaleString()} ARS
-                </span>
-              </div>
-
-              {/* Botón de Abrir Disputa / Reclamo */}
-              {item.status !== 'DISPUTED' && (
-                <div className="pt-2 flex justify-end">
-                  <button
-                    type="button"
-                    onClick={() => handleOpenDispute(item.bookingId)}
-                    className="inline-flex items-center gap-1.5 text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50 px-2.5 py-1.5 rounded-lg font-medium transition cursor-pointer"
-                  >
-                    <AlertTriangle className="w-3.5 h-3.5" />
-                    <span>Reportar problema o disputa</span>
-                  </button>
-                </div>
-              )}
-            </div>
-          ))
-        )}
-      </div>
-
-      {/* Modal de Disputa Flotante */}
-      {selectedDisputeBookingId && (
-        <CreateDisputeModal
-          isOpen={isDisputeModalOpen}
-          bookingId={selectedDisputeBookingId}
-          onClose={() => {
-            setIsDisputeModalOpen(false);
-            setSelectedDisputeBookingId(null);
-          }}
-          onSuccess={handleDisputeSuccess}
-          showToast={(msg, type) => setToast({ message: msg, type })}
-        />
-      )}
-
+    <div className="min-h-screen flex items-center justify-center p-0 md:p-6 bg-slate-900 font-sans antialiased select-none">
       {toast && (
         <Toast
           id="my-trips-toast"
@@ -916,11 +542,565 @@ export const MyTripsScreen: React.FC<MyTripsScreenProps> = ({
         />
       )}
 
-      {/* Barra de Navegación Inferior Fija */}
-      <BottomNav
-        activeTab="trips"
-        onTabChange={handleBottomNavChange}
-      />
+      {/* Modal de Disputa */}
+      {selectedDisputeBookingId && (
+        <CreateDisputeModal
+          isOpen={isDisputeModalOpen}
+          bookingId={selectedDisputeBookingId}
+          onClose={() => {
+            setIsDisputeModalOpen(false);
+            setSelectedDisputeBookingId(null);
+          }}
+          onSuccess={() => {
+            setToast({
+              message: 'Disputa registrada para revisión de soporte.',
+              type: 'success',
+            });
+          }}
+          showToast={(msg, type) => setToast({ message: msg, type })}
+        />
+      )}
+
+      {/* Modal de Contacto Compartido */}
+      {contactTarget && (
+        <ContactDriverModal
+          isOpen={isContactModalOpen}
+          onClose={() => {
+            setIsContactModalOpen(false);
+            setContactTarget(null);
+          }}
+          driverName={contactTarget.name}
+          driverPhoneNumber={contactTarget.phone}
+          destinationCity={contactTarget.destination}
+        />
+      )}
+
+      {/* iPhone 15 / 16 Container: 393 x 852 px */}
+      <div className="relative w-full max-w-[393px] h-[852px] bg-[#F7F9FA] text-[#1A1A1A] flex flex-col overflow-hidden md:rounded-[44px] shadow-2xl border-0 md:border-[8px] md:border-neutral-800">
+        {/* iOS Status Bar with Dynamic Island */}
+        <div className="pt-3 px-7 flex justify-between items-center z-30 shrink-0 select-none">
+          <span className="text-[15px] font-semibold tracking-tight text-[#1A1A1A]">
+            9:41
+          </span>
+          {/* Dynamic Island pill */}
+          <div className="w-[124px] h-[34px] bg-black rounded-full absolute left-1/2 -translate-x-1/2 top-3 hidden sm:block" />
+          <div className="flex items-center space-x-2 text-[#1A1A1A]">
+            {/* Cellular */}
+            <svg className="w-4 h-3.5 fill-current" viewBox="0 0 17 12">
+              <rect height="4" rx="0.75" width="2.5" x="0" y="8" />
+              <rect height="6.5" rx="0.75" width="2.5" x="4.5" y="5.5" />
+              <rect height="9" rx="0.75" width="2.5" x="9" y="3" />
+              <rect height="11.5" rx="0.75" width="2.5" x="13.5" y="0.5" />
+            </svg>
+            {/* Wifi */}
+            <svg className="w-4 h-3.5 fill-current" viewBox="0 0 16 12">
+              <path
+                clipRule="evenodd"
+                d="M8 2.5C5.1 2.5 2.5 3.7 0.7 5.6L0 4.9C2 2.7 4.9 1.5 8 1.5C11.1 1.5 14 2.7 16 4.9L15.3 5.6C13.5 3.7 10.9 2.5 8 2.5ZM8 6.5C6.3 6.5 4.8 7.2 3.7 8.3L3 7.6C4.3 6.3 6.1 5.5 8 5.5C9.9 5.5 11.7 6.3 13 7.6L12.3 8.3C11.2 7.2 9.7 6.5 8 6.5ZM8 10C7.2 10 6.5 10.4 6 11L8 13L10 11C9.5 10.4 8.8 10 8 10Z"
+                fillRule="evenodd"
+              />
+            </svg>
+            {/* Battery */}
+            <div className="w-6 h-[11.5px] border border-[#1A1A1A] rounded-[3.5px] p-[1.5px] flex items-center">
+              <div className="h-full w-full bg-[#1A1A1A] rounded-[1.5px]" />
+            </div>
+          </div>
+        </div>
+
+        {/* Header (Centered Title, No Back Arrow) */}
+        <header className="pt-5 pb-3 px-6 text-center shrink-0">
+          <h1 className="text-[20px] font-bold text-[#1A1A1A] tracking-tight">
+            Mis Viajes
+          </h1>
+        </header>
+
+        {/* Segmented Control (Tabs) */}
+        <div className="px-6 shrink-0 border-b border-[#E5E9EB] bg-[#F7F9FA]">
+          <div className="flex">
+            {/* Tab: Como Pasajero */}
+            <button
+              id="tab-passenger-btn"
+              type="button"
+              onClick={() => setActiveTab('passenger')}
+              className="flex-1 pb-3 text-center relative focus:outline-none transition-colors cursor-pointer"
+            >
+              <span
+                className={`text-[15px] ${
+                  activeTab === 'passenger'
+                    ? 'font-semibold text-[#00A896]'
+                    : 'font-medium text-[#6B7280] hover:text-[#1A1A1A]'
+                }`}
+              >
+                Como Pasajero
+              </span>
+              {activeTab === 'passenger' && (
+                <div className="absolute bottom-0 left-0 right-0 h-[2.5px] bg-[#00A896] rounded-full" />
+              )}
+            </button>
+
+            {/* Tab: Como Conductor */}
+            <button
+              id="tab-driver-btn"
+              type="button"
+              onClick={() => setActiveTab('driver')}
+              className="flex-1 pb-3 text-center relative focus:outline-none transition-colors cursor-pointer"
+            >
+              <span
+                className={`text-[15px] ${
+                  activeTab === 'driver'
+                    ? 'font-bold text-[#00A896]'
+                    : 'font-medium text-[#6B7280] hover:text-[#1A1A1A]'
+                }`}
+              >
+                Como Conductor
+              </span>
+              {activeTab === 'driver' && (
+                <div className="absolute bottom-0 left-0 right-0 h-[2.5px] bg-[#00A896] rounded-full" />
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* Main Scrollable Content Area */}
+        <main
+          className="flex-1 overflow-y-auto px-5 py-5 space-y-6"
+          style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+        >
+          {/* =============================================================== */}
+          {/* VISTA A: COMO PASAJERO (MyTripsPassengerReact.md)                */}
+          {/* =============================================================== */}
+          {activeTab === 'passenger' && (
+            <>
+              {/* Section: Próximos Viajes */}
+              <section className="space-y-2.5">
+                <div className="flex items-center justify-between px-1">
+                  <h2 className="text-[12px] font-bold text-[#6B7280] tracking-wider uppercase">
+                    Próximos Viajes
+                  </h2>
+                  <span className="text-[12px] font-medium text-[#00A896] bg-[#E6F7F5] px-2 py-0.5 rounded-full">
+                    1 pendiente
+                  </span>
+                </div>
+
+                {/* Passenger Card 1: Confirmado */}
+                <article
+                  onClick={() => {
+                    setContactTarget({
+                      name: 'Carlos M.',
+                      phone: '+5491148291123',
+                      destination: 'Pilar, Bs. As.',
+                    });
+                    setIsContactModalOpen(true);
+                  }}
+                  className="bg-white rounded-[16px] p-4 shadow-[0px_2px_8px_rgba(0,0,0,0.04)] border border-[#E5E9EB]/60 hover:border-[#00A896]/30 transition-all cursor-pointer"
+                >
+                  {/* Card Header / Status & Date */}
+                  <div className="flex items-center justify-between pb-3 border-b border-[#F0F3F5]">
+                    <div className="flex items-center space-x-2 text-[13px] text-[#1A1A1A] font-medium">
+                      <svg className="w-4 h-4 text-[#00A896]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+                      </svg>
+                      <span>Mañana, 09:30 hs</span>
+                    </div>
+                    {/* Status Badge: Confirmado (Light teal) */}
+                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold bg-[#E6F7F5] text-[#00A896] border border-[#00A896]/20">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#00A896] mr-1.5" />
+                      Confirmado
+                    </span>
+                  </div>
+
+                  {/* Route Info */}
+                  <div className="py-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-3">
+                        <div className="flex flex-col items-center">
+                          <div className="w-2.5 h-2.5 rounded-full bg-[#00A896]" />
+                          <div className="w-0.5 h-6 bg-dashed border-l border-dashed border-[#CBD5E1] my-0.5" />
+                          <div className="w-2.5 h-2.5 rounded-full bg-[#E63946]" />
+                        </div>
+                        <div className="flex flex-col justify-between py-0.5 space-y-2">
+                          <div>
+                            <span className="text-[11px] font-medium uppercase text-[#6B7280] tracking-wide block leading-none">
+                              Origen
+                            </span>
+                            <span className="text-[15px] font-bold text-[#1A1A1A] leading-tight">
+                              Palermo, CABA
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-[11px] font-medium uppercase text-[#6B7280] tracking-wide block leading-none">
+                              Destino
+                            </span>
+                            <span className="text-[15px] font-bold text-[#1A1A1A] leading-tight">
+                              Pilar, Bs. As.
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Right Chevron Indicator */}
+                      <div className="w-8 h-8 rounded-full bg-[#F7F9FA] flex items-center justify-center text-[#6B7280]">
+                        <ChevronRight className="w-4 h-4 stroke-[2.2]" />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Driver & Vehicle Details Footer */}
+                  <div className="mt-1 pt-3 border-t border-[#F0F3F5] flex items-center justify-between">
+                    <div className="flex items-center space-x-2.5">
+                      {/* Driver Avatar "CM" */}
+                      <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-[#00A896] to-[#2EC4B6] flex items-center justify-center text-white font-bold text-[13px] shadow-sm">
+                        CM
+                      </div>
+                      <div className="flex flex-col">
+                        <div className="flex items-center space-x-1.5">
+                          <span className="text-[13px] font-bold text-[#1A1A1A]">
+                            Carlos M.
+                          </span>
+                          <span className="text-[11px] font-semibold text-amber-500 flex items-center">
+                            ★ 4.9
+                          </span>
+                        </div>
+                        <span className="text-[12px] text-[#6B7280]">
+                          Toyota Corolla • AA 123 CD
+                        </span>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-[14px] font-bold text-[#00A896]">
+                        $3.500
+                      </span>
+                      <span className="text-[10px] text-[#6B7280] block">
+                        1 asiento
+                      </span>
+                    </div>
+                  </div>
+                </article>
+              </section>
+
+              {/* Section: Historial */}
+              <section className="space-y-2.5">
+                <div className="px-1">
+                  <h2 className="text-[12px] font-bold text-[#6B7280] tracking-wider uppercase">
+                    Historial
+                  </h2>
+                </div>
+
+                {/* Passenger Card 2: Finalizado */}
+                <article
+                  onClick={() => setSelectedDisputeBookingId('hist-rosario-01')}
+                  className="bg-white rounded-[16px] p-4 shadow-[0px_2px_8px_rgba(0,0,0,0.04)] border border-[#E5E9EB]/60 hover:border-[#6B7280]/30 transition-all opacity-95 cursor-pointer"
+                >
+                  {/* Card Header / Status & Date */}
+                  <div className="flex items-center justify-between pb-3 border-b border-[#F0F3F5]">
+                    <div className="flex items-center space-x-2 text-[13px] text-[#6B7280] font-medium">
+                      <svg className="w-4 h-4 text-[#6B7280]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+                      </svg>
+                      <span>12 Oct 2024, 15:15 hs</span>
+                    </div>
+                    {/* Status Badge: Finalizado (Grey) */}
+                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold bg-[#F3F4F6] text-[#4B5563] border border-[#E5E7EB]">
+                      Finalizado
+                    </span>
+                  </div>
+
+                  {/* Route Info */}
+                  <div className="py-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-3">
+                        <div className="flex flex-col items-center">
+                          <div className="w-2.5 h-2.5 rounded-full bg-[#6B7280]" />
+                          <div className="w-0.5 h-6 bg-dashed border-l border-dashed border-[#CBD5E1] my-0.5" />
+                          <div className="w-2.5 h-2.5 rounded-full bg-[#94A3B8]" />
+                        </div>
+                        <div className="flex flex-col justify-between py-0.5 space-y-2">
+                          <div>
+                            <span className="text-[11px] font-medium uppercase text-[#6B7280] tracking-wide block leading-none">
+                              Origen
+                            </span>
+                            <span className="text-[15px] font-semibold text-[#1A1A1A] leading-tight">
+                              Buenos Aires
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-[11px] font-medium uppercase text-[#6B7280] tracking-wide block leading-none">
+                              Destino
+                            </span>
+                            <span className="text-[15px] font-semibold text-[#1A1A1A] leading-tight">
+                              Rosario, Santa Fe
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Right Chevron Indicator */}
+                      <div className="w-8 h-8 rounded-full bg-[#F7F9FA] flex items-center justify-center text-[#6B7280]">
+                        <ChevronRight className="w-4 h-4 stroke-[2.2]" />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Driver & Vehicle Details Footer */}
+                  <div className="mt-1 pt-3 border-t border-[#F0F3F5] flex items-center justify-between">
+                    <div className="flex items-center space-x-2.5">
+                      {/* Driver Avatar "SO" */}
+                      <div className="w-9 h-9 rounded-full bg-[#05668D] flex items-center justify-center text-white font-bold text-[13px] shadow-sm">
+                        SO
+                      </div>
+                      <div className="flex flex-col">
+                        <div className="flex items-center space-x-1.5">
+                          <span className="text-[13px] font-bold text-[#1A1A1A]">
+                            Sofía O.
+                          </span>
+                          <span className="text-[11px] font-semibold text-amber-500 flex items-center">
+                            ★ 5.0
+                          </span>
+                        </div>
+                        <span className="text-[12px] text-[#6B7280]">
+                          Ford Focus • AB 456 CD
+                        </span>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-[14px] font-bold text-[#4B5563]">
+                        $7.200
+                      </span>
+                      <span className="text-[10px] text-[#6B7280] block">
+                        Pagado
+                      </span>
+                    </div>
+                  </div>
+                </article>
+              </section>
+            </>
+          )}
+
+          {/* =============================================================== */}
+          {/* VISTA B: COMO CONDUCTOR (MyTripsDriverReact.md)                  */}
+          {/* =============================================================== */}
+          {activeTab === 'driver' && (
+            <>
+              {/* Section: Próximos Viajes */}
+              <section className="space-y-2.5">
+                <div className="flex items-center justify-between px-1">
+                  <h2 className="text-[12px] font-bold text-[#6B7280] tracking-wider uppercase">
+                    PRÓXIMOS / ACTIVOS
+                  </h2>
+                  <span className="text-[12px] font-medium text-[#00A896] bg-[#E6F7F5] px-2 py-0.5 rounded-full">
+                    1 activo
+                  </span>
+                </div>
+
+                <article
+                  id="driver-active-trip-card"
+                  onClick={() => setIsManagingView(true)}
+                  className="bg-white rounded-[16px] p-4 shadow-[0px_2px_8px_rgba(0,0,0,0.04)] border border-[#E5E9EB]/60 hover:border-[#00A896]/30 transition-all cursor-pointer"
+                >
+                  <div className="flex items-center justify-between pb-3 border-b border-[#F0F3F5]">
+                    <div className="flex items-center space-x-2 text-[13px] text-[#1A1A1A] font-medium">
+                      <svg className="w-4 h-4 text-[#00A896]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+                      </svg>
+                      <span>{managedTrip.departureTimeText}</span>
+                    </div>
+                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold bg-[#E6F7F5] text-[#00A896] border border-[#00A896]/20">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#00A896] mr-1.5" />
+                      {managedTrip.occupiedSeats}/{managedTrip.totalSeats} Asientos
+                    </span>
+                  </div>
+
+                  <div className="py-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-3">
+                        <div className="flex flex-col items-center">
+                          <div className="w-2.5 h-2.5 rounded-full bg-[#00A896]" />
+                          <div className="w-0.5 h-6 bg-dashed border-l border-dashed border-[#CBD5E1] my-0.5" />
+                          <div className="w-2.5 h-2.5 rounded-full bg-[#E63946]" />
+                        </div>
+                        <div className="flex flex-col justify-between py-0.5 space-y-2">
+                          <div>
+                            <span className="text-[11px] font-medium uppercase text-[#6B7280] tracking-wide block leading-none">
+                              Origen
+                            </span>
+                            <span className="text-[15px] font-bold text-[#1A1A1A] leading-tight">
+                              {managedTrip.origin}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-[11px] font-medium uppercase text-[#6B7280] tracking-wide block leading-none">
+                              Destino
+                            </span>
+                            <span className="text-[15px] font-bold text-[#1A1A1A] leading-tight">
+                              {managedTrip.destination}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="w-8 h-8 rounded-full bg-[#F7F9FA] flex items-center justify-center text-[#6B7280]">
+                        <ChevronRight className="w-4 h-4 stroke-[2.2]" />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-1 pt-3 border-t border-[#F0F3F5] flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <svg className="w-4 h-4 text-[#6B7280] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path d="M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0z" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+                        <path d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h1M5 17a2 2 0 104 0m-4 0a2 2 0 114 0m6 0a2 2 0 104 0m-4 0a2 2 0 114 0" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+                      </svg>
+                      <span className="text-[12px] font-medium text-[#6B7280]">
+                        {managedTrip.carInfo}
+                      </span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-[14px] font-bold text-[#00A896]">
+                        ${managedTrip.pricePerSeat.toLocaleString()}
+                      </span>
+                      <span className="text-[10px] text-[#6B7280] block">/ lugar</span>
+                    </div>
+                  </div>
+                </article>
+              </section>
+
+              {/* Section: Historial */}
+              <section className="space-y-2.5">
+                <div className="px-1">
+                  <h2 className="text-[12px] font-bold text-[#6B7280] tracking-wider uppercase">
+                    HISTORIAL
+                  </h2>
+                </div>
+
+                <article className="bg-white rounded-[16px] p-4 shadow-[0px_2px_8px_rgba(0,0,0,0.04)] border border-[#E5E9EB]/60 hover:border-[#6B7280]/30 transition-all opacity-95">
+                  <div className="flex items-center justify-between pb-3 border-b border-[#F0F3F5]">
+                    <div className="flex items-center space-x-2 text-[13px] text-[#6B7280] font-medium">
+                      <svg className="w-4 h-4 text-[#6B7280]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+                      </svg>
+                      <span>05 Nov 2024, 08:00 hs</span>
+                    </div>
+                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold bg-[#F3F4F6] text-[#4B5563] border border-[#E5E7EB]">
+                      Finalizado
+                    </span>
+                  </div>
+
+                  <div className="py-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-3">
+                        <div className="flex flex-col items-center">
+                          <div className="w-2.5 h-2.5 rounded-full bg-[#6B7280]" />
+                          <div className="w-0.5 h-6 bg-dashed border-l border-dashed border-[#CBD5E1] my-0.5" />
+                          <div className="w-2.5 h-2.5 rounded-full bg-[#94A3B8]" />
+                        </div>
+                        <div className="flex flex-col justify-between py-0.5 space-y-2">
+                          <div>
+                            <span className="text-[11px] font-medium uppercase text-[#6B7280] tracking-wide block leading-none">
+                              Origen
+                            </span>
+                            <span className="text-[15px] font-semibold text-[#1A1A1A] leading-tight">
+                              Nuñez, CABA
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-[11px] font-medium uppercase text-[#6B7280] tracking-wide block leading-none">
+                              Destino
+                            </span>
+                            <span className="text-[15px] font-semibold text-[#1A1A1A] leading-tight">
+                              La Plata, Bs. As.
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="w-8 h-8 rounded-full bg-[#F7F9FA] flex items-center justify-center text-[#6B7280]">
+                        <ChevronRight className="w-4 h-4 stroke-[2.2]" />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-1 pt-3 border-t border-[#F0F3F5] flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <svg className="w-4 h-4 text-[#6B7280] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" />
+                      </svg>
+                      <span className="text-[12px] text-[#6B7280]">
+                        3 de 3 pasajeros conducidos
+                      </span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-[14px] font-bold text-[#1A1A1A]">
+                        $10.500
+                      </span>
+                      <span className="text-[10px] text-[#6B7280] block">Recaudado</span>
+                    </div>
+                  </div>
+                </article>
+              </section>
+            </>
+          )}
+        </main>
+
+        {/* Bottom Navigation Bar (Fixed with 4 items, Tab 2 "Mis Viajes" Active) */}
+        <nav className="bg-white border-t border-[#E5E9EB] pt-2.5 px-6 shrink-0 safe-area-bottom">
+          <div className="flex justify-between items-center max-w-sm mx-auto">
+            {/* Buscar (Inactive) */}
+            <button
+              id="nav-search-btn"
+              type="button"
+              onClick={onNavigateToSearch}
+              className="flex flex-col items-center group py-1 text-[#6B7280] cursor-pointer"
+            >
+              <svg className="w-6 h-6 stroke-current" fill="none" strokeWidth="2" viewBox="0 0 24 24">
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" x2="16.65" y1="21" y2="16.65" />
+              </svg>
+              <span className="text-[10px] font-medium mt-1">Buscar</span>
+            </button>
+
+            {/* Mis Viajes (Active) */}
+            <button
+              id="nav-trips-active-btn"
+              type="button"
+              className="flex flex-col items-center group py-1 text-[#00A896] cursor-default"
+            >
+              <svg className="w-6 h-6 stroke-current fill-[#00A896]/10" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <span className="text-[10px] font-semibold mt-1">Mis Viajes</span>
+            </button>
+
+            {/* Publicar (Inactive) */}
+            <button
+              id="nav-publish-btn"
+              type="button"
+              onClick={onNavigateToPublish}
+              className="flex flex-col items-center group py-1 text-[#6B7280] cursor-pointer"
+            >
+              <svg className="w-6 h-6 stroke-current" fill="none" strokeWidth="2" viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="9" />
+                <line x1="12" x2="12" y1="8" y2="16" />
+                <line x1="8" x2="16" y1="12" y2="12" />
+              </svg>
+              <span className="text-[10px] font-medium mt-1">Publicar</span>
+            </button>
+
+            {/* Perfil (Inactive) */}
+            <button
+              id="nav-profile-btn"
+              type="button"
+              onClick={onNavigateToProfile}
+              className="flex flex-col items-center group py-1 text-[#6B7280] cursor-pointer"
+            >
+              <svg className="w-6 h-6 stroke-current" fill="none" strokeWidth="2" viewBox="0 0 24 24">
+                <path d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <span className="text-[10px] font-medium mt-1">Perfil</span>
+            </button>
+          </div>
+
+          {/* iOS Home Indicator */}
+          <div className="w-32 h-1 bg-[#1A1A1A]/20 rounded-full mx-auto mt-3 mb-1" />
+        </nav>
+      </div>
     </div>
   );
 };

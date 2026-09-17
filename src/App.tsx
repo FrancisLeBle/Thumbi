@@ -29,13 +29,18 @@ import { WelcomeScreen } from './screens/WelcomeScreen';
 import { LoginScreen } from './screens/LoginScreen';
 import { RegisterScreen } from './screens/RegisterScreen';
 import { IdentityVerificationScreen } from './screens/IdentityVerificationScreen';
-import { HomeScreen } from './screens/HomeScreen';
-import { SearchDashboardScreen, SearchQueryParams } from './screens/SearchDashboardScreen';
+import { HomeScreen, SearchQueryParams } from './screens/HomeScreen';
 import { SearchResultsScreen } from './screens/SearchResultsScreen';
 import { BookingScreen } from './screens/BookingScreen';
 import { PublishTripScreen } from './screens/PublishTripScreen';
 import { MyTripsScreen } from './screens/MyTripsScreen';
 import { ProfileScreen } from './screens/ProfileScreen';
+import { HelpSupportScreen } from './screens/HelpSupportScreen';
+import { SecurityPrivacyScreen } from './screens/SecurityPrivacyScreen';
+import { PaymentMethodsScreen } from './screens/PaymentMethodsScreen';
+import { NotificationsSettingsScreen } from './screens/NotificationsSettingsScreen';
+import { AddVehicleScreen } from './screens/AddVehicleScreen';
+import { BottomNav, BottomNavTab } from './components/BottomNav';
 import { TripSearchResult } from './services/tripService';
 import { Trip, Booking } from './types/api';
 
@@ -73,12 +78,16 @@ export type AppView =
   | 'login'
   | 'register'
   | 'identity-verification'
-  | 'search-dashboard'
   | 'search-results'
   | 'booking'
   | 'publish'
   | 'trips'
-  | 'profile';
+  | 'profile'
+  | 'help-support'
+  | 'security-privacy'
+  | 'payment-methods'
+  | 'notifications-settings'
+  | 'add-vehicle';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'app' | 'simulator' | 'whatsapp' | 'architecture' | 'api-docs' | 'deployment'>('app');
@@ -434,6 +443,11 @@ export default function App() {
                   { view: 'publish' as const, label: '8. Publicar Viaje' },
                   { view: 'trips' as const, label: '9. Mis Viajes' },
                   { view: 'profile' as const, label: '10. Perfil' },
+                  { view: 'help-support' as const, label: '11. Ayuda y Soporte' },
+                  { view: 'security-privacy' as const, label: '12. Seguridad y Privacidad' },
+                  { view: 'payment-methods' as const, label: '13. Métodos de Pago' },
+                  { view: 'notifications-settings' as const, label: '14. Notificaciones' },
+                  { view: 'add-vehicle' as const, label: '15. Agregar Vehículo' },
                 ].map((item) => (
                   <button
                     key={item.view}
@@ -462,7 +476,7 @@ export default function App() {
                 />
               )}
 
-              {(currentAppView === 'home' || currentAppView === 'search-dashboard') && (
+              {currentAppView === 'home' && (
                 <HomeScreen
                   userName={user ? user.firstName : 'Sofía'}
                   isDriver={user?.role === 'DRIVER'}
@@ -506,7 +520,7 @@ export default function App() {
                       provider: 'GOOGLE',
                     });
                     addLog('auth', `Sesión iniciada con éxito para ${authData.user.email}`);
-                    setCurrentAppView('search-dashboard');
+                    setCurrentAppView('home');
                   }}
                 />
               )}
@@ -549,29 +563,10 @@ export default function App() {
                       setUser({ ...user, kycStatus: 'APPROVED' });
                     }
                     addLog('kyc', 'DNI Frente y Dorso aprobados exitosamente con validación biométrica.');
-                    setCurrentAppView('search-dashboard');
+                    setCurrentAppView('home');
                   }}
                   onSkip={() => {
                     addLog('kyc', 'Validación de identidad postergada. Accediendo con verificación pendiente.');
-                    setCurrentAppView('search-dashboard');
-                  }}
-                />
-              )}
-
-              {currentAppView === 'search-dashboard' && (
-                <SearchDashboardScreen
-                  userName={user ? user.firstName : 'Sofía'}
-                  isDriver={user?.role === 'DRIVER'}
-                  onSearch={(params) => {
-                    setSearchParams(params);
-                    setCurrentAppView('search-results');
-                  }}
-                  onNavigateToPublish={() => setCurrentAppView('publish')}
-                  onNavigateToTrips={() => setCurrentAppView('trips')}
-                  onNavigateToProfile={() => setCurrentAppView('profile')}
-                  onLogout={() => {
-                    setUser(null);
-                    setSession(null);
                     setCurrentAppView('home');
                   }}
                 />
@@ -583,7 +578,7 @@ export default function App() {
                   initialDestination={searchParams.destination}
                   initialDate={searchParams.date}
                   initialSeats={searchParams.seats}
-                  onBackToHome={() => setCurrentAppView('search-dashboard')}
+                  onBackToHome={() => setCurrentAppView('home')}
                   onSelectTripToBook={(trip: TripSearchResult) => {
                     setSelectedTrip(trip as unknown as Trip);
                     setCurrentAppView('booking');
@@ -599,7 +594,7 @@ export default function App() {
                   trip={selectedTrip || undefined}
                   onBack={() => setCurrentAppView('search-results')}
                   onNavigateToTrips={() => setCurrentAppView('trips')}
-                  onNavigateToHome={() => setCurrentAppView('search-dashboard')}
+                  onNavigateToHome={() => setCurrentAppView('home')}
                   onBookingSuccess={(newBooking: Booking) => {
                     addLog('info', `Reserva ${newBooking.id} creada exitosamente con fondos en Escrow.`);
                     setCurrentAppView('trips');
@@ -609,9 +604,9 @@ export default function App() {
 
               {currentAppView === 'publish' && (
                 <PublishTripScreen
-                  onBack={() => setCurrentAppView('search-dashboard')}
-                  onNavigateToHome={() => setCurrentAppView('search-dashboard')}
-                  onNavigateToSearch={() => setCurrentAppView('search-dashboard')}
+                  onBack={() => setCurrentAppView('home')}
+                  onNavigateToHome={() => setCurrentAppView('home')}
+                  onNavigateToSearch={() => setCurrentAppView('home')}
                   onNavigateToTrips={() => setCurrentAppView('trips')}
                   onNavigateToProfile={() => setCurrentAppView('profile')}
                   userVehicle={
@@ -632,7 +627,7 @@ export default function App() {
                   initialManageTrip={isManagingCreatedTrip}
                   onNavigateToHome={() => {
                     setIsManagingCreatedTrip(false);
-                    setCurrentAppView('search-dashboard');
+                    setCurrentAppView('home');
                   }}
                   onNavigateToSearch={() => {
                     setIsManagingCreatedTrip(false);
@@ -654,14 +649,19 @@ export default function App() {
                   userName={user ? `${user.firstName} ${user.lastName}` : 'Sofía Martínez'}
                   userEmail={user ? user.email : 'sofia.martinez@ejemplo.com'}
                   role={user?.role || 'PASSENGER'}
-                  onNavigateToHome={() => setCurrentAppView('search-dashboard')}
+                  onNavigateToHome={() => setCurrentAppView('home')}
                   onNavigateToSearch={() => setCurrentAppView('search-results')}
                   onNavigateToPublish={() => setCurrentAppView('publish')}
                   onNavigateToTrips={() => setCurrentAppView('trips')}
                   onLogout={() => {
                     setUser(null);
                     setSession(null);
-                    setCurrentAppView('home');
+                    setCurrentAppView('welcome');
+                  }}
+                  onNavigateToWelcome={() => {
+                    setUser(null);
+                    setSession(null);
+                    setCurrentAppView('welcome');
                   }}
                   onToggleRole={() => {
                     if (user) {
@@ -674,8 +674,52 @@ export default function App() {
                       addLog('info', `Rol alternado a ${nextRole}`);
                     }
                   }}
+                  onNavigateToHelpSupport={() => setCurrentAppView('help-support')}
+                  onNavigateToSecurityPrivacy={() => setCurrentAppView('security-privacy')}
+                  onNavigateToPaymentMethods={() => setCurrentAppView('payment-methods')}
+                  onNavigateToNotifications={() => setCurrentAppView('notifications-settings')}
+                  onNavigateToAddVehicle={() => setCurrentAppView('add-vehicle')}
                 />
               )}
+
+            {currentAppView === 'help-support' && (
+              <HelpSupportScreen
+                onBack={() => setCurrentAppView('profile')}
+                onNavigateToTrips={() => setCurrentAppView('trips')}
+              />
+            )}
+
+            {currentAppView === 'security-privacy' && (
+              <SecurityPrivacyScreen
+                onBack={() => setCurrentAppView('profile')}
+                onLogout={() => {
+                  setUser(null);
+                  setSession(null);
+                  setCurrentAppView('welcome');
+                }}
+              />
+            )}
+
+            {currentAppView === 'payment-methods' && (
+              <PaymentMethodsScreen
+                onBack={() => setCurrentAppView('profile')}
+              />
+            )}
+
+            {currentAppView === 'notifications-settings' && (
+              <NotificationsSettingsScreen
+                onBack={() => setCurrentAppView('profile')}
+              />
+            )}
+
+            {currentAppView === 'add-vehicle' && (
+              <AddVehicleScreen
+                onBack={() => setCurrentAppView('profile')}
+                onVehicleAdded={() => {
+                  addLog('info', 'Nuevo vehículo registrado con éxito.');
+                }}
+              />
+            )}
             </div>
           </div>
         )}

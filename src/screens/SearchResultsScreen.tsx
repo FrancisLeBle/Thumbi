@@ -23,6 +23,7 @@ export interface SearchResultsScreenProps {
   initialDate?: string;
   initialSeats?: number;
   onBackToHome: () => void;
+  onNavigateToHome?: () => void;
   onSelectTripToBook: (trip: TripSearchResult) => void;
   onNavigateToPublish: () => void;
   onNavigateToTrips: () => void;
@@ -37,11 +38,20 @@ export const SearchResultsScreen: React.FC<SearchResultsScreenProps> = ({
   initialDate = '2026-09-17',
   initialSeats = 1,
   onBackToHome,
+  onNavigateToHome,
   onSelectTripToBook,
   onNavigateToPublish,
   onNavigateToTrips,
   onNavigateToProfile,
 }) => {
+  // Manejador seguro para redirigir a HomeScreen
+  const handleBackToHome = () => {
+    if (onBackToHome) {
+      onBackToHome();
+    } else if (onNavigateToHome) {
+      onNavigateToHome();
+    }
+  };
   const [trips, setTrips] = useState<TripSearchResult[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [activeFilter, setActiveFilter] = useState<FilterType>('cheapest');
@@ -306,12 +316,12 @@ export const SearchResultsScreen: React.FC<SearchResultsScreenProps> = ({
         {/* BEGIN: Search Results Header */}
         <section className="w-full bg-[#F7F9FA] px-4 pt-1 pb-2 shrink-0" data-purpose="search-header">
           <div className="flex items-center justify-between">
-            {/* Back Arrow Button */}
+            {/* Back Arrow Button - Redirige explícitamente a HomeScreen */}
             <button
               id="back-to-home-btn"
-              aria-label="Volver"
+              aria-label="Volver a Inicio"
               type="button"
-              onClick={onBackToHome}
+              onClick={handleBackToHome}
               className="w-9 h-9 flex items-center justify-start text-[#00A896] hover:opacity-80 active:opacity-60 transition cursor-pointer"
             >
               <ArrowLeft className="w-6 h-6 stroke-[2.2]" />
@@ -593,15 +603,15 @@ export const SearchResultsScreen: React.FC<SearchResultsScreenProps> = ({
                     type="button"
                     onClick={() => {
                       setIsEditModalOpen(false);
-                      onBackToHome();
+                      handleBackToHome();
                     }}
-                    className="w-1/2 py-3 rounded-xl border border-gray-200 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                    className="w-1/2 py-3 rounded-xl border border-gray-200 text-xs font-semibold text-gray-700 hover:bg-gray-50 cursor-pointer"
                   >
-                    Ir al buscador
+                    Volver a Inicio
                   </button>
                   <button
                     type="submit"
-                    className="w-1/2 py-3 rounded-xl bg-[#00A896] hover:bg-[#008F80] text-white text-xs font-semibold shadow-sm transition"
+                    className="w-1/2 py-3 rounded-xl bg-[#00A896] hover:bg-[#008F80] text-white text-xs font-semibold shadow-sm transition cursor-pointer"
                   >
                     Actualizar
                   </button>
@@ -617,10 +627,11 @@ export const SearchResultsScreen: React.FC<SearchResultsScreenProps> = ({
           data-purpose="bottom-tab-bar"
         >
           <div className="grid grid-cols-4 items-center text-center">
-            {/* Tab 1: Buscar (Active) */}
+            {/* Tab 1: Buscar / Inicio */}
             <button
+              id="results-nav-home-btn"
               type="button"
-              onClick={onBackToHome}
+              onClick={handleBackToHome}
               aria-current="page"
               className="flex flex-col items-center justify-center group cursor-pointer focus:outline-none"
             >
