@@ -15,7 +15,8 @@ import {
   MapPin,
   Clock,
 } from 'lucide-react';
-import { tripService, TripSearchResult } from '../services/tripService';
+import { tripService } from '../services/tripService';
+import type { TripSearchResult } from '../types';
 
 export interface SearchResultsScreenProps {
   initialOrigin?: string;
@@ -410,11 +411,48 @@ export const SearchResultsScreen: React.FC<SearchResultsScreenProps> = ({
           data-purpose="rides-list"
         >
           {isLoading ? (
-            <div className="py-20 flex flex-col items-center justify-center text-center">
-              <Loader2 className="w-8 h-8 animate-spin text-[#00A896] mb-3" />
-              <p className="text-sm font-medium text-[#6B7280]">
-                Buscando los mejores viajes disponibles...
-              </p>
+            <div className="space-y-3 pt-2">
+              <div className="py-3 flex items-center justify-center gap-2.5 text-center bg-white/80 backdrop-blur-xs rounded-xl border border-slate-100 mb-1">
+                <Loader2 className="w-4 h-4 animate-spin text-[#00A896]" />
+                <span className="text-xs font-medium text-[#6B7280]">
+                  Buscando los mejores viajes disponibles...
+                </span>
+              </div>
+              {[1, 2, 3].map((item) => (
+                <div
+                  key={item}
+                  className="bg-white rounded-[16px] p-4 shadow-[0px_2px_8px_rgba(0,0,0,0.04)] border border-gray-100 animate-pulse space-y-3.5"
+                >
+                  {/* Top Bar Skeleton */}
+                  <div className="flex items-center justify-between pb-2 border-b border-gray-100">
+                    <div className="h-4 w-28 bg-slate-200 rounded-md" />
+                    <div className="h-6 w-20 bg-slate-200 rounded-full" />
+                  </div>
+                  {/* Route Skeleton */}
+                  <div className="flex items-center space-x-3 py-1">
+                    <div className="flex flex-col items-center justify-center space-y-1">
+                      <div className="w-2.5 h-2.5 rounded-full bg-slate-300" />
+                      <div className="w-0.5 h-5 bg-slate-200" />
+                      <div className="w-2.5 h-2.5 rounded-full bg-slate-300" />
+                    </div>
+                    <div className="space-y-2 flex-1">
+                      <div className="h-3.5 w-3/4 bg-slate-200 rounded" />
+                      <div className="h-3.5 w-1/2 bg-slate-200 rounded" />
+                    </div>
+                  </div>
+                  {/* Driver & seats skeleton */}
+                  <div className="flex items-center justify-between pt-2 border-t border-gray-100">
+                    <div className="flex items-center space-x-2.5">
+                      <div className="w-9 h-9 rounded-full bg-slate-200" />
+                      <div className="space-y-1">
+                        <div className="h-3 w-20 bg-slate-200 rounded" />
+                        <div className="h-2.5 w-28 bg-slate-100 rounded" />
+                      </div>
+                    </div>
+                    <div className="h-6 w-24 bg-slate-100 rounded-lg" />
+                  </div>
+                </div>
+              ))}
             </div>
           ) : sortedAndFilteredTrips.length === 0 ? (
             <div className="bg-white rounded-2xl p-6 text-center shadow-xs border border-gray-100 my-6">

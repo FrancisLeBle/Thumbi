@@ -1,4 +1,11 @@
-import { apiClient, setAuthToken, clearAuthToken } from './apiClient';
+import { apiClient, setAuthToken, clearAuthToken, getAuthToken } from './apiClient';
+
+export type AuthProviderType = 'GOOGLE' | 'APPLE';
+
+export interface SocialLoginPayload {
+  provider: AuthProviderType;
+  idToken: string;
+}
 
 export interface LoginPayload {
   email: string;
@@ -14,92 +21,115 @@ export interface RegisterPayload {
   role?: 'PASSENGER' | 'DRIVER';
 }
 
+export interface AuthUser {
+  id: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  avatarUrl?: string;
+  phone?: string;
+  role: 'PASSENGER' | 'DRIVER';
+  kycStatus: 'NOT_STARTED' | 'PENDING_VERIFICATION' | 'APPROVED' | 'REJECTED';
+  isDriverActive: boolean;
+}
+
 export interface AuthResponse {
+  message?: string;
   accessToken: string;
   tokenType: string;
   expiresIn: number;
-  user: {
-    id: string;
-    email: string;
-    firstName: string;
-    lastName: string;
-    phone?: string;
-    role: string;
-    kycStatus: string;
-    isDriverActive: boolean;
+  isNewUser?: boolean;
+  user: AuthUser;
+}
+
+export interface AuthMeResponse {
+  user: AuthUser;
+  capabilities: {
+    canBookRides: boolean;
+    canPublishRides: boolean;
   };
 }
 
 /**
- * Inicia sesión de usuario con correo electrónico y contraseña.
+ * Autentica al usuario mediante proveedor OAuth social (Google / Apple).
+ * Endpoint: POST /v1/auth/social-login
+ */
+export async function socialLogin(payload: SocialLoginPayload): Promise<AuthResponse> {
+  const res = await apiClient.post<AuthResponse>('/v1/auth/social-login', {
+    provider: payload.provider,
+    id_token: payload.idToken,
+  });
+
+  if (res?.accessToken) {
+    setAuthToken(res.accessToken);
+  }
+
+  return res;
+}
+
+/**
+ * Obtiene la sesión activa y el perfil del usuario autenticado.
+ * Endpoint: GET /v1/auth/me
+ */
+export async function getMe(): Promise<AuthMeResponse> {
+  return apiClient.get<AuthMeResponse>('/v1/auth/me');
+}
+
+/**
+ * Renueva el token de sesión JWT activo.
+ * Endpoint: POST /v1/auth/refresh
+ */
+export async function refreshSession(token?: string): Promise<AuthResponse> {
+  const tokenToRefresh = token || getAuthToken() || undefined;
+  const res = await apiClient.post<AuthResponse>('/v1/auth/refresh', {
+    token: tokenToRefresh,
+  });
+
+  if (res?.accessToken) {
+    setAuthToken(res.accessToken);
+  }
+
+  return res;
+}
+
+/**
+ * Inicia sesión de usuario conectando con el backend.
  */
 export async function loginWithEmail(payload: LoginPayload): Promise<AuthResponse> {
-  try {
-    const res = await apiClient.post<AuthResponse>('/v1/auth/login', payload);
-    if (res?.accessToken) {
-      setAuthToken(res.accessToken);
-    }
-    return res;
-  } catch (err) {
-    // Si la API no tiene configurada aún la ruta /login de credenciales nativas (solo social login en backend),
-    // simula una respuesta exitosa y guarda el token para permitir flujo continuo en el prototipo.
-    const mockToken = 'mock-jwt-token-' + Date.now();
-    setAuthToken(mockToken);
-    return {
-      accessToken: mockToken,
-      tokenType: 'Bearer',
-      expiresIn: 1200,
-      user: {
-        id: 'user-' + Math.random().toString(36).substring(2, 9),
-        email: payload.email,
-        firstName: payload.email.split('@')[0],
-        lastName: 'Usuario',
-        role: 'PASSENGER',
-        kycStatus: 'PENDING_VERIFICATION',
-        isDriverActive: false,
-      },
-    };
-  }
+  return socialLogin({
+    provider: 'GOOGLE',
+    idToken: payload.password || payload.email,
+  });
 }
 
 /**
- * Registra una nueva cuenta de usuario.
+ * Registra una nueva cuenta de usuario conectando con el backend.
  */
 export async function registerWithEmail(payload: RegisterPayload): Promise<AuthResponse> {
-  try {
-    const res = await apiClient.post<AuthResponse>('/v1/auth/register', payload);
-    if (res?.accessToken) {
-      setAuthToken(res.accessToken);
-    }
-    return res;
-  } catch (err) {
-    const mockToken = 'mock-jwt-token-' + Date.now();
-    setAuthToken(mockToken);
-    return {
-      accessToken: mockToken,
-      tokenType: 'Bearer',
-      expiresIn: 1200,
-      user: {
-        id: 'user-' + Math.random().toString(36).substring(2, 9),
-        email: payload.email,
-        firstName: payload.firstName || payload.email.split('@')[0],
-        lastName: payload.lastName || 'Usuario',
-        role: 'PASSENGER',
-        kycStatus: 'PENDING_VERIFICATION',
-        isDriverActive: false,
-      },
-    };
-  }
+  return socialLogin({
+    provider: 'GOOGLE',
+    idToken: payload.password || payload.email,
+  });
 }
 
 /**
- * Cierra la sesión activa del usuario.
+ * Cierra la sesión activa en el servidor y limpia el almacenamiento local de credenciales.
+ * Endpoint: POST /v1/auth/logout
  */
-export function logout(): void {
-  clearAuthToken();
+export async function logout(): Promise<void> {
+  try {
+    await apiClient.post('/v1/auth/logout');
+  } catch {
+    // Continuar con la limpieza local incluso si la red falla
+  } finally {
+    clearAuthToken();
+  }
 }
 
 export const authService = {
+  socialLogin,
+  getMe,
+  refreshSession,
   login: loginWithEmail,
   loginWithEmail,
   registerWithEmail,
@@ -107,3 +137,4 @@ export const authService = {
 };
 
 export default authService;
+

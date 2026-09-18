@@ -1,23 +1,24 @@
 import React, { useState } from 'react';
-import { ChevronLeft, Info, CheckCircle2 } from 'lucide-react';
+import { ChevronLeft, Info, CheckCircle2, Loader2 } from 'lucide-react';
+import { useUserContext } from '../context/UserContext';
+import { useToast } from '../context/ToastContext';
 import { userService } from '../services/userService';
+import type { VehicleFormData } from '../types';
 
 export interface AddVehicleScreenProps {
   onBack: () => void;
   onVehicleAdded?: () => void;
 }
 
-export interface VehicleFormData {
-  brand: string;
-  model: string;
-  color: string;
-  plate: string;
-}
+export type { VehicleFormData };
 
 export const AddVehicleScreen: React.FC<AddVehicleScreenProps> = ({
   onBack,
   onVehicleAdded,
 }) => {
+  const { addVehicle, isLoading } = useUserContext();
+  const { showToast: showGlobalToast } = useToast();
+
   // Estado local para los campos del formulario
   const [vehicleData, setVehicleData] = useState<VehicleFormData>({
     brand: '',
@@ -29,6 +30,9 @@ export const AddVehicleScreen: React.FC<AddVehicleScreenProps> = ({
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  // Unifica el estado de carga local y global
+  const isBusy = isSubmitting || isLoading;
+
   // Validación: Marca, Modelo y Patente son requeridos
   const isValid =
     vehicleData.brand.trim().length > 0 &&
@@ -37,6 +41,7 @@ export const AddVehicleScreen: React.FC<AddVehicleScreenProps> = ({
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
+    showGlobalToast(msg, 'success');
     setTimeout(() => {
       setToastMessage(null);
     }, 2800);
@@ -44,24 +49,28 @@ export const AddVehicleScreen: React.FC<AddVehicleScreenProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isValid || isSubmitting) return;
+    if (!isValid || isBusy) return;
 
     setIsSubmitting(true);
     try {
-      await userService.addVehicle({
+      const cleanVehicle = {
         brand: vehicleData.brand.trim(),
         model: vehicleData.model.trim(),
         color: vehicleData.color.trim() || 'Blanco',
         plate: vehicleData.plate.trim().toUpperCase(),
-      });
+        isActive: true,
+      };
+
+      // Guardar en UserContext global (invoca userService.addVehicleApi internamente)
+      await addVehicle(cleanVehicle);
 
       showToast('¡Vehículo registrado con éxito!');
       if (onVehicleAdded) {
         onVehicleAdded();
       }
       setTimeout(() => {
-        onBack();
-      }, 700);
+        onBack(); // Redirección de regreso a ProfileScreen
+      }, 500);
     } catch {
       showToast('Error al registrar el vehículo. Intente nuevamente.');
       setIsSubmitting(false);
@@ -217,15 +226,22 @@ export const AddVehicleScreen: React.FC<AddVehicleScreenProps> = ({
         <button
           id="btn-save-vehicle"
           type="button"
-          disabled={!isValid || isSubmitting}
+          disabled={!isValid || isBusy}
           onClick={handleSubmit}
           className={`w-full py-3.5 rounded-2xl font-semibold text-[16px] flex items-center justify-center shadow-sm transition-all duration-150 cursor-pointer ${
-            isValid && !isSubmitting
+            isValid && !isBusy
               ? 'bg-[#00A896] hover:bg-[#028090] active:scale-[0.99] text-white'
               : 'bg-slate-200 text-slate-400 cursor-not-allowed opacity-80'
           }`}
         >
-          {isSubmitting ? 'Guardando...' : 'Guardar vehículo'}
+          {isBusy ? (
+            <span className="flex items-center gap-2">
+              <Loader2 className="w-5 h-5 animate-spin" />
+              <span>Guardando vehículo...</span>
+            </span>
+          ) : (
+            'Guardar vehículo'
+          )}
         </button>
       </div>
     </div>

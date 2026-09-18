@@ -36,10 +36,10 @@ export const ContactDriverModal: React.FC<ContactDriverModalProps> = ({
   };
 
   return (
-    <div className="absolute inset-0 z-50 flex flex-col justify-end select-none animate-fadeIn">
+    <div className="fixed inset-0 z-50 flex flex-col justify-end select-none animate-fadeIn">
       {/* BEGIN: Backdrop Dimmer Overlay */}
       <div
-        className="absolute inset-0 bg-black/45 backdrop-blur-[1.5px] z-10 transition-opacity"
+        className="fixed inset-0 bg-black/45 backdrop-blur-[1.5px] z-10 transition-opacity"
         onClick={onClose}
         data-purpose="backdrop-overlay"
       />
@@ -47,7 +47,7 @@ export const ContactDriverModal: React.FC<ContactDriverModalProps> = ({
 
       {/* BEGIN: Contact Options Bottom Sheet */}
       <div
-        className="relative z-20 bg-white rounded-t-[24px] shadow-[0_-8px_30px_rgba(0,0,0,0.12)] pt-2.5 pb-2 px-5 flex flex-col"
+        className="relative z-20 bg-white rounded-t-[24px] shadow-[0_-8px_30px_rgba(0,0,0,0.12)] pt-2.5 pb-4 px-5 flex flex-col max-w-md w-full mx-auto"
         data-purpose="bottom-sheet-modal"
       >
         {/* Top Grabber Pill */}

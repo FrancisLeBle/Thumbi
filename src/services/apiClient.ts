@@ -2,7 +2,11 @@ import { ApiErrorResponse } from '../types/api';
 import { keysToCamelCase } from '../utils/apiHelpers';
 import { ERROR_MESSAGES, getErrorMessage } from '../utils/errorHelpers';
 
-const BASE_URL = '/api';
+const RAW_BASE_URL =
+  (typeof import.meta !== 'undefined' &&
+    (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_API_BASE_URL) ||
+  '/api';
+const BASE_URL = RAW_BASE_URL.replace(/\/+$/, '');
 const TOKEN_KEY = 'thumbi_auth_token';
 
 /**

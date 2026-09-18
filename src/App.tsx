@@ -41,8 +41,10 @@ import { PaymentMethodsScreen } from './screens/PaymentMethodsScreen';
 import { NotificationsSettingsScreen } from './screens/NotificationsSettingsScreen';
 import { AddVehicleScreen } from './screens/AddVehicleScreen';
 import { BottomNav, BottomNavTab } from './components/BottomNav';
-import { TripSearchResult } from './services/tripService';
-import { Trip, Booking } from './types/api';
+import { Trip, Booking, TripSearchResult } from './types';
+import { UserProvider } from './context/UserContext';
+import { TripProvider } from './context/TripContext';
+import { ToastProvider } from './context/ToastContext';
 
 interface SimulatedUser {
   id: string;
@@ -89,7 +91,7 @@ export type AppView =
   | 'notifications-settings'
   | 'add-vehicle';
 
-export default function App() {
+function AppContent() {
   const [activeTab, setActiveTab] = useState<'app' | 'simulator' | 'whatsapp' | 'architecture' | 'api-docs' | 'deployment'>('app');
   const [currentAppView, setCurrentAppView] = useState<AppView>('home');
   const [searchParams, setSearchParams] = useState<SearchQueryParams>({
@@ -113,7 +115,7 @@ export default function App() {
     endpoint: string;
     status: number;
     statusText: string;
-    body: any;
+    body: Record<string, unknown>;
     durationMs: number;
   } | null>(null);
 
@@ -121,7 +123,7 @@ export default function App() {
     const isHealthy = dbHealth === 'UP';
     let statusCode = 200;
     let statusText = 'OK';
-    let body: any = {};
+    let body: Record<string, unknown> = {};
 
     if (endpoint === '/health') {
       statusCode = isHealthy ? 200 : 503;
@@ -1396,5 +1398,17 @@ export default function App() {
         )}
       </main>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <ToastProvider>
+      <UserProvider>
+        <TripProvider>
+          <AppContent />
+        </TripProvider>
+      </UserProvider>
+    </ToastProvider>
   );
 }

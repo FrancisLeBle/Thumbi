@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Car,
   Bell,
@@ -18,9 +18,11 @@ import {
   Search,
   PlusCircle,
   User,
+  Loader2,
 } from 'lucide-react';
 import { authService } from '../services/authService';
-import { userService, UserProfile, UserVehicle } from '../services/userService';
+import { useUserContext } from '../context/UserContext';
+import { useToast } from '../context/ToastContext';
 
 export interface ProfileScreenProps {
   userName?: string;
@@ -57,9 +59,9 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   onNavigateToNotifications,
   onNavigateToAddVehicle,
 }) => {
-  // Estado de datos de usuario y perfil
-  const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [vehicles, setVehicles] = useState<UserVehicle[]>([]);
+  // Consumimos el contexto global de usuario
+  const { user, setActiveVehicle, addVehicle, isLoading: isUserLoading } = useUserContext();
+  const { showToast } = useToast();
 
   // Estados para modales de vehículo y configuración
   const [isAddVehicleOpen, setIsAddVehicleOpen] = useState<boolean>(false);
@@ -77,30 +79,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [whatsappAlerts, setWhatsappAlerts] = useState<boolean>(true);
   const [escrowAlerts, setEscrowAlerts] = useState<boolean>(true);
 
-  // Carga inicial sincronizada mediante userService
-  useEffect(() => {
-    let isMounted = true;
-    const loadProfileData = async () => {
-      try {
-        const [profileData, vehiclesData] = await Promise.all([
-          userService.getProfile(),
-          userService.getVehicles(),
-        ]);
-        if (isMounted) {
-          setProfile(profileData);
-          setVehicles(vehiclesData);
-        }
-      } catch {
-        // Fallback
-      }
-    };
-
-    loadProfileData();
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
   // Cálculo de iniciales del nombre (ej. "Juan Francisco Lorusso" -> "JF")
   const getInitials = (name: string): string => {
     if (!name) return 'JF';
@@ -111,10 +89,10 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     return parts[0].slice(0, 2).toUpperCase();
   };
 
-  const displayName = profile?.fullName || propUserName || 'Juan Francisco Lorusso';
-  const displayRating = profile?.rating ? profile.rating.toFixed(1) : '4.9';
-  const displayReviews = profile?.reviewCount || 18;
-  const isKycVerified = profile?.isIdentityVerified ?? true;
+  const displayName = user.name || propUserName || 'Juan Francisco Lorusso';
+  const displayRating = typeof user.rating === 'number' ? user.rating.toFixed(1) : '4.9';
+  const displayReviews = user.reviewsCount ?? 38;
+  const isKycVerified = user.isVerified ?? true;
   const initials = getInitials(displayName);
 
   // Acción de agregar vehículo
@@ -123,14 +101,14 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
     if (!newBrand || !newModel || !newPlate) return;
 
     try {
-      const added = await userService.addVehicle({
+      await addVehicle({
         brand: newBrand,
         model: newModel,
         color: newColor,
-        plate: newPlate,
+        plate: newPlate.toUpperCase(),
+        isActive: true,
       });
 
-      setVehicles((prev) => [added, ...prev.map((v) => ({ ...v, isActive: false }))]);
       setIsAddVehicleOpen(false);
       setNewBrand('Toyota');
       setNewModel('');
@@ -143,9 +121,12 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
   // Marcar vehículo como activo
   const handleSelectActiveVehicle = async (id: string) => {
-    const updated = await userService.setActiveVehicle(id);
-    setVehicles(updated);
-    showFeedbackToast('Vehículo activo actualizado para tus viajes');
+    try {
+      await setActiveVehicle(id);
+      showFeedbackToast('Vehículo activo actualizado para tus viajes');
+    } catch {
+      showFeedbackToast('No se pudo actualizar el vehículo activo');
+    }
   };
 
   // Cierre de sesión con authService.logout() y redirección a WelcomeScreen
@@ -160,6 +141,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
   const showFeedbackToast = (msg: string) => {
     setActionFeedback(msg);
+    showToast(msg, 'success');
     setTimeout(() => {
       setActionFeedback(null);
     }, 3200);
@@ -293,21 +275,26 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           </div>
 
           <div className="bg-white rounded-2xl p-4 shadow-[0_2px_8px_rgba(0,0,0,0.04)] border border-[#F0F2F4] space-y-3">
-            {vehicles.length === 0 ? (
+            {user.vehicles.length === 0 ? (
               <div className="text-center py-4">
                 <Car className="w-8 h-8 text-gray-300 mx-auto mb-2" />
                 <p className="text-xs text-[#6B7280]">Aún no tienes vehículos registrados</p>
               </div>
             ) : (
-              vehicles.map((veh) => (
+              user.vehicles.map((veh) => (
                 <div
                   key={veh.id}
+                  id={`vehicle-card-${veh.id}`}
                   onClick={() => handleSelectActiveVehicle(veh.id)}
-                  className="flex items-center justify-between cursor-pointer hover:bg-slate-50/70 p-1.5 -mx-1.5 rounded-xl transition"
+                  className={`flex items-center justify-between cursor-pointer p-2 rounded-xl transition ${
+                    veh.isActive ? 'bg-[#F0FDFB] border border-[#BCEEE6]' : 'hover:bg-slate-50/80 border border-transparent'
+                  }`}
                 >
                   <div className="flex items-center space-x-3.5 min-w-0">
-                    <div className="w-10 h-10 rounded-xl bg-[#E6F7F5] flex items-center justify-center text-[#00A896] flex-shrink-0">
-                      <Car className="w-5 h-5 text-[#00A896] stroke-[2]" />
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                      veh.isActive ? 'bg-[#00A896] text-white' : 'bg-[#E6F7F5] text-[#00A896]'
+                    }`}>
+                      <Car className="w-5 h-5 stroke-[2]" />
                     </div>
                     <div className="truncate">
                       <p className="text-[14px] font-bold text-[#1A1A1A] truncate">
@@ -322,11 +309,12 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                   {/* Estado Activo / Seleccionable */}
                   <div>
                     {veh.isActive ? (
-                      <span className="text-[11px] font-medium text-[#00A896] bg-[#E6F7F5] px-2 py-0.5 rounded-md">
+                      <span className="text-[11px] font-bold text-[#00A896] bg-white border border-[#00A896]/30 px-2.5 py-1 rounded-full flex items-center gap-1 shadow-2xs">
+                        <Check className="w-3 h-3 stroke-[3]" />
                         Activo
                       </span>
                     ) : (
-                      <span className="text-[11px] font-medium text-[#6B7280] bg-gray-100 hover:bg-gray-200 px-2 py-0.5 rounded-md">
+                      <span className="text-[11px] font-medium text-[#6B7280] bg-gray-100 hover:bg-gray-200 px-2.5 py-1 rounded-full transition-colors">
                         Elegir
                       </span>
                     )}
@@ -638,9 +626,17 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="w-1/2 py-2.5 text-xs font-semibold text-white bg-[#00A896] hover:bg-[#028090] rounded-xl shadow-sm transition cursor-pointer"
+                  disabled={isUserLoading}
+                  className="w-1/2 py-2.5 text-xs font-semibold text-white bg-[#00A896] hover:bg-[#028090] rounded-xl shadow-sm transition cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-60"
                 >
-                  Guardar Vehículo
+                  {isUserLoading ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Guardando...</span>
+                    </>
+                  ) : (
+                    'Guardar Vehículo'
+                  )}
                 </button>
               </div>
             </form>

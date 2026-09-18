@@ -3,7 +3,7 @@ import { AlertTriangle, X, Loader2, ShieldAlert } from 'lucide-react';
 import { disputeService } from '../services/disputeService';
 import { ApiClientError } from '../services/apiClient';
 import { getErrorMessage } from '../utils/errorHelpers';
-import { Dispute } from '../types/api';
+import { Dispute } from '../types';
 
 export type DisputeReason =
   | 'TRIP_CANCELLED'

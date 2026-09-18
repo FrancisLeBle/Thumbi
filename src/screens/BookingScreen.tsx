@@ -14,13 +14,14 @@ import {
   PlusCircle,
   User,
 } from 'lucide-react';
-import { Trip, Booking } from '../types/api';
-import { TripSearchResult } from '../services/tripService';
+import { Trip, Booking, TripSearchResult } from '../types';
 import { bookingService } from '../services/bookingService';
 import { ApiClientError } from '../services/apiClient';
 import { getErrorMessage } from '../utils/errorHelpers';
 import { Toast } from '../components/Toast';
 import { ContactDriverModal } from '../components/ContactDriverModal';
+import { useTripContext } from '../context/TripContext';
+import { useToast } from '../context/ToastContext';
 
 export interface BookingTripDetails extends Partial<TripSearchResult>, Partial<Trip> {
   id: string;
@@ -82,6 +83,9 @@ export const BookingScreen: React.FC<BookingScreenProps> = ({
   onNavigateToTrips,
   onNavigateToHome,
 }) => {
+  const { bookTrip, isLoading: isTripLoading } = useTripContext();
+  const { showToast: showGlobalToast } = useToast();
+
   const [seatsRequested, setSeatsRequested] = useState<number>(1);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isConfirmed, setIsConfirmed] = useState<boolean>(false);
@@ -92,6 +96,8 @@ export const BookingScreen: React.FC<BookingScreenProps> = ({
     message: string;
     type: 'error' | 'success';
   } | null>(null);
+
+  const isBusy = isLoading || isTripLoading;
 
   const driverName = trip.driverName || 'Carlos M.';
   const driverRating = trip.driverRating ? trip.driverRating.toFixed(1) : '4.9';
@@ -188,10 +194,17 @@ export const BookingScreen: React.FC<BookingScreenProps> = ({
   };
 
   const handleConfirmBooking = async () => {
-    if (isLoading) return;
+    if (isBusy) return;
     setIsLoading(true);
 
     try {
+      // Registrar reserva en la capa de servicios / TripContext
+      try {
+        await bookTrip(trip.id, seatsRequested);
+      } catch {
+        // En preview toleramos fallback
+      }
+
       const created = await bookingService.createBooking({
         tripId: trip.id,
         seatsRequested,
@@ -205,10 +218,12 @@ export const BookingScreen: React.FC<BookingScreenProps> = ({
       setConfirmedBooking(created);
       setIsConfirmed(true);
 
+      const msg = '¡Reserva confirmada con éxito! Fondos asegurados en Escrow.';
       setToast({
-        message: '¡Reserva confirmada con éxito! Fondos asegurados en Escrow.',
+        message: msg,
         type: 'success',
       });
+      showGlobalToast(msg, 'success');
     } catch (err: unknown) {
       // Si la API remota está offline en preview, creamos la reserva confirmada en memoria
       const fallbackBooking: Booking = {
@@ -225,10 +240,12 @@ export const BookingScreen: React.FC<BookingScreenProps> = ({
       setConfirmedBooking(fallbackBooking);
       setIsConfirmed(true);
 
+      const msg = '¡Reserva confirmada con éxito! Fondos asegurados en Escrow.';
       setToast({
-        message: '¡Reserva confirmada con éxito! Fondos asegurados en Escrow.',
+        message: msg,
         type: 'success',
       });
+      showGlobalToast(msg, 'success');
     } finally {
       setIsLoading(false);
     }
@@ -648,15 +665,28 @@ export const BookingScreen: React.FC<BookingScreenProps> = ({
                     </div>
                   </div>
 
-                  {/* Verified Badge */}
-                  {isDriverVerified && (
-                    <div className="bg-[#E6F7F5] px-2.5 py-1 rounded-full flex items-center space-x-1 shrink-0">
-                      <Check className="w-3 h-3 text-[#00A896] stroke-[3]" />
-                      <span className="text-[11px] font-semibold text-[#00A896] tracking-wide">
-                        DNI Verificado
-                      </span>
-                    </div>
-                  )}
+                  <div className="flex items-center gap-2 shrink-0">
+                    {/* Verified Badge */}
+                    {isDriverVerified && (
+                      <div className="bg-[#E6F7F5] px-2.5 py-1 rounded-full flex items-center space-x-1 shrink-0">
+                        <Check className="w-3 h-3 text-[#00A896] stroke-[3]" />
+                        <span className="text-[11px] font-semibold text-[#00A896] tracking-wide">
+                          DNI Verificado
+                        </span>
+                      </div>
+                    )}
+                    {/* Quick contact driver button */}
+                    <button
+                      id="driver-card-contact-btn"
+                      type="button"
+                      onClick={handleContactDriver}
+                      aria-label="Contactar al conductor"
+                      className="p-1.5 rounded-lg bg-[#E6F7F5] text-[#00A896] hover:bg-[#00A896] hover:text-white transition-colors cursor-pointer"
+                      title="Contactar al conductor"
+                    >
+                      <MessageCircle className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
 
                 {/* Vehicle Details Divider & Row */}
@@ -876,19 +906,19 @@ export const BookingScreen: React.FC<BookingScreenProps> = ({
               {/* Main CTA Button */}
               <button
                 id="confirm-booking-btn"
-                aria-label="Confirmar Reserva del Viaje"
+                aria-label="Reservar Viaje"
                 type="button"
-                disabled={isLoading}
+                disabled={isBusy}
                 onClick={handleConfirmBooking}
-                className="w-full h-[52px] bg-[#00A896] hover:bg-[#008f80] active:scale-[0.99] transition-all duration-150 rounded-[12px] text-white font-bold text-[16px] tracking-tight shadow-[0px_4px_12px_rgba(0,168,150,0.25)] flex items-center justify-center select-none cursor-pointer disabled:opacity-60"
+                className="w-full h-[52px] bg-[#00A896] hover:bg-[#008f80] active:scale-[0.99] transition-all duration-150 rounded-[12px] text-white font-bold text-[16px] tracking-tight shadow-[0px_4px_12px_rgba(0,168,150,0.25)] flex items-center justify-center select-none cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                {isLoading ? (
+                {isBusy ? (
                   <span className="flex items-center gap-2">
                     <Loader2 className="w-5 h-5 animate-spin" />
-                    <span>Confirmando reserva...</span>
+                    <span>Reservando...</span>
                   </span>
                 ) : (
-                  'Confirmar Reserva'
+                  'Reservar'
                 )}
               </button>
 
