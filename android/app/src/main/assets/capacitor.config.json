@@ -1,0 +1,9 @@
+{
+	"appId": "com.thumbi.app",
+	"appName": "Thumbi",
+	"webDir": "dist",
+	"bundledWebRuntime": false,
+	"server": {
+		"androidScheme": "https"
+	}
+}
