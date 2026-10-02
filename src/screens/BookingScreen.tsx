@@ -264,8 +264,8 @@ export const BookingScreen: React.FC<BookingScreenProps> = ({
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-0 md:p-6 bg-slate-900 font-sans">
-      {/* Toast de Notificaciones */}
+    <div className="min-h-screen w-full flex flex-col bg-[#F8FAFC] text-[#1A1A1A] font-sans">
+      {/* Toast Notificaciones */}
       {toast && (
         <Toast
           message={toast.message}
@@ -274,54 +274,19 @@ export const BookingScreen: React.FC<BookingScreenProps> = ({
         />
       )}
 
-      {/* Container strictly constrained to 393px width and 852px height for authentic iPhone layout */}
+      {/* Main Container */}
       <div
-        className="relative w-full max-w-[393px] h-[852px] bg-[#F8FAFC] overflow-hidden flex flex-col md:rounded-[48px] shadow-2xl border-0 md:border-[8px] md:border-slate-800 select-none"
-        data-purpose="phone-shell"
+        className="relative w-full flex-1 flex flex-col max-w-2xl mx-auto bg-[#F8FAFC] select-none"
+        data-purpose="booking-container"
       >
         {/* ========================================================================= */}
         {/* VISTA 1: CONFIRMACIÓN EXITOSA (isConfirmed === true)                       */}
         {/* ========================================================================= */}
         {isConfirmed ? (
-          <div className="w-full h-full flex flex-col justify-between" data-purpose="screen-wrapper">
-            {/* BEGIN: iOSStatusBar */}
-            <header
-              className="w-full pt-3 px-7 pb-2 flex justify-between items-center z-20 shrink-0 select-none"
-              data-purpose="ios-status-bar"
-            >
-              {/* iOS Time */}
-              <span className="text-sm font-semibold text-[#1A1A1A] tracking-tight">
-                18:12
-              </span>
-
-              {/* Dynamic Island Indicator */}
-              <div className="w-28 h-6 bg-black rounded-full mx-auto -mr-2 hidden sm:block" />
-
-              {/* iOS System Status Icons */}
-              <div className="flex items-center space-x-1.5 text-[#1A1A1A]">
-                {/* Cellular Signal Icon */}
-                <svg className="w-4 h-3.5 fill-current" viewBox="0 0 17 12">
-                  <rect height="4" rx="0.5" width="2.5" x="0" y="8" />
-                  <rect height="6.5" rx="0.5" width="2.5" x="4.5" y="5.5" />
-                  <rect height="9" rx="0.5" width="2.5" x="9" y="3" />
-                  <rect height="12" rx="0.5" width="2.5" x="13.5" y="0" />
-                </svg>
-                {/* Wi-Fi Icon */}
-                <svg className="w-4 h-3.5 fill-current" viewBox="0 0 16 12">
-                  <path d="M8 12a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm5.07-5.07a7.17 7.17 0 0 0-10.14 0 .75.75 0 0 1-1.06-1.06 8.67 8.67 0 0 1 12.26 0 .75.75 0 1 1-1.06 1.06zm-2.12 2.12a4.17 4.17 0 0 0-5.9 0 .75.75 0 1 1-1.06-1.06 5.67 5.67 0 0 1 8.02 0 .75.75 0 1 1-1.06 1.06z" />
-                </svg>
-                {/* Battery Icon */}
-                <div className="w-6 h-3 border border-current rounded-[4px] p-0.5 flex items-center relative">
-                  <div className="h-full bg-current rounded-[2px] w-4" />
-                  <div className="w-[2px] h-1.5 bg-current absolute -right-[3.5px] rounded-r-sm" />
-                </div>
-              </div>
-            </header>
-            {/* END: iOSStatusBar */}
-
+          <div className="w-full flex-1 flex flex-col justify-between" data-purpose="screen-wrapper">
             {/* BEGIN: MainContent Confirmation */}
             <main
-              className="flex-1 overflow-y-auto px-5 pt-3 pb-4 flex flex-col justify-between"
+              className="flex-1 overflow-y-auto px-4 sm:px-6 pt-6 pb-24 flex flex-col justify-between"
               style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
               data-purpose="confirmation-content"
             >
@@ -534,73 +499,16 @@ export const BookingScreen: React.FC<BookingScreenProps> = ({
               </button>
             </nav>
             {/* END: BottomNavigation */}
-
-            {/* BEGIN: iOSHomeIndicator */}
-            <div className="w-full bg-white pb-2 flex justify-center items-center" data-purpose="ios-home-bar">
-              <div className="w-36 h-1 bg-gray-300 rounded-full" />
-            </div>
-            {/* END: iOSHomeIndicator */}
           </div>
         ) : (
           /* ========================================================================= */
           /* VISTA 2: FORMULARIO DE CHECKOUT / DETALLE DEL VIAJE (isConfirmed === false)*/
           /* ========================================================================= */
           <>
-            {/* BEGIN: TopStatusBar */}
-            <header
-              className="w-full pt-3 px-7 flex justify-between items-center z-30 select-none shrink-0"
-              data-purpose="status-bar"
-            >
-              {/* iOS Clock */}
-              <span className="text-[15px] font-semibold text-[#1A1A1A] tracking-tight">
-                9:41
-              </span>
-
-              {/* Dynamic Island pill representation */}
-              <div className="w-28 h-6 bg-black rounded-full mx-auto -mr-2 hidden sm:block" />
-
-              {/* iOS Status Icons */}
-              <div className="flex items-center space-x-1.5 text-[#1A1A1A]">
-                {/* Cellular Signal */}
-                <svg
-                  className="w-4 h-3 fill-current"
-                  viewBox="0 0 17 11"
-                  xmlns="http://www.w3.org/2000/svg"
-                >
-                  <rect height="3" rx="0.6" width="2.5" x="0" y="8" />
-                  <rect height="5.5" rx="0.6" width="2.5" x="4.5" y="5.5" />
-                  <rect height="8" rx="0.6" width="2.5" x="9" y="3" />
-                  <rect height="10.5" rx="0.6" width="2.5" x="13.5" y="0.5" />
-                </svg>
-
-                {/* Wifi Icon */}
-                <svg
-                  className="w-4 h-3 fill-current"
-                  viewBox="0 0 16 12"
-                  xmlns="http://www.w3.org/2000/svg"
-                >
-                  <path
-                    clipRule="evenodd"
-                    d="M8 2.5C10.7 2.5 13.1 3.6 14.8 5.4C15.1 5.7 15.6 5.7 15.9 5.4C16.1 5.1 16.1 4.6 15.8 4.3C13.8 2.2 11.1 1 8 1C4.9 1 2.2 2.2 0.2 4.3C-0.1 4.6 -0.1 5.1 0.2 5.4C0.5 5.7 0.9 5.7 1.2 5.4C2.9 3.6 5.3 2.5 8 2.5ZM8 6C9.8 6 11.5 6.8 12.6 8.1C12.9 8.4 13.4 8.4 13.7 8.1C14 7.8 14 7.3 13.6 7C12.2 5.5 10.2 4.5 8 4.5C5.8 4.5 3.8 5.5 2.4 7C2 7.3 2 7.8 2.3 8.1C2.6 8.4 3.1 8.4 3.4 8.1C4.5 6.8 6.2 6 8 6ZM9.5 10.5C9.5 11.3 8.8 12 8 12C7.2 12 6.5 11.3 6.5 10.5C6.5 9.7 7.2 9 8 9C8.8 9 9.5 9.7 9.5 10.5Z"
-                    fillRule="evenodd"
-                  />
-                </svg>
-
-                {/* Battery Icon */}
-                <div className="flex items-center">
-                  <div className="w-5 h-2.5 border border-[#1A1A1A] rounded-[4px] p-0.5 flex items-center">
-                    <div className="h-full w-full bg-[#1A1A1A] rounded-[1.5px]" />
-                  </div>
-                  <div className="w-[1.5px] h-1 bg-[#1A1A1A] rounded-r-[1px] ml-[-0.5px]" />
-                </div>
-              </div>
-            </header>
-            {/* END: TopStatusBar */}
-
             {/* BEGIN: NavigationHeader */}
             <nav
               aria-label="Navegación secundaria"
-              className="w-full px-4 pt-2 pb-2 flex items-center justify-between z-20 shrink-0"
+              className="w-full px-4 pt-4 pb-2 flex items-center justify-between z-20 shrink-0"
             >
               {/* Back Chevron Button */}
               <button
@@ -921,9 +829,6 @@ export const BookingScreen: React.FC<BookingScreenProps> = ({
                   'Reservar'
                 )}
               </button>
-
-              {/* iOS Home Indicator bar */}
-              <div className="w-32 h-1 bg-slate-400/60 rounded-full mx-auto mt-4" />
             </footer>
             {/* END: BottomActionFooter */}
           </>

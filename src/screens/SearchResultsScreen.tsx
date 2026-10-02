@@ -276,46 +276,11 @@ export const SearchResultsScreen: React.FC<SearchResultsScreenProps> = ({
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-0 md:p-6 bg-slate-900 font-sans">
-      {/* Device Frame Viewport matching iPhone 15 / 16 (393 x 852 style) */}
-      <div
-        className="w-full max-w-[393px] h-[852px] bg-[#F7F9FA] relative overflow-hidden flex flex-col md:rounded-[48px] shadow-2xl border border-[#222] select-none"
-        data-purpose="ios-viewport"
-      >
-        {/* BEGIN: iOS Native Status Bar */}
-        <header
-          className="w-full bg-[#F7F9FA] pt-3 px-7 pb-1 flex justify-between items-center z-30 select-none shrink-0"
-          data-purpose="status-bar"
-        >
-          {/* Time Display */}
-          <span className="text-[15px] font-semibold tracking-tight text-[#1A1A1A]">9:41</span>
-
-          {/* Dynamic Island Indicator */}
-          <div className="w-28 h-6 bg-black rounded-full absolute left-1/2 -translate-x-1/2 top-2.5 hidden sm:block" />
-
-          {/* Native Status Bar Icons: Cellular, Wifi, Battery */}
-          <div className="flex items-center space-x-1.5 text-[#1A1A1A]">
-            {/* Cellular Signal */}
-            <svg className="w-4 h-3.5 fill-current" viewBox="0 0 17 12">
-              <rect height="3" rx="0.6" width="2.5" x="0" y="9" />
-              <rect height="6" rx="0.6" width="2.5" x="4.5" y="6" />
-              <rect height="9" rx="0.6" width="2.5" x="9" y="3" />
-              <rect height="12" rx="0.6" width="2.5" x="13.5" y="0" />
-            </svg>
-            {/* Wi-Fi */}
-            <svg className="w-4 h-3.5 fill-current" viewBox="0 0 16 12">
-              <path d="M8 2.8C10.6 2.8 13 3.8 14.8 5.4L16 4.1C13.8 2.2 11 1 8 1 5 1 2.2 2.2 0 4.1L1.2 5.4C3 3.8 5.4 2.8 8 2.8ZM8 6.4C9.7 6.4 11.2 7.1 12.4 8.2L13.6 6.9C12.1 5.5 10.1 4.6 8 4.6 5.9 4.6 3.9 5.5 2.4 6.9L3.6 8.2C4.8 7.1 6.3 6.4 8 6.4ZM8 10C8.8 10 9.5 10.7 9.5 11.5 9.5 12.3 8.8 13 8 13 7.2 13 6.5 12.3 6.5 11.5 6.5 10.7 7.2 10 8 10Z" />
-            </svg>
-            {/* Battery */}
-            <div className="w-6 h-3 rounded-[3.5px] border border-[#1A1A1A] p-[1.5px] flex items-center">
-              <div className="h-full w-full bg-[#1A1A1A] rounded-[1.5px]" />
-            </div>
-          </div>
-        </header>
-        {/* END: iOS Native Status Bar */}
-
+    <div className="min-h-screen w-full flex flex-col bg-[#F7F9FA] text-[#1A1A1A] font-sans">
+      {/* Device Viewport */}
+      <div className="w-full flex-1 flex flex-col max-w-2xl mx-auto relative select-none">
         {/* BEGIN: Search Results Header */}
-        <section className="w-full bg-[#F7F9FA] px-4 pt-1 pb-2 shrink-0" data-purpose="search-header">
+        <section className="w-full bg-[#F7F9FA] px-4 pt-3 pb-2 shrink-0 border-b border-gray-200" data-purpose="search-header">
           <div className="flex items-center justify-between">
             {/* Back Arrow Button - Redirige explícitamente a HomeScreen */}
             <button
@@ -713,9 +678,6 @@ export const SearchResultsScreen: React.FC<SearchResultsScreenProps> = ({
               </span>
             </button>
           </div>
-
-          {/* iOS Home Bar Indicator */}
-          <div className="w-32 h-1 bg-black/80 rounded-full mx-auto mt-3" />
         </footer>
         {/* END: Bottom Navigation Bar */}
       </div>

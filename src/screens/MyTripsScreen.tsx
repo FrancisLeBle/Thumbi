@@ -360,40 +360,14 @@ export const MyTripsScreen: React.FC<MyTripsScreenProps> = ({
           />
         )}
 
-        {/* iPhone 15/16 Container */}
+        {/* Main App Viewport */}
         <main
-          className="relative w-full max-w-[393px] h-[852px] bg-[#F7F9FA] text-[#1A1A1A] flex flex-col overflow-hidden md:rounded-[44px] shadow-2xl border-0 md:border-[8px] md:border-neutral-800"
+          className="relative w-full flex-1 flex flex-col max-w-2xl mx-auto bg-[#F7F9FA] text-[#1A1A1A] select-none"
           data-purpose="manage-trip-container"
         >
-          {/* iOS Status Bar */}
-          <div className="pt-3 px-7 flex justify-between items-center z-30 shrink-0 select-none">
-            <span className="text-[15px] font-semibold tracking-tight text-[#1A1A1A]">
-              9:41
-            </span>
-            <div className="w-[124px] h-[34px] bg-black rounded-full absolute left-1/2 -translate-x-1/2 top-3 hidden sm:block" />
-            <div className="flex items-center space-x-2 text-[#1A1A1A]">
-              <svg className="w-4 h-3.5 fill-current" viewBox="0 0 17 12">
-                <rect height="4" rx="0.75" width="2.5" x="0" y="8" />
-                <rect height="6.5" rx="0.75" width="2.5" x="4.5" y="5.5" />
-                <rect height="9" rx="0.75" width="2.5" x="9" y="3" />
-                <rect height="11.5" rx="0.75" width="2.5" x="13.5" y="0.5" />
-              </svg>
-              <svg className="w-4 h-3.5 fill-current" viewBox="0 0 16 12">
-                <path
-                  clipRule="evenodd"
-                  d="M8 2.5C5.1 2.5 2.5 3.7 0.7 5.6L0 4.9C2 2.7 4.9 1.5 8 1.5C11.1 1.5 14 2.7 16 4.9L15.3 5.6C13.5 3.7 10.9 2.5 8 2.5ZM8 6.5C6.3 6.5 4.8 7.2 3.7 8.3L3 7.6C4.3 6.3 6.1 5.5 8 5.5C9.9 5.5 11.7 6.3 13 7.6L12.3 8.3C11.2 7.2 9.7 6.5 8 6.5ZM8 10C7.2 10 6.5 10.4 6 11L8 13L10 11C9.5 10.4 8.8 10 8 10Z"
-                  fillRule="evenodd"
-                />
-              </svg>
-              <div className="w-6 h-[11.5px] border border-[#1A1A1A] rounded-[3.5px] p-[1.5px] flex items-center">
-                <div className="h-full w-full bg-[#1A1A1A] rounded-[1.5px]" />
-              </div>
-            </div>
-          </div>
-
           {/* Navigation Header */}
           <nav
-            className="w-full px-5 pt-3 pb-3 flex items-center justify-between z-20 shrink-0"
+            className="w-full px-4 sm:px-6 pt-4 pb-3 flex items-center justify-between z-20 shrink-0 border-b border-gray-200"
             data-purpose="top-navigation-bar"
           >
             <button
@@ -743,40 +717,10 @@ export const MyTripsScreen: React.FC<MyTripsScreenProps> = ({
         </div>
       )}
 
-      {/* iPhone 15 / 16 Container: 393 x 852 px */}
-      <div className="relative w-full max-w-[393px] h-[852px] bg-[#F7F9FA] text-[#1A1A1A] flex flex-col overflow-hidden md:rounded-[44px] shadow-2xl border-0 md:border-[8px] md:border-neutral-800">
-        {/* iOS Status Bar with Dynamic Island */}
-        <div className="pt-3 px-7 flex justify-between items-center z-30 shrink-0 select-none">
-          <span className="text-[15px] font-semibold tracking-tight text-[#1A1A1A]">
-            9:41
-          </span>
-          {/* Dynamic Island pill */}
-          <div className="w-[124px] h-[34px] bg-black rounded-full absolute left-1/2 -translate-x-1/2 top-3 hidden sm:block" />
-          <div className="flex items-center space-x-2 text-[#1A1A1A]">
-            {/* Cellular */}
-            <svg className="w-4 h-3.5 fill-current" viewBox="0 0 17 12">
-              <rect height="4" rx="0.75" width="2.5" x="0" y="8" />
-              <rect height="6.5" rx="0.75" width="2.5" x="4.5" y="5.5" />
-              <rect height="9" rx="0.75" width="2.5" x="9" y="3" />
-              <rect height="11.5" rx="0.75" width="2.5" x="13.5" y="0.5" />
-            </svg>
-            {/* Wifi */}
-            <svg className="w-4 h-3.5 fill-current" viewBox="0 0 16 12">
-              <path
-                clipRule="evenodd"
-                d="M8 2.5C5.1 2.5 2.5 3.7 0.7 5.6L0 4.9C2 2.7 4.9 1.5 8 1.5C11.1 1.5 14 2.7 16 4.9L15.3 5.6C13.5 3.7 10.9 2.5 8 2.5ZM8 6.5C6.3 6.5 4.8 7.2 3.7 8.3L3 7.6C4.3 6.3 6.1 5.5 8 5.5C9.9 5.5 11.7 6.3 13 7.6L12.3 8.3C11.2 7.2 9.7 6.5 8 6.5ZM8 10C7.2 10 6.5 10.4 6 11L8 13L10 11C9.5 10.4 8.8 10 8 10Z"
-                fillRule="evenodd"
-              />
-            </svg>
-            {/* Battery */}
-            <div className="w-6 h-[11.5px] border border-[#1A1A1A] rounded-[3.5px] p-[1.5px] flex items-center">
-              <div className="h-full w-full bg-[#1A1A1A] rounded-[1.5px]" />
-            </div>
-          </div>
-        </div>
-
+      {/* Main App Container */}
+      <div className="relative w-full flex-1 flex flex-col max-w-2xl mx-auto bg-[#F7F9FA] text-[#1A1A1A]">
         {/* Header (Centered Title, No Back Arrow) */}
-        <header className="pt-5 pb-3 px-6 text-center shrink-0">
+        <header className="pt-5 pb-3 px-4 sm:px-6 text-center shrink-0 border-b border-gray-200">
           <h1 className="text-[20px] font-bold text-[#1A1A1A] tracking-tight">
             Mis Viajes
           </h1>
@@ -1499,9 +1443,6 @@ export const MyTripsScreen: React.FC<MyTripsScreenProps> = ({
               <span className="text-[10px] font-medium mt-1">Perfil</span>
             </button>
           </div>
-
-          {/* iOS Home Indicator */}
-          <div className="w-32 h-1 bg-[#1A1A1A]/20 rounded-full mx-auto mt-3 mb-1" />
         </nav>
       </div>
     </div>

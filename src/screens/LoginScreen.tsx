@@ -117,7 +117,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-0 md:p-6 bg-slate-900 font-sans">
+    <div className="min-h-screen w-full flex flex-col justify-between bg-white text-[#1A1A1A] font-sans">
       {/* Toast de Notificaciones */}
       {toast && (
         <Toast
@@ -127,48 +127,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
         />
       )}
 
-      {/* Mobile Device Frame (iPhone 393 x 852 style) */}
-      <main
-        className="w-full max-w-[393px] h-[852px] bg-white text-[#1A1A1A] relative overflow-hidden flex flex-col justify-between md:rounded-[44px] shadow-2xl border border-gray-200 select-none"
-        data-purpose="mobile-viewport"
-      >
+      {/* Main App Container */}
+      <main className="w-full flex-1 flex flex-col justify-between max-w-xl mx-auto px-4 sm:px-6 py-4">
         {/* Top Scrollable Container */}
-        <div className="w-full flex flex-col overflow-y-auto">
-          {/* iOS Status Bar */}
-          <header
-            className="pt-3.5 px-7 pb-2 flex justify-between items-center z-30 shrink-0 bg-white select-none"
-            data-purpose="ios-status-bar"
-          >
-            <span className="text-[15px] font-semibold tracking-tight text-[#1A1A1A]">9:41</span>
-            {/* iOS Native Status Icons */}
-            <div className="flex items-center space-x-1.5 text-[#1A1A1A]">
-              {/* Cellular */}
-              <svg className="w-4 h-3.5 fill-current" viewBox="0 0 17 12">
-                <rect height="4" rx="0.5" width="2.5" x="0" y="8" />
-                <rect height="6.5" rx="0.5" width="2.5" x="4.5" y="5.5" />
-                <rect height="9" rx="0.5" width="2.5" x="9" y="3" />
-                <rect height="12" rx="0.5" width="2.5" x="13.5" y="0" />
-              </svg>
-              {/* Wifi */}
-              <svg className="w-4 h-3.5 fill-current" viewBox="0 0 16 12">
-                <path
-                  clipRule="evenodd"
-                  d="M8 2.5C5.07 2.5 2.45 3.73 0.6 5.72C0.34 6 0.35 6.44 0.63 6.7L1.87 7.94C2.14 8.21 2.58 8.2 2.84 7.92C4.19 6.47 6.01 5.5 8 5.5C9.99 5.5 11.81 6.47 13.16 7.92C13.42 8.2 13.86 8.21 14.13 7.94L15.37 6.7C15.65 6.44 15.66 6 15.4 5.72C13.55 3.73 10.93 2.5 8 2.5ZM8 7C6.44 7 5.04 7.64 4.02 8.68C3.76 8.94 3.77 9.38 4.04 9.63L7.43 12.83C7.74 13.12 8.26 13.12 8.57 12.83L11.96 9.63C12.23 9.38 12.24 8.94 11.98 8.68C10.96 7.64 9.56 7 8 7Z"
-                  fillRule="evenodd"
-                />
-              </svg>
-              {/* Battery */}
-              <div className="relative flex items-center">
-                <div className="w-[22px] h-[11px] rounded-[3px] border border-current p-[1.5px] flex items-center">
-                  <div className="w-full h-full bg-current rounded-[1.5px]" />
-                </div>
-                <div className="w-[1.5px] h-[4px] bg-current rounded-r-[1px] ml-[0.5px]" />
-              </div>
-            </div>
-          </header>
-
+        <div className="w-full flex flex-col">
           {/* Header Bar with Back Arrow */}
-          <div className="px-5 pt-1 pb-1 flex items-center shrink-0">
+          <div className="pt-2 pb-2 flex items-center shrink-0">
             <button
               aria-label="Volver"
               onClick={handleBack}
@@ -404,8 +368,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
           </div>
         </div>
 
-        {/* Footer: Acceso Directo a Registro y Safe Area */}
-        <footer className="w-full px-6 pb-3 pt-2 shrink-0 bg-white flex flex-col items-center">
+        {/* Footer: Acceso Directo a Registro */}
+        <footer className="w-full px-6 pb-3 pt-4 shrink-0 bg-white flex flex-col items-center">
           <p className="text-[14px] text-[#6B7280]">
             ¿No tienes una cuenta?{' '}
             <button
@@ -417,12 +381,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
               Registrate
             </button>
           </p>
-
-          {/* iOS Home Indicator */}
-          <div
-            className="w-[134px] h-[5px] bg-[#1A1A1A] rounded-full mt-3 mb-1"
-            data-purpose="ios-home-indicator"
-          />
         </footer>
       </main>
     </div>

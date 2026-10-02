@@ -32,64 +32,8 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-0 md:p-6 bg-slate-900 font-sans">
-      {/* BEGIN: MobileIOSContainer */}
-      <main
-        className="w-full max-w-[393px] h-[852px] bg-white shadow-2xl relative overflow-hidden flex flex-col justify-between md:rounded-[44px] border-0 md:border-[8px] md:border-slate-800 select-none"
-        data-purpose="mobile-viewport"
-      >
-        {/* BEGIN: iOSStatusBar */}
-        <header
-          className="w-full pt-3 px-7 flex justify-between items-center z-20 shrink-0 bg-transparent text-neutral-900 select-none"
-          data-purpose="ios-status-bar"
-        >
-          {/* Time */}
-          <span className="text-[15px] font-semibold tracking-tight text-neutral-900 pl-1">
-            9:41
-          </span>
-
-          {/* Dynamic Island Indicator */}
-          <div className="w-28 h-6 bg-black rounded-full mx-auto -mr-2 hidden sm:block" />
-
-          {/* Status Icons (Cellular, Wifi, Battery) */}
-          <div className="flex items-center space-x-1.5 pr-1 text-neutral-900">
-            {/* Cellular Signal Icon */}
-            <svg
-              className="w-4 h-3.5 fill-neutral-900"
-              fill="none"
-              viewBox="0 0 17 12"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <rect height="3.5" rx="0.75" width="2.5" x="0.5" y="8.5" />
-              <rect height="6" rx="0.75" width="2.5" x="4.5" y="6" />
-              <rect height="8.5" rx="0.75" width="2.5" x="8.5" y="3.5" />
-              <rect height="11.5" rx="0.75" width="2.5" x="12.5" y="0.5" />
-            </svg>
-
-            {/* Wi-Fi Icon */}
-            <svg
-              className="w-4 h-3.5 fill-neutral-900"
-              fill="none"
-              viewBox="0 0 16 12"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <path
-                clipRule="evenodd"
-                d="M8 1.5C5.16 1.5 2.58 2.65 0.7 4.52L0 3.8C2.07 1.74 4.9 0.5 8 0.5C11.1 0.5 13.93 1.74 16 3.8L15.3 4.52C13.42 2.65 10.84 1.5 8 1.5ZM8 4.5C6.01 4.5 4.19 5.3 2.87 6.61L2.17 5.89C3.67 4.39 5.73 3.5 8 3.5C10.27 3.5 12.33 4.39 13.83 5.89L13.13 6.61C11.81 5.3 9.99 4.5 8 4.5ZM8 7.5C6.9 7.5 5.89 7.95 5.15 8.68L4.44 7.97C5.36 7.06 6.62 6.5 8 6.5C9.38 6.5 10.64 7.06 11.56 7.97L10.85 8.68C10.11 7.95 9.1 7.5 8 7.5ZM9.25 10.75C9.25 11.44 8.69 12 8 12C7.31 12 6.75 11.44 6.75 10.75C6.75 10.06 7.31 9.5 8 9.5C8.69 9.5 9.25 10.06 9.25 10.75Z"
-                fillRule="evenodd"
-              />
-            </svg>
-
-            {/* Battery Icon */}
-            <div className="flex items-center">
-              <div className="w-5 h-[11px] border border-neutral-900 rounded-[3.5px] p-[1px] flex items-center">
-                <div className="h-full w-full bg-neutral-900 rounded-[1.5px]" />
-              </div>
-              <div className="w-[1.5px] h-[4px] bg-neutral-900 rounded-r-[1px] -ml-[0.5px]" />
-            </div>
-          </div>
-        </header>
-        {/* END: iOSStatusBar */}
+    <div className="min-h-screen w-full flex flex-col justify-between bg-white text-neutral-900 font-sans p-4 sm:p-6 select-none">
+      <main className="w-full flex-1 flex flex-col justify-between max-w-xl mx-auto">
 
         {/* BEGIN: HeroIllustrationSection */}
         <section className="w-full px-4 pt-2 shrink-0" data-purpose="hero-illustration">
@@ -514,18 +458,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
           </button>
         </section>
         {/* END: ActionButtonsGroup */}
-
-        {/* BEGIN: iOSHomeIndicator */}
-        <footer
-          className="w-full pb-2 pt-1 flex justify-center items-center shrink-0"
-          data-purpose="ios-home-indicator"
-        >
-          {/* Standard iOS Home Bar */}
-          <div className="w-[138px] h-[4.5px] bg-neutral-300 rounded-full" />
-        </footer>
-        {/* END: iOSHomeIndicator */}
       </main>
-      {/* END: MobileIOSContainer */}
     </div>
   );
 };

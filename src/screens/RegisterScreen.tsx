@@ -106,7 +106,7 @@ export const RegisterScreen: React.FC<RegisterScreenProps> = ({
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-0 md:p-6 bg-slate-900 font-sans">
+    <div className="min-h-screen w-full flex flex-col justify-between bg-white text-[#1A1A1A] font-sans">
       {/* Toast Notification */}
       {toast && (
         <Toast
@@ -116,59 +116,19 @@ export const RegisterScreen: React.FC<RegisterScreenProps> = ({
         />
       )}
 
-      {/* BEGIN: MobileDeviceFrame */}
-      <div
-        className="relative w-full max-w-[393px] h-[852px] bg-white flex flex-col justify-between overflow-hidden shadow-2xl md:rounded-[44px] border border-gray-200"
-        data-purpose="mobile-viewport"
-      >
+      {/* Main Container */}
+      <main className="w-full flex-1 flex flex-col justify-between max-w-xl mx-auto px-4 sm:px-6 py-4">
         {/* Form Wrapping Whole Content and Actions */}
         <form
           onSubmit={handleRegister}
-          className="w-full h-full flex flex-col justify-between"
+          className="w-full flex-1 flex flex-col justify-between"
           noValidate={false}
         >
           {/* BEGIN: TopContainer */}
-          <div className="w-full flex flex-col overflow-y-auto">
-            {/* BEGIN: iOSStatusBar */}
-            <div
-              className="w-full h-11 px-7 flex items-center justify-between pt-1 text-black font-semibold text-[14px] tracking-tight shrink-0 select-none"
-              data-purpose="ios-status-bar"
-            >
-              <span className="font-medium">9:41</span>
-              <div className="flex items-center space-x-2">
-                {/* Cellular Icon */}
-                <svg
-                  className="w-4 h-3.5 fill-current text-black"
-                  viewBox="0 0 17 11"
-                  xmlns="http://www.w3.org/2000/svg"
-                >
-                  <rect height="3.5" rx="0.7" width="2.5" x="0" y="7.5" />
-                  <rect height="6" rx="0.7" width="2.5" x="4.5" y="5" />
-                  <rect height="8.5" rx="0.7" width="2.5" x="9" y="2.5" />
-                  <rect height="11" rx="0.7" width="2.5" x="13.5" y="0" />
-                </svg>
-                {/* Wi-Fi Icon */}
-                <svg
-                  className="w-4 h-3.5 fill-current text-black"
-                  viewBox="0 0 16 12"
-                  xmlns="http://www.w3.org/2000/svg"
-                >
-                  <path d="M8 10.5a1.5 1.5 0 100-3 1.5 1.5 0 000 3zm-4.2-3.8a6.002 6.002 0 018.4 0 .8.8 0 101.1-1.15 7.6 7.6 0 00-10.6 0 .8.8 0 101.1 1.15zm-2.4-2.4a9.5 9.5 0 0113.2 0 .8.8 0 101.1-1.15 11.1 11.1 0 00-15.4 0 .8.8 0 001.1 1.15z" />
-                </svg>
-                {/* Battery Icon */}
-                <div className="flex items-center">
-                  <div className="w-5 h-2.5 border border-black rounded-[4px] p-0.5 flex items-center">
-                    <div className="w-full h-full bg-black rounded-[1.5px]" />
-                  </div>
-                  <div className="w-0.5 h-1 bg-black rounded-r-sm -ml-[0.5px]" />
-                </div>
-              </div>
-            </div>
-            {/* END: iOSStatusBar */}
-
+          <div className="w-full flex flex-col">
             {/* BEGIN: NavigationHeader */}
             <header
-              className="relative px-5 py-3 flex items-center justify-between shrink-0"
+              className="relative py-2 flex items-center justify-between shrink-0"
               data-purpose="navigation-header"
             >
               <button
@@ -470,14 +430,10 @@ export const RegisterScreen: React.FC<RegisterScreenProps> = ({
               </a>
               .
             </p>
-
-            {/* iOS Home Indicator */}
-            <div className="w-32 h-1 bg-black/80 rounded-full mt-3 mb-1" />
           </footer>
           {/* END: BottomActionsArea */}
         </form>
-      </div>
-      {/* END: MobileDeviceFrame */}
+      </main>
     </div>
   );
 };

@@ -246,7 +246,7 @@ export const PublishTripScreen: React.FC<PublishTripScreenProps> = ({
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-0 md:p-6 bg-slate-900 font-sans">
+    <div className="min-h-screen w-full flex flex-col bg-[#F7F9FA] text-[#1A1A1A] font-sans">
       {/* Toast Notification */}
       {toast && (
         <Toast
@@ -256,66 +256,13 @@ export const PublishTripScreen: React.FC<PublishTripScreenProps> = ({
         />
       )}
 
-      {/* BEGIN: MobileDeviceFrame */}
+      {/* Main Container */}
       <div
-        className="w-full max-w-[393px] h-[852px] relative bg-[#F7F9FA] overflow-hidden flex flex-col justify-between md:rounded-[44px] shadow-2xl border-0 md:border-[8px] md:border-neutral-800 select-none text-[#1A1A1A]"
+        className="w-full flex-1 flex flex-col max-w-2xl mx-auto bg-[#F7F9FA] select-none text-[#1A1A1A]"
         data-purpose="mobile-viewport"
       >
         {/* BEGIN: TopBarAndContent */}
-        <div className="flex-1 flex flex-col overflow-hidden">
-          {/* BEGIN: iOSStatusBar */}
-          <header
-            className="w-full pt-3 px-7 pb-1 flex justify-between items-center z-30 select-none shrink-0"
-            data-purpose="ios-status-bar"
-          >
-            {/* Time */}
-            <span className="text-[15px] font-semibold tracking-tight text-[#1A1A1A]">
-              9:41
-            </span>
-
-            {/* Dynamic Island Indicator */}
-            <div className="w-28 h-6 bg-black rounded-full mx-auto self-start -mt-0.5 hidden sm:block" />
-
-            {/* System Status Icons (Signal, Wifi, Battery) */}
-            <div className="flex items-center space-x-2 text-[#1A1A1A]">
-              {/* Cellular Signal */}
-              <svg
-                className="w-4 h-3.5 fill-current"
-                fill="none"
-                viewBox="0 0 17 11"
-                xmlns="http://www.w3.org/2000/svg"
-              >
-                <rect height="3.5" rx="0.5" width="2.5" y="7.5" />
-                <rect height="6" rx="0.5" width="2.5" x="4.5" y="5" />
-                <rect height="8.5" rx="0.5" width="2.5" x="9.5" y="2.5" />
-                <rect height="11" rx="0.5" width="2.5" x="14.5" />
-              </svg>
-
-              {/* Wi-Fi */}
-              <svg
-                className="w-4 h-3.5 fill-current"
-                fill="none"
-                viewBox="0 0 16 12"
-                xmlns="http://www.w3.org/2000/svg"
-              >
-                <path
-                  clipRule="evenodd"
-                  d="M8 0.5C4.85 0.5 2.01 1.77 0 3.82L1.88 5.7C3.45 4.14 5.61 3.17 8 3.17C10.39 3.17 12.55 4.14 14.12 5.7L16 3.82C13.99 1.77 11.15 0.5 8 0.5ZM8 5.83C6.34 5.83 4.84 6.5 3.75 7.59L8 11.83L12.25 7.59C11.16 6.5 9.66 5.83 8 5.83Z"
-                  fillRule="evenodd"
-                />
-              </svg>
-
-              {/* Battery Outline with Fill */}
-              <div className="flex items-center">
-                <div className="w-6 h-3 border-[1.5px] border-[#1A1A1A] rounded-[3.5px] p-0.5 flex items-center">
-                  <div className="bg-[#1A1A1A] h-full w-full rounded-[1.5px]" />
-                </div>
-                <div className="w-0.5 h-1 bg-[#1A1A1A] rounded-r-[1px] -ml-[0.5px]" />
-              </div>
-            </div>
-          </header>
-          {/* END: iOSStatusBar */}
-
+        <div className="flex-1 flex flex-col">
           {/* RENDERIZADO CONDICIONAL: ÉXITO vs FORMULARIO */}
           {isPublished ? (
             /* ======================================================= */
@@ -754,15 +701,9 @@ export const PublishTripScreen: React.FC<PublishTripScreenProps> = ({
               <span className="text-[11px] font-medium mt-1">Perfil</span>
             </button>
           </nav>
-
-          {/* iOS Home Indicator bar */}
-          <div className="w-full flex justify-center pb-2 pt-1.5">
-            <div className="w-36 h-1 bg-neutral-300 rounded-full" />
-          </div>
         </footer>
         {/* END: BottomNavigationBar */}
       </div>
-      {/* END: MobileDeviceFrame */}
     </div>
   );
 };

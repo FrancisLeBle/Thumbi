@@ -148,59 +148,23 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-0 md:p-6 bg-slate-900 font-sans">
-      {/* Mobile Device Frame */}
+    <div className="min-h-screen w-full flex flex-col bg-[#F8FAFC] text-[#1A1A1A] font-sans">
+      {/* Main Container */}
       <div
         id="profile-screen"
-        className="w-full max-w-[393px] h-[852px] bg-[#F8FAFC] relative overflow-hidden flex flex-col md:rounded-[54px] shadow-2xl border border-slate-700/50 select-none text-[#1A1A1A]"
-        data-purpose="iphone-mockup"
-        style={{
-          fontFamily:
-            '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Inter", sans-serif',
-        }}
+        className="w-full flex-1 flex flex-col max-w-2xl mx-auto bg-[#F8FAFC] relative select-none text-[#1A1A1A]"
+        data-purpose="profile-container"
       >
-        {/* BEGIN: StatusBar */}
-        <header className="w-full pt-3 px-7 flex justify-between items-center z-30 select-none bg-[#F8FAFC] shrink-0">
-          {/* Time */}
-          <span className="text-[15px] font-semibold text-gray-900 tracking-tight">9:41</span>
-
-          {/* Dynamic Island Mockup */}
-          <div className="w-28 h-7 bg-black rounded-full absolute left-1/2 -translate-x-1/2 top-2.5 flex items-center justify-between px-2.5 z-40">
-            <div className="w-2.5 h-2.5 rounded-full bg-[#111] opacity-40" />
-            <div className="w-2.5 h-2.5 rounded-full bg-[#0a192f] border border-[#1e293b]" />
-          </div>
-
-          {/* Network, WiFi & Battery Icons */}
-          <div className="flex items-center space-x-2 text-gray-900">
-            {/* Signal icon */}
-            <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
-              <path d="M2 17h3v4H2zm5-4h3v8H7zm5-4h3v12h-3zm5-5h3v17h-3z" />
-            </svg>
-            {/* Wifi icon */}
-            <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
-              <path d="M12 4C7.31 4 3.07 5.9 0 8.98L12 21 24 8.98C20.93 5.9 16.69 4 12 4zm0 3.32c3.84 0 7.33 1.54 9.89 4.04L12 18.9 2.11 11.36C4.67 8.86 8.16 7.32 12 7.32z" />
-            </svg>
-            {/* Battery icon */}
-            <div className="flex items-center">
-              <div className="w-6 h-3 rounded-[4px] border border-gray-900 p-0.5 flex items-center">
-                <div className="w-4 h-full bg-gray-900 rounded-[1px]" />
-              </div>
-              <div className="w-0.5 h-1.5 bg-gray-900 rounded-r-sm" />
-            </div>
-          </div>
-        </header>
-        {/* END: StatusBar */}
-
         {/* Feedback flotante tipo Toast */}
         {actionFeedback && (
-          <div className="absolute top-14 left-1/2 -translate-x-1/2 z-50 bg-[#1A1A1A] text-white px-4 py-2.5 rounded-full text-xs font-medium shadow-lg flex items-center space-x-2 transition-all">
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-[#1A1A1A] text-white px-4 py-2.5 rounded-full text-xs font-medium shadow-lg flex items-center space-x-2 transition-all">
             <CheckCircle2 className="w-4 h-4 text-[#00A896]" />
             <span>{actionFeedback}</span>
           </div>
         )}
 
         {/* Scrollable Screen Content */}
-        <div className="flex-1 overflow-y-auto px-4 sm:px-6 pt-2 pb-6 space-y-4">
+        <div className="flex-1 overflow-y-auto px-4 sm:px-6 pt-4 pb-28 space-y-4">
           {/* Encabezado de la pantalla */}
           <header className="pt-2 pb-1 text-center relative flex items-center justify-center">
             <h1
@@ -532,9 +496,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             </span>
           </button>
         </div>
-
-        {/* iOS Home Indicator */}
-        <div className="w-32 h-1 bg-black/80 rounded-full mx-auto mt-3" />
       </nav>
       {/* END: Embedded BottomNavigationBar */}
     </div>

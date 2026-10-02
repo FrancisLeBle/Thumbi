@@ -119,7 +119,7 @@ export const IdentityVerificationScreen: React.FC<IdentityVerificationScreenProp
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-0 md:p-6 bg-slate-900 font-sans">
+    <div className="min-h-screen w-full flex flex-col justify-between bg-white text-gray-900 font-sans">
       {/* Toast Notification */}
       {toast && (
         <Toast
@@ -145,41 +145,12 @@ export const IdentityVerificationScreen: React.FC<IdentityVerificationScreenProp
         className="hidden"
       />
 
-      {/* BEGIN: PhoneFrame */}
-      <main
-        className="w-full max-w-[393px] h-[852px] bg-white text-gray-900 md:rounded-[44px] overflow-hidden shadow-2xl relative flex flex-col justify-between select-none border border-gray-200"
-        data-purpose="mobile-device-frame"
-      >
+      {/* Main Container */}
+      <main className="w-full flex-1 flex flex-col justify-between max-w-xl mx-auto px-4 sm:px-6 py-4">
         {/* Top Scrollable Container */}
-        <div className="w-full flex flex-col overflow-y-auto">
-          {/* BEGIN: iOSStatusBar */}
-          <header
-            className="w-full pt-3 px-7 flex justify-between items-center z-20 shrink-0 select-none"
-            data-purpose="ios-status-bar"
-          >
-            {/* Time */}
-            <span className="text-[15px] font-semibold tracking-tight text-black">9:41</span>
-            {/* System Icons */}
-            <div className="flex items-center space-x-1.5 text-black">
-              {/* Cellular Signal */}
-              <svg aria-label="Señal móvil" className="w-4 h-4 fill-current" viewBox="0 0 24 24">
-                <path d="M2 17h3v4H2v-4zm5-4h3v8H7v-8zm5-4h3v12h-3V9zm5-5h3v17h-3V4z" />
-              </svg>
-              {/* Wi-Fi */}
-              <svg aria-label="Wi-Fi" className="w-4 h-4 fill-current" viewBox="0 0 24 24">
-                <path d="M12 4C7.31 4 3.07 5.9 0 8.98L12 21 24 8.98C20.93 5.9 16.69 4 12 4zm0 3.5c3.78 0 7.21 1.48 9.77 3.93L12 18.2 2.23 11.43C4.79 8.98 8.22 7.5 12 7.5z" />
-              </svg>
-              {/* Battery */}
-              <div className="w-6 h-3 border border-black rounded-[4px] p-0.5 flex items-center relative">
-                <div className="h-full w-full bg-black rounded-[2px]" />
-                <div className="absolute -right-1 w-0.5 h-1.5 bg-black rounded-r-sm" />
-              </div>
-            </div>
-          </header>
-          {/* END: iOSStatusBar */}
-
+        <div className="w-full flex flex-col">
           {/* BEGIN: NavigationAndProgress */}
-          <section className="pt-2 px-6 pb-2 shrink-0" data-purpose="navigation-header">
+          <section className="pt-2 pb-2 shrink-0" data-purpose="navigation-header">
             {/* Top Bar: Back button + Title */}
             <div className="relative flex items-center justify-center h-11">
               {onBack && (
@@ -424,16 +395,9 @@ export const IdentityVerificationScreen: React.FC<IdentityVerificationScreenProp
               Tus datos están protegidos y solo se utilizarán para validación.
             </span>
           </div>
-
-          {/* iOS Home Indicator */}
-          <div
-            className="w-32 h-1 bg-black/80 rounded-full mt-2 mb-1"
-            data-purpose="ios-home-indicator"
-          />
         </footer>
         {/* END: FooterActions */}
       </main>
-      {/* END: PhoneFrame */}
     </div>
   );
 };
