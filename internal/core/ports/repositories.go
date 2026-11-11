@@ -16,6 +16,15 @@ type UserRepository interface {
 	Update(ctx context.Context, user *domain.User) error
 }
 
+// IdentityRepository define el contrato de persistencia para identidades federadas (OAuth) en la tabla user_identities
+type IdentityRepository interface {
+	Create(ctx context.Context, identity *domain.UserIdentity) error
+	GetByID(ctx context.Context, id string) (*domain.UserIdentity, error)
+	GetByProviderAndID(ctx context.Context, provider domain.AuthProvider, providerUserID string) (*domain.UserIdentity, error)
+	ListByUserID(ctx context.Context, userID string) ([]*domain.UserIdentity, error)
+	Delete(ctx context.Context, id string) error
+}
+
 // SessionRepository define el contrato para almacenar, consultar e invalidar sesiones activas en caché/Redis con TTL
 type SessionRepository interface {
 	Save(ctx context.Context, session *domain.Session, ttl time.Duration) error
@@ -82,7 +91,9 @@ type BookingRepository interface {
 	// CreateWithHold descuenta atómicamente los asientos y crea la reserva en estado PENDING_PAYMENT
 	CreateWithHold(ctx context.Context, booking *domain.Booking) error
 	FindByID(ctx context.Context, id string) (*domain.Booking, error)
+	FindByPaymentIntentID(ctx context.Context, intentID string) (*domain.Booking, error)
 	UpdateStatus(ctx context.Context, bookingID string, newStatus domain.BookingStatus, reason *string) error
+	UpdatePaymentIntent(ctx context.Context, bookingID, intentID string) error
 	GetActiveBookingsByTrip(ctx context.Context, tripID string) ([]*domain.Booking, error)
 	GetPassengerBookings(ctx context.Context, passengerID string, limit, offset int) ([]*domain.Booking, error)
 	// ExpirePendingBookings transiciona reservas vencidas y reintegra los asientos al viaje

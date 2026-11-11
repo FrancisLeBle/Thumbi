@@ -77,6 +77,54 @@ func (r *inMemoryUserRepo) Update(ctx context.Context, u *domain.User) error {
 	return nil
 }
 
+type inMemoryIdentityRepo struct {
+	identities map[string]*domain.UserIdentity
+}
+
+func newInMemoryIdentityRepo() *inMemoryIdentityRepo {
+	return &inMemoryIdentityRepo{identities: make(map[string]*domain.UserIdentity)}
+}
+
+func (r *inMemoryIdentityRepo) Create(ctx context.Context, ident *domain.UserIdentity) error {
+	r.identities[ident.ID] = ident
+	return nil
+}
+
+func (r *inMemoryIdentityRepo) GetByID(ctx context.Context, id string) (*domain.UserIdentity, error) {
+	ident, ok := r.identities[id]
+	if !ok {
+		return nil, domain.ErrIdentityNotFound
+	}
+	return ident, nil
+}
+
+func (r *inMemoryIdentityRepo) GetByProviderAndID(ctx context.Context, provider domain.AuthProvider, providerUserID string) (*domain.UserIdentity, error) {
+	for _, ident := range r.identities {
+		if ident.Provider == provider && ident.ProviderUserID == providerUserID {
+			return ident, nil
+		}
+	}
+	return nil, domain.ErrIdentityNotFound
+}
+
+func (r *inMemoryIdentityRepo) ListByUserID(ctx context.Context, userID string) ([]*domain.UserIdentity, error) {
+	var res []*domain.UserIdentity
+	for _, ident := range r.identities {
+		if ident.UserID == userID {
+			res = append(res, ident)
+		}
+	}
+	return res, nil
+}
+
+func (r *inMemoryIdentityRepo) Delete(ctx context.Context, id string) error {
+	if _, ok := r.identities[id]; !ok {
+		return domain.ErrIdentityNotFound
+	}
+	delete(r.identities, id)
+	return nil
+}
+
 type inMemoryKYCRepo struct {
 	kycs map[string]*domain.KYCVerification
 }
@@ -163,6 +211,7 @@ func setupTestApp() *testEnv {
 	kycRepo := newInMemoryKYCRepo()
 	vehicleRepo := newInMemoryVehicleRepo()
 	sessionRepo := postgres.NewMemorySessionRepository(0)
+	identityRepo := newInMemoryIdentityRepo()
 
 	tokenManager := jwt.NewTokenManager("super-secret-key-for-test-purposes-only", "thumbi-test")
 	googleProvider := oauth.NewGoogleOAuthProvider("google-client-id")
@@ -173,6 +222,7 @@ func setupTestApp() *testEnv {
 		sessionRepo,
 		[]ports.OAuthProvider{googleProvider, appleProvider},
 		tokenManager,
+		identityRepo,
 	)
 
 	bioProvider := biometrics.NewMockBiometricsProvider()
@@ -370,7 +420,17 @@ func TestHTTP_VehicleRegistration_And_Rejection_RetainsPassenger(t *testing.T) {
 		"approved": false,
 		"reason":   "Cédula no coincide con el titular",
 	})
+
+	// 5.1 Intento de llamada anónima sin autenticación -> 401 Unauthorized
+	reqAnon := httptest.NewRequest(http.MethodPost, "/v1/vehicles/"+vehID+"/resolution", bytes.NewReader(resolPayload))
+	wAnon := httptest.NewRecorder()
+	env.router.ServeHTTP(wAnon, reqAnon)
+	assert.Equal(t, http.StatusUnauthorized, wAnon.Code, "Llamada anónima al webhook debe ser rechazada")
+
+	// 5.2 Llamada con firma HMAC válida del proveedor de revisión -> 200 OK
 	reqRes := httptest.NewRequest(http.MethodPost, "/v1/vehicles/"+vehID+"/resolution", bytes.NewReader(resolPayload))
+	sig := middleware.ComputeWebhookSignature(resolPayload, middleware.DefaultWebhookSecret)
+	reqRes.Header.Set(middleware.HeaderWebhookSignature, "sha256="+sig)
 	wRes := httptest.NewRecorder()
 	env.router.ServeHTTP(wRes, reqRes)
 	assert.Equal(t, http.StatusOK, wRes.Code)

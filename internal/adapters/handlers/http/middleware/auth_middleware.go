@@ -14,6 +14,11 @@ const (
 	CtxUserClaimsKey = "user_claims"
 	CtxUserIDKey     = "user_id"
 	CtxUserRoleKey   = "user_role"
+
+	// Alias para compatibilidad de contexto
+	UserIDKey     = CtxUserIDKey
+	UserRoleKey   = CtxUserRoleKey
+	UserClaimsKey = CtxUserClaimsKey
 )
 
 // AuthMiddleware intercepta las solicitudes HTTP, extrae y valida el Bearer JWT (TTL 20 min)
@@ -69,6 +74,9 @@ func AuthMiddleware(authService ports.AuthService) gin.HandlerFunc {
 		c.Set(CtxUserClaimsKey, claims)
 		c.Set(CtxUserIDKey, claims.UserID)
 		c.Set(CtxUserRoleKey, claims.Role)
+		// Establecer alias para compatibilidad
+		c.Set(UserIDKey, claims.UserID)
+		c.Set(UserRoleKey, claims.Role)
 
 		c.Next()
 	}
@@ -78,7 +86,10 @@ func AuthMiddleware(authService ports.AuthService) gin.HandlerFunc {
 func GetUserClaims(c *gin.Context) (*domain.UserClaims, bool) {
 	val, exists := c.Get(CtxUserClaimsKey)
 	if !exists {
-		return nil, false
+		val, exists = c.Get(UserClaimsKey)
+		if !exists {
+			return nil, false
+		}
 	}
 	claims, ok := val.(*domain.UserClaims)
 	return claims, ok
@@ -86,10 +97,85 @@ func GetUserClaims(c *gin.Context) (*domain.UserClaims, bool) {
 
 // GetUserID helper para obtener el ID de usuario del contexto
 func GetUserID(c *gin.Context) (string, bool) {
-	val, exists := c.Get(CtxUserIDKey)
-	if !exists {
-		return "", false
+	if val, exists := c.Get(CtxUserIDKey); exists {
+		if id, ok := val.(string); ok && id != "" {
+			return id, true
+		}
 	}
-	id, ok := val.(string)
-	return id, ok
+	if val, exists := c.Get(UserIDKey); exists {
+		if id, ok := val.(string); ok && id != "" {
+			return id, true
+		}
+	}
+	if claims, ok := GetUserClaims(c); ok && claims != nil && claims.UserID != "" {
+		return claims.UserID, true
+	}
+	return "", false
+}
+
+// GetUserRole helper para obtener el rol del usuario autenticado del contexto Gin
+func GetUserRole(c *gin.Context) (domain.UserRole, bool) {
+	if val, exists := c.Get(CtxUserRoleKey); exists {
+		switch r := val.(type) {
+		case domain.UserRole:
+			if r != "" {
+				return r, true
+			}
+		case string:
+			if r != "" {
+				return domain.UserRole(r), true
+			}
+		}
+	}
+	if val, exists := c.Get(UserRoleKey); exists {
+		switch r := val.(type) {
+		case domain.UserRole:
+			if r != "" {
+				return r, true
+			}
+		case string:
+			if r != "" {
+				return domain.UserRole(r), true
+			}
+		}
+	}
+	if claims, ok := GetUserClaims(c); ok && claims != nil && claims.Role != "" {
+		return claims.Role, true
+	}
+	return "", false
+}
+
+// RequireRole crea un middleware que valida que el usuario posea uno de los roles autorizados
+func RequireRole(allowedRoles ...domain.UserRole) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID, exists := GetUserID(c)
+		if !exists || strings.TrimSpace(userID) == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "usuario no autenticado",
+				"code":  "UNAUTHORIZED",
+			})
+			return
+		}
+
+		userRole, roleExists := GetUserRole(c)
+		if !roleExists || strings.TrimSpace(string(userRole)) == "" {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"error": "acceso denegado: rol de usuario no definido",
+				"code":  "FORBIDDEN",
+			})
+			return
+		}
+
+		for _, allowed := range allowedRoles {
+			if userRole == allowed {
+				c.Next()
+				return
+			}
+		}
+
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+			"error": "acceso denegado: permisos insuficientes para esta operación",
+			"code":  "FORBIDDEN",
+		})
+	}
 }

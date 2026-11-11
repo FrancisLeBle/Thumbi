@@ -157,7 +157,9 @@ type CreateBookingInput struct {
 // ConfirmBookingPaymentInput DTO para acreditar la captura de pago de una reserva
 type ConfirmBookingPaymentInput struct {
 	BookingID         string `json:"booking_id"`
+	RequestingUserID  string `json:"requesting_user_id,omitempty"` // ID del usuario autenticado (requerido para clientes)
 	PaymentGatewayRef string `json:"payment_gateway_ref"`
+	IsWebhook         bool   `json:"is_webhook,omitempty"`          // True cuando proviene de un webhook firmado por la pasarela
 }
 
 // CancelBookingInput DTO para cancelar una reserva activa
@@ -191,6 +193,7 @@ type BookingDTO struct {
 	Status             domain.BookingStatus `json:"status"`
 	PickupStopID       *string              `json:"pickup_stop_id,omitempty"`
 	DropoffStopID      *string              `json:"dropoff_stop_id,omitempty"`
+	PaymentIntentID    *string              `json:"payment_intent_id,omitempty"`
 	ExpiresAt          string               `json:"expires_at"`
 	ConfirmedAt        *string              `json:"confirmed_at,omitempty"`
 	CancelledAt        *string              `json:"cancelled_at,omitempty"`

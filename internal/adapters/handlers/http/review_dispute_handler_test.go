@@ -126,6 +126,20 @@ func setupModule4Router(
 	mockAuthMiddleware := func(c *gin.Context) {
 		if authUserID != "" {
 			c.Set(middleware.UserIDKey, authUserID)
+			c.Set(middleware.CtxUserIDKey, authUserID)
+
+			role := domain.RolePassenger
+			if authUserID == "admin-user" || strings.HasPrefix(authUserID, "admin") {
+				role = domain.RoleAdmin
+			} else if strings.HasPrefix(authUserID, "driver") {
+				role = domain.RoleDriver
+			}
+			if customRole := c.GetHeader("X-Test-Role"); customRole != "" {
+				role = domain.UserRole(customRole)
+			}
+
+			c.Set(middleware.UserRoleKey, role)
+			c.Set(middleware.CtxUserRoleKey, role)
 			c.Next()
 		} else {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
@@ -454,7 +468,7 @@ func TestDisputeHandler_OpenDispute(t *testing.T) {
 }
 
 func TestDisputeHandler_ResolveDispute(t *testing.T) {
-	t.Run("resuelve disputa a favor del pasajero (200 OK)", func(t *testing.T) {
+	t.Run("resuelve disputa a favor del pasajero si es administrador (200 OK)", func(t *testing.T) {
 		mockDisp := new(MockDisputeServiceForHandlers)
 		router := setupModule4Router(nil, nil, mockDisp, "admin-user")
 
@@ -484,16 +498,37 @@ func TestDisputeHandler_ResolveDispute(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code)
 		mockDisp.AssertExpectations(t)
 	})
+
+	t.Run("retorna 403 Forbidden si un usuario no administrador intenta resolver la disputa", func(t *testing.T) {
+		mockDisp := new(MockDisputeServiceForHandlers)
+		router := setupModule4Router(nil, nil, mockDisp, "passenger-1") // Rol PASSENGER por defecto
+
+		payload := map[string]any{
+			"resolution":  "RESOLVED_PASSENGER_REFUND",
+			"admin_notes": "Intento no autorizado de resolución",
+		}
+		body, _ := json.Marshal(payload)
+
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodPost, "/api/v1/disputes/disp-1/resolve", bytes.NewBuffer(body))
+		req.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, w.Body.String(), "FORBIDDEN")
+	})
 }
 
 func TestDisputeHandler_GetDisputeByID(t *testing.T) {
-	t.Run("consulta detalle de disputa existente", func(t *testing.T) {
+	t.Run("consulta detalle si el usuario es el denunciante (200 OK)", func(t *testing.T) {
 		mockDisp := new(MockDisputeServiceForHandlers)
-		router := setupModule4Router(nil, nil, mockDisp, "user-1")
+		router := setupModule4Router(nil, nil, mockDisp, "passenger-1")
 
 		disputeDTO := &ports.DisputeDTO{
-			ID:     "disp-500",
-			Status: domain.DisputeStatusInReview,
+			ID:          "disp-500",
+			ReporterID:  "passenger-1",
+			DefendantID: "driver-1",
+			Status:      domain.DisputeStatusInReview,
 		}
 
 		mockDisp.On("GetDisputeByID", mock.Anything, "disp-500").Return(disputeDTO, nil)
@@ -506,9 +541,72 @@ func TestDisputeHandler_GetDisputeByID(t *testing.T) {
 		mockDisp.AssertExpectations(t)
 	})
 
+	t.Run("consulta detalle si el usuario es el denunciado (200 OK)", func(t *testing.T) {
+		mockDisp := new(MockDisputeServiceForHandlers)
+		router := setupModule4Router(nil, nil, mockDisp, "driver-1")
+
+		disputeDTO := &ports.DisputeDTO{
+			ID:          "disp-500",
+			ReporterID:  "passenger-1",
+			DefendantID: "driver-1",
+			Status:      domain.DisputeStatusInReview,
+		}
+
+		mockDisp.On("GetDisputeByID", mock.Anything, "disp-500").Return(disputeDTO, nil)
+
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/disputes/disp-500", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		mockDisp.AssertExpectations(t)
+	})
+
+	t.Run("consulta detalle si el usuario es administrador aunque no sea participante (200 OK)", func(t *testing.T) {
+		mockDisp := new(MockDisputeServiceForHandlers)
+		router := setupModule4Router(nil, nil, mockDisp, "admin-user")
+
+		disputeDTO := &ports.DisputeDTO{
+			ID:          "disp-500",
+			ReporterID:  "passenger-1",
+			DefendantID: "driver-1",
+			Status:      domain.DisputeStatusInReview,
+		}
+
+		mockDisp.On("GetDisputeByID", mock.Anything, "disp-500").Return(disputeDTO, nil)
+
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/disputes/disp-500", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		mockDisp.AssertExpectations(t)
+	})
+
+	t.Run("retorna 403 Forbidden si un usuario ajeno a la disputa intenta consultarla", func(t *testing.T) {
+		mockDisp := new(MockDisputeServiceForHandlers)
+		router := setupModule4Router(nil, nil, mockDisp, "intruder-user")
+
+		disputeDTO := &ports.DisputeDTO{
+			ID:          "disp-500",
+			ReporterID:  "passenger-1",
+			DefendantID: "driver-1",
+			Status:      domain.DisputeStatusInReview,
+		}
+
+		mockDisp.On("GetDisputeByID", mock.Anything, "disp-500").Return(disputeDTO, nil)
+
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/disputes/disp-500", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, w.Body.String(), "FORBIDDEN")
+	})
+
 	t.Run("retorna 404 Not Found si la disputa no existe", func(t *testing.T) {
 		mockDisp := new(MockDisputeServiceForHandlers)
-		router := setupModule4Router(nil, nil, mockDisp, "user-1")
+		router := setupModule4Router(nil, nil, mockDisp, "passenger-1")
 
 		mockDisp.On("GetDisputeByID", mock.Anything, "non-existent").Return(nil, domain.ErrDisputeNotFound)
 

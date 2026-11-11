@@ -295,7 +295,9 @@ func TestBookingHandler_ConfirmPayment(t *testing.T) {
 
 		mockSvc.On("ConfirmBookingPayment", mock.Anything, ports.ConfirmBookingPaymentInput{
 			BookingID:         "booking-999",
+			RequestingUserID:  "passenger-123",
 			PaymentGatewayRef: "pi_mock_12345",
+			IsWebhook:         false,
 		}).Return(confirmedDTO, nil)
 
 		body := adapterHttp.ConfirmPaymentRequest{
@@ -318,13 +320,75 @@ func TestBookingHandler_ConfirmPayment(t *testing.T) {
 		assert.Equal(t, "CONFIRMED", bookingData["status"])
 	})
 
+	t.Run("falla con 403 Forbidden si el usuario autenticado no es el pasajero de la reserva", func(t *testing.T) {
+		mockSvc := new(MockBookingService)
+		router := setupBookingTestRouter(mockSvc, "passenger-different")
+
+		mockSvc.On("ConfirmBookingPayment", mock.Anything, ports.ConfirmBookingPaymentInput{
+			BookingID:         "booking-999",
+			RequestingUserID:  "passenger-different",
+			PaymentGatewayRef: "pi_mock_12345",
+			IsWebhook:         false,
+		}).Return(nil, domain.ErrUnauthorized)
+
+		body := adapterHttp.ConfirmPaymentRequest{
+			PaymentGatewayRef: "pi_mock_12345",
+		}
+		jsonBytes, _ := json.Marshal(body)
+
+		req, _ := http.NewRequest(http.MethodPost, "/api/v1/bookings/booking-999/confirm-payment", bytes.NewBuffer(jsonBytes))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer valid-token")
+
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		var resp map[string]any
+		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		require.NoError(t, err)
+		assert.Equal(t, "FORBIDDEN", resp["code"])
+	})
+
+	t.Run("falla con 400 Bad Request si la referencia de pasarela no coincide con el intent de la reserva", func(t *testing.T) {
+		mockSvc := new(MockBookingService)
+		router := setupBookingTestRouter(mockSvc, "passenger-123")
+
+		mockSvc.On("ConfirmBookingPayment", mock.Anything, ports.ConfirmBookingPaymentInput{
+			BookingID:         "booking-999",
+			RequestingUserID:  "passenger-123",
+			PaymentGatewayRef: "pi_wrong_intent",
+			IsWebhook:         false,
+		}).Return(nil, domain.ErrInvalidPaymentGatewayRef)
+
+		body := adapterHttp.ConfirmPaymentRequest{
+			PaymentGatewayRef: "pi_wrong_intent",
+		}
+		jsonBytes, _ := json.Marshal(body)
+
+		req, _ := http.NewRequest(http.MethodPost, "/api/v1/bookings/booking-999/confirm-payment", bytes.NewBuffer(jsonBytes))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer valid-token")
+
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		var resp map[string]any
+		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		require.NoError(t, err)
+		assert.Equal(t, "INVALID_PAYMENT_INTENT", resp["code"])
+	})
+
 	t.Run("falla con 410 Gone si la reserva ha expirado por TTL", func(t *testing.T) {
 		mockSvc := new(MockBookingService)
 		router := setupBookingTestRouter(mockSvc, "passenger-123")
 
 		mockSvc.On("ConfirmBookingPayment", mock.Anything, ports.ConfirmBookingPaymentInput{
 			BookingID:         "booking-expired",
+			RequestingUserID:  "passenger-123",
 			PaymentGatewayRef: "pi_mock_expired",
+			IsWebhook:         false,
 		}).Return(nil, domain.ErrBookingExpired)
 
 		body := adapterHttp.ConfirmPaymentRequest{
@@ -352,7 +416,9 @@ func TestBookingHandler_ConfirmPayment(t *testing.T) {
 
 		mockSvc.On("ConfirmBookingPayment", mock.Anything, ports.ConfirmBookingPaymentInput{
 			BookingID:         "booking-notfound",
+			RequestingUserID:  "passenger-123",
 			PaymentGatewayRef: "pi_mock_ref",
+			IsWebhook:         false,
 		}).Return(nil, domain.ErrBookingNotFound)
 
 		body := adapterHttp.ConfirmPaymentRequest{
@@ -368,6 +434,49 @@ func TestBookingHandler_ConfirmPayment(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	t.Run("procesa exitosamente confirmación autoritativa vía webhook firmado de pasarela", func(t *testing.T) {
+		mockSvc := new(MockBookingService)
+		router := setupBookingTestRouter(mockSvc, "")
+
+		confirmedDTO := &ports.BookingDTO{
+			ID:          "booking-webhook-ok",
+			TripID:      "trip-1",
+			PassengerID: "passenger-123",
+			SeatsBooked: 2,
+			TotalPrice:  3000.0,
+			Status:      domain.BookingStatusConfirmed,
+		}
+
+		mockSvc.On("ConfirmBookingPayment", mock.Anything, ports.ConfirmBookingPaymentInput{
+			BookingID:         "booking-webhook-ok",
+			PaymentGatewayRef: "pi_gateway_webhook_ref",
+			IsWebhook:         true,
+		}).Return(confirmedDTO, nil)
+
+		webhookBody := adapterHttp.PaymentWebhookRequest{
+			Event:             "payment_intent.succeeded",
+			BookingID:         "booking-webhook-ok",
+			PaymentGatewayRef: "pi_gateway_webhook_ref",
+			Amount:            3000.0,
+			Currency:          "USD",
+		}
+		jsonBytes, _ := json.Marshal(webhookBody)
+
+		req, _ := http.NewRequest(http.MethodPost, "/api/v1/payments/webhook", bytes.NewBuffer(jsonBytes))
+		req.Header.Set("Content-Type", "application/json")
+		// Encabezado de autenticación de webhook admitido por WebhookAuthMiddleware
+		req.Header.Set("X-Webhook-Secret", middleware.DefaultWebhookSecret)
+
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp map[string]any
+		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		require.NoError(t, err)
+		assert.Contains(t, resp["message"], "exitosamente")
 	})
 }
 

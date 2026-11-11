@@ -130,9 +130,18 @@ func (h *DisputeHandler) OpenDispute(c *gin.Context) {
 	c.JSON(http.StatusCreated, dispute)
 }
 
-// GetDisputeByID consulta el detalle de una disputa por su ID
+// GetDisputeByID consulta el detalle de una disputa por su ID previa validación de propiedad o rol admin
 // GET /v1/disputes/:id ó GET /api/v1/disputes/:id
 func (h *DisputeHandler) GetDisputeByID(c *gin.Context) {
+	currentUserID, exists := middleware.GetUserID(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": "usuario no autenticado",
+			"code":  "UNAUTHORIZED",
+		})
+		return
+	}
+
 	disputeID := strings.TrimSpace(c.Param("id"))
 	if disputeID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -158,6 +167,22 @@ func (h *DisputeHandler) GetDisputeByID(c *gin.Context) {
 		return
 	}
 
+	// Control de acceso y validación de propiedad (RF: Seguridad y Privacidad):
+	// Solo el denunciante (ReporterID), el denunciado (DefendantID) o un administrador (ADMIN)
+	// pueden acceder a la información de la disputa.
+	userRole, _ := middleware.GetUserRole(c)
+	isAdmin := userRole == domain.RoleAdmin || userRole == domain.UserRoleAdmin
+	isParticipant := (dispute.ReporterID != "" && currentUserID == dispute.ReporterID) ||
+		(dispute.DefendantID != "" && currentUserID == dispute.DefendantID)
+
+	if !isAdmin && !isParticipant {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "acceso denegado: no posees autorización para ver los detalles de esta disputa",
+			"code":  "FORBIDDEN",
+		})
+		return
+	}
+
 	c.JSON(http.StatusOK, dispute)
 }
 
@@ -175,6 +200,16 @@ func (h *DisputeHandler) ResolveDispute(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"error": "usuario no autenticado",
 			"code":  "UNAUTHORIZED",
+		})
+		return
+	}
+
+	// Control de acceso RBAC: Solo administradores pueden resolver disputas y dictaminar fondos
+	userRole, hasRole := middleware.GetUserRole(c)
+	if !hasRole || (userRole != domain.RoleAdmin && userRole != domain.UserRoleAdmin) {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "acceso denegado: solo los administradores pueden dictaminar y resolver disputas",
+			"code":  "FORBIDDEN",
 		})
 		return
 	}
@@ -243,6 +278,15 @@ func (h *DisputeHandler) ResolveDispute(c *gin.Context) {
 // ListDisputes lista las disputas con soporte de paginación para soporte y mediación
 // GET /v1/disputes ó GET /api/v1/disputes
 func (h *DisputeHandler) ListDisputes(c *gin.Context) {
+	// Solo administradores pueden listar el repositorio global de disputas
+	userRole, hasRole := middleware.GetUserRole(c)
+	if !hasRole || (userRole != domain.RoleAdmin && userRole != domain.UserRoleAdmin) {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "acceso denegado: permisos insuficientes para listar disputas",
+			"code":  "FORBIDDEN",
+		})
+		return
+	}
 	limit := 20
 	offset := 0
 

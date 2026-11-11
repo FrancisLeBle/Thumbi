@@ -24,15 +24,16 @@ const DefaultBookingTTL = 15 * time.Minute
 
 // BookingParams DTO para la instanciación de una nueva reserva en el dominio
 type BookingParams struct {
-	ID            string
-	TripID        string
-	PassengerID   string
-	DriverID      string
-	SeatsBooked   int
-	UnitPrice     float64
-	PickupStopID  *string
-	DropoffStopID *string
-	TTL           time.Duration
+	ID              string
+	TripID          string
+	PassengerID     string
+	DriverID        string
+	SeatsBooked     int
+	UnitPrice       float64
+	PickupStopID    *string
+	DropoffStopID   *string
+	PaymentIntentID *string
+	TTL             time.Duration
 }
 
 // Booking representa la reserva de asientos en un viaje publicado
@@ -46,6 +47,7 @@ type Booking struct {
 	Status             BookingStatus `json:"status"`
 	PickupStopID       *string       `json:"pickup_stop_id,omitempty"`
 	DropoffStopID      *string       `json:"dropoff_stop_id,omitempty"`
+	PaymentIntentID    *string       `json:"payment_intent_id,omitempty"`
 	ExpiresAt          time.Time     `json:"expires_at"`
 	ConfirmedAt        *time.Time    `json:"confirmed_at,omitempty"`
 	CancelledAt        *time.Time    `json:"cancelled_at,omitempty"`
@@ -84,19 +86,29 @@ func NewBooking(params BookingParams) (*Booking, error) {
 	totalPrice := math.Round(params.UnitPrice*float64(params.SeatsBooked)*100) / 100
 
 	return &Booking{
-		ID:            params.ID,
-		TripID:        params.TripID,
-		PassengerID:   params.PassengerID,
-		SeatsBooked:   params.SeatsBooked,
-		UnitPrice:     params.UnitPrice,
-		TotalPrice:    totalPrice,
-		Status:        BookingStatusPendingPayment,
-		PickupStopID:  params.PickupStopID,
-		DropoffStopID: params.DropoffStopID,
-		ExpiresAt:     nowUTC.Add(ttl),
-		CreatedAt:     nowUTC,
-		UpdatedAt:     nowUTC,
+		ID:              params.ID,
+		TripID:          params.TripID,
+		PassengerID:     params.PassengerID,
+		SeatsBooked:     params.SeatsBooked,
+		UnitPrice:       params.UnitPrice,
+		TotalPrice:      totalPrice,
+		Status:          BookingStatusPendingPayment,
+		PickupStopID:    params.PickupStopID,
+		DropoffStopID:   params.DropoffStopID,
+		PaymentIntentID: params.PaymentIntentID,
+		ExpiresAt:       nowUTC.Add(ttl),
+		CreatedAt:       nowUTC,
+		UpdatedAt:       nowUTC,
 	}, nil
+}
+
+// SetPaymentIntentID vincula el identificador de orden/intención de cobro de la pasarela
+func (b *Booking) SetPaymentIntentID(intentID string) {
+	trimmed := strings.TrimSpace(intentID)
+	if trimmed != "" {
+		b.PaymentIntentID = &trimmed
+		b.UpdatedAt = time.Now().UTC()
+	}
 }
 
 // IsExpired evalúa si la reserva ha superado el tiempo de retención de asientos sin pago

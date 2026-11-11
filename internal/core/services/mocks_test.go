@@ -48,6 +48,45 @@ func (m *MockUserRepository) Update(ctx context.Context, user *domain.User) erro
 	return args.Error(0)
 }
 
+// MockIdentityRepository
+type MockIdentityRepository struct {
+	mock.Mock
+}
+
+func (m *MockIdentityRepository) Create(ctx context.Context, identity *domain.UserIdentity) error {
+	args := m.Called(ctx, identity)
+	return args.Error(0)
+}
+
+func (m *MockIdentityRepository) GetByID(ctx context.Context, id string) (*domain.UserIdentity, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.UserIdentity), args.Error(1)
+}
+
+func (m *MockIdentityRepository) GetByProviderAndID(ctx context.Context, provider domain.AuthProvider, providerUserID string) (*domain.UserIdentity, error) {
+	args := m.Called(ctx, provider, providerUserID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.UserIdentity), args.Error(1)
+}
+
+func (m *MockIdentityRepository) ListByUserID(ctx context.Context, userID string) ([]*domain.UserIdentity, error) {
+	args := m.Called(ctx, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*domain.UserIdentity), args.Error(1)
+}
+
+func (m *MockIdentityRepository) Delete(ctx context.Context, id string) error {
+	args := m.Called(ctx, id)
+	return args.Error(0)
+}
+
 // MockSessionRepository
 type MockSessionRepository struct {
 	mock.Mock
@@ -291,9 +330,32 @@ func (m *MockBookingRepository) FindByID(ctx context.Context, id string) (*domai
 	return args.Get(0).(*domain.Booking), args.Error(1)
 }
 
+func (m *MockBookingRepository) FindByPaymentIntentID(ctx context.Context, intentID string) (*domain.Booking, error) {
+	for _, call := range m.ExpectedCalls {
+		if call.Method == "FindByPaymentIntentID" {
+			args := m.Called(ctx, intentID)
+			if args.Get(0) == nil {
+				return nil, args.Error(1)
+			}
+			return args.Get(0).(*domain.Booking), args.Error(1)
+		}
+	}
+	return nil, nil
+}
+
 func (m *MockBookingRepository) UpdateStatus(ctx context.Context, bookingID string, newStatus domain.BookingStatus, reason *string) error {
 	args := m.Called(ctx, bookingID, newStatus, reason)
 	return args.Error(0)
+}
+
+func (m *MockBookingRepository) UpdatePaymentIntent(ctx context.Context, bookingID, intentID string) error {
+	for _, call := range m.ExpectedCalls {
+		if call.Method == "UpdatePaymentIntent" {
+			args := m.Called(ctx, bookingID, intentID)
+			return args.Error(0)
+		}
+	}
+	return nil
 }
 
 func (m *MockBookingRepository) GetActiveBookingsByTrip(ctx context.Context, tripID string) ([]*domain.Booking, error) {

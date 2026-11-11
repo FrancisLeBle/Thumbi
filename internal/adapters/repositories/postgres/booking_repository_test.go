@@ -164,6 +164,7 @@ func TestBookingRepository_FindByID(t *testing.T) {
 			return strings.Contains(sql, "FROM bookings") && strings.Contains(sql, "WHERE id = $1")
 		}), []any{"booking-101"}).Return(&MockRow{
 			scanFn: func(dest ...any) error {
+				intentID := "pi_mock_saved_101"
 				*dest[0].(*string) = "booking-101"
 				*dest[1].(*string) = "trip-202"
 				*dest[2].(*string) = "passenger-303"
@@ -173,12 +174,13 @@ func TestBookingRepository_FindByID(t *testing.T) {
 				*dest[6].(*string) = "CONFIRMED"
 				*dest[7].(**string) = nil
 				*dest[8].(**string) = nil
-				*dest[9].(*time.Time) = now.Add(15 * time.Minute)
-				*dest[10].(**time.Time) = &now
-				*dest[11].(**time.Time) = nil
-				*dest[12].(**string) = nil
-				*dest[13].(*time.Time) = now
+				*dest[9].(**string) = &intentID
+				*dest[10].(*time.Time) = now.Add(15 * time.Minute)
+				*dest[11].(**time.Time) = &now
+				*dest[12].(**time.Time) = nil
+				*dest[13].(**string) = nil
 				*dest[14].(*time.Time) = now
+				*dest[15].(*time.Time) = now
 				return nil
 			},
 		})

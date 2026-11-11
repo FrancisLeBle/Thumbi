@@ -72,4 +72,10 @@ var (
 	ErrDisputeAlreadyResolved      = errors.New("dispute already resolved")
 	ErrInvalidRouteCoordinates     = errors.New("invalid route coordinates")
 	ErrInsufficientRoutePoints     = errors.New("insufficient route points")
+	ErrIdentityNotFound            = errors.New("identity not found")
+	ErrIdentityAlreadyExists        = errors.New("identity already exists")
+	ErrUnverifiedEmail             = errors.New("unverified email cannot be linked")
+	ErrIdentityAlreadyLinked       = errors.New("identity already linked to another account")
+	ErrInvalidPaymentGatewayRef    = errors.New("payment gateway reference does not match booking payment intent")
 )
+

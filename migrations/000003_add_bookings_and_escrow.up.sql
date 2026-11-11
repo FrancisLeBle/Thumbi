@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS bookings (
     -- Paradas de ascenso/descenso opcionales para viajes con paradas intermedias
     pickup_stop_id VARCHAR(64) REFERENCES trip_stops(id) ON DELETE SET NULL,
     dropoff_stop_id VARCHAR(64) REFERENCES trip_stops(id) ON DELETE SET NULL,
+    payment_intent_id VARCHAR(255),
     
     -- Tiempos de ciclo de vida y expiración de retención
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
@@ -61,6 +62,7 @@ CREATE TABLE IF NOT EXISTS bookings (
 -- Índices B-Tree para optimización de consultas de reservas
 CREATE INDEX IF NOT EXISTS idx_bookings_trip_status ON bookings (trip_id, status);
 CREATE INDEX IF NOT EXISTS idx_bookings_passenger_status ON bookings (passenger_id, status);
+CREATE INDEX IF NOT EXISTS idx_bookings_payment_intent_id ON bookings (payment_intent_id);
 CREATE INDEX IF NOT EXISTS idx_bookings_pending_expires ON bookings (status, expires_at) WHERE status = 'PENDING_PAYMENT';
 CREATE INDEX IF NOT EXISTS idx_bookings_created_at ON bookings (created_at DESC);
 

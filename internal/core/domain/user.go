@@ -10,7 +10,27 @@ type UserRole string
 const (
 	RolePassenger UserRole = "PASSENGER"
 	RoleDriver    UserRole = "DRIVER"
+	RoleAdmin     UserRole = "ADMIN"
+
+	UserRolePassenger = RolePassenger
+	UserRoleDriver    = RoleDriver
+	UserRoleAdmin     = RoleAdmin
 )
+
+// IsValid valida si el rol pertenece a los roles permitidos en el sistema
+func (r UserRole) IsValid() bool {
+	return r == RolePassenger || r == RoleDriver || r == RoleAdmin
+}
+
+// IsAdmin comprueba si el rol corresponde al rol de administrador
+func (r UserRole) IsAdmin() bool {
+	return r == RoleAdmin
+}
+
+// String retorna la representación en texto del rol
+func (r UserRole) String() string {
+	return string(r)
+}
 
 // AuthProvider define los proveedores sociales soportados
 type AuthProvider string
@@ -83,6 +103,11 @@ func (u *User) FullName() string {
 // Retiene 100% de capacidad como pasajero aún si su verificación de conductor fue rechazada o está pendiente
 func (u *User) CanBookRides() bool {
 	return true
+}
+
+// IsAdmin verifica si el usuario tiene asignado el rol de administrador
+func (u *User) IsAdmin() bool {
+	return u.Role == RoleAdmin
 }
 
 // CanPublishRides valida si el usuario puede crear y publicar viajes como conductor

@@ -123,6 +123,10 @@ func (s *bookingService) CreateBooking(ctx context.Context, input ports.CreateBo
 		return nil, domain.ErrPaymentFailed
 	}
 
+	// Vincular y persistir la referencia de la orden/intención creada en la pasarela
+	booking.SetPaymentIntentID(paymentIntent.GatewayRef)
+	_ = s.bookingRepo.UpdatePaymentIntent(ctx, booking.ID, paymentIntent.GatewayRef)
+
 	// 9. Enriquecer resumen del viaje para el DTO
 	tripSummary := s.buildTripSummary(ctx, trip)
 
@@ -141,9 +145,21 @@ func (s *bookingService) ConfirmBookingPayment(ctx context.Context, input ports.
 		return nil, domain.ErrBookingNotFound
 	}
 
+	// 2. Control de Autorización: Si es llamada directa de cliente (no webhook), validar que quien confirma sea el pasajero de la reserva
+	if !input.IsWebhook {
+		if strings.TrimSpace(input.RequestingUserID) == "" || booking.PassengerID != strings.TrimSpace(input.RequestingUserID) {
+			return nil, domain.ErrUnauthorized
+		}
+	}
+
+	// 3. Validación de Payment Intent: La referencia de pago debe coincidir exactamente con el intent generado para esta reserva
+	if booking.PaymentIntentID == nil || strings.TrimSpace(*booking.PaymentIntentID) == "" || *booking.PaymentIntentID != input.PaymentGatewayRef {
+		return nil, domain.ErrInvalidPaymentGatewayRef
+	}
+
 	now := s.clock().UTC()
 
-	// 2. Verificar estado y expiración por TTL
+	// 4. Verificar estado y expiración por TTL
 	if booking.IsExpired(now) {
 		return nil, domain.ErrBookingExpired
 	}
@@ -151,13 +167,13 @@ func (s *bookingService) ConfirmBookingPayment(ctx context.Context, input ports.
 		return nil, domain.ErrInvalidBookingStatus
 	}
 
-	// 3. Confirmar la transacción con la pasarela de pagos
+	// 5. Confirmar la transacción con la pasarela de pagos
 	confirmed, err := s.paymentGateway.ConfirmPayment(ctx, input.PaymentGatewayRef)
 	if err != nil || !confirmed {
 		return nil, domain.ErrPaymentFailed
 	}
 
-	// 4. Transicionar estado a CONFIRMED
+	// 6. Transicionar estado a CONFIRMED
 	if err := booking.Confirm(now); err != nil {
 		return nil, err
 	}
@@ -165,13 +181,13 @@ func (s *bookingService) ConfirmBookingPayment(ctx context.Context, input ports.
 		return nil, err
 	}
 
-	// 5. Obtener datos del viaje para vincular al conductor en Escrow
+	// 7. Obtener datos del viaje para vincular al conductor en Escrow
 	trip, err := s.tripRepo.FindByID(ctx, booking.TripID)
 	if err != nil || trip == nil {
 		return nil, domain.ErrTripNotFound
 	}
 
-	// 6. Registrar fondos en custodia (EscrowTransaction) en estado HELD
+	// 8. Registrar fondos en custodia (EscrowTransaction) en estado HELD
 	escrowID := uuid.New().String()
 	escrow, err := domain.NewEscrowTransaction(
 		escrowID,
@@ -191,7 +207,7 @@ func (s *bookingService) ConfirmBookingPayment(ctx context.Context, input ports.
 		return nil, err
 	}
 
-	// 7. Notificar a las partes si el notificador está configurado
+	// 9. Notificar a las partes si el notificador está configurado
 	if s.notifier != nil {
 		_ = s.notifier.SendResolutionNotification(ctx, ports.NotificationPayload{
 			UserID:  booking.PassengerID,
@@ -482,8 +498,10 @@ func (s *bookingService) toBookingDTO(b *domain.Booking, tripSummary *ports.Book
 		SeatsBooked:        b.SeatsBooked,
 		UnitPrice:          b.UnitPrice,
 		TotalPrice:         b.TotalPrice,
+		Status:             b.Status,
 		PickupStopID:       b.PickupStopID,
 		DropoffStopID:      b.DropoffStopID,
+		PaymentIntentID:    b.PaymentIntentID,
 		ExpiresAt:          b.ExpiresAt.Format(time.RFC3339),
 		ConfirmedAt:        confirmedAtStr,
 		CancelledAt:        cancelledAtStr,

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -74,6 +75,7 @@ func main() {
 	escrowRepo := postgres.NewEscrowRepository(dbPool)
 	reviewRepo := postgres.NewReviewRepository(dbPool)
 	disputeRepo := postgres.NewDisputeRepository(dbPool)
+	identityRepo := postgres.NewIdentityRepository(dbPool)
 	sessionRepo := postgres.NewMemorySessionRepository(1 * time.Minute)
 	defer sessionRepo.Close()
 
@@ -96,6 +98,7 @@ func main() {
 		sessionRepo,
 		socialProviders,
 		tokenManager,
+		identityRepo,
 	)
 	kycService := services.NewKYCService(
 		userRepo,
@@ -152,7 +155,20 @@ func main() {
 	healthHandler := adapterHttp.NewHealthHandler(dbPool)
 	authMiddleware := middleware.AuthMiddleware(authService)
 
-	// 3.6 Router de Gin
+	// 3.6 Router de Gin con configuración de CORS restringido a orígenes de confianza
+	allowedOrigins := []string{}
+	if cfg.AppURL != "" {
+		allowedOrigins = append(allowedOrigins, cfg.AppURL)
+	}
+	if cfg.AllowedOrigins != "" {
+		for _, o := range strings.Split(cfg.AllowedOrigins, ",") {
+			trimmed := strings.TrimSpace(o)
+			if trimmed != "" {
+				allowedOrigins = append(allowedOrigins, trimmed)
+			}
+		}
+	}
+
 	router := adapterHttp.SetupRouter(adapterHttp.RouterConfig{
 		AuthHandler:    authHandler,
 		KYCHandler:     kycHandler,
@@ -163,6 +179,8 @@ func main() {
 		DisputeHandler: disputeHandler,
 		HealthHandler:  healthHandler,
 		AuthMiddleware: authMiddleware,
+		WebhookSecret:  cfg.WebhookSecret,
+		AllowedOrigins: allowedOrigins,
 	})
 
 	// 3.7 Worker en segundo plano para expiración automática de reservas por TTL (15 min)

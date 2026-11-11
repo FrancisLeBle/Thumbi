@@ -65,14 +65,27 @@ func (s *DisputeService) GetDisputeByID(ctx context.Context, disputeID string) (
 	if err != nil {
 		return nil, err
 	}
+	var resolvedAtStr *string
+	if dispute.ResolvedAt != nil {
+		str := dispute.ResolvedAt.Format(time.RFC3339)
+		resolvedAtStr = &str
+	}
 	return &ports.DisputeDTO{
-		ID:          dispute.ID,
-		BookingID:   dispute.BookingID,
-		Reason:      dispute.Reason,
-		Description: dispute.Description,
-		Status:      dispute.Status,
-		CreatedAt:   dispute.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:   dispute.UpdatedAt.Format(time.RFC3339),
+		ID:                  dispute.ID,
+		EscrowTransactionID: dispute.EscrowTransactionID,
+		BookingID:           dispute.BookingID,
+		TripID:              dispute.TripID,
+		ReporterID:          dispute.ReporterID,
+		DefendantID:         dispute.DefendantID,
+		Reason:              dispute.Reason,
+		Description:         dispute.Description,
+		EvidenceURLs:        dispute.EvidenceURLs,
+		Status:              dispute.Status,
+		AdminNotes:          dispute.AdminNotes,
+		ResolvedBy:          dispute.ResolvedBy,
+		ResolvedAt:          resolvedAtStr,
+		CreatedAt:           dispute.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:           dispute.UpdatedAt.Format(time.RFC3339),
 	}, nil
 }
 
@@ -94,12 +107,14 @@ func (s *DisputeService) ResolveDispute(ctx context.Context, input ports.Resolve
 		return nil, err
 	}
 
-	if dispute.Status == "RESOLVED" || dispute.Status == "REJECTED" {
+	if dispute.IsClosed() || dispute.Status == "RESOLVED" || dispute.Status == "REJECTED" {
 		return nil, domain.ErrDisputeAlreadyResolved
 	}
 
-	now := time.Now()
+	now := time.Now().UTC()
 	dispute.Status = input.Resolution
+	dispute.ResolvedBy = &input.AdminID
+	dispute.AdminNotes = &input.AdminNotes
 	dispute.ResolvedAt = &now
 	dispute.UpdatedAt = now
 
@@ -107,13 +122,27 @@ func (s *DisputeService) ResolveDispute(ctx context.Context, input ports.Resolve
 		return nil, err
 	}
 
+	var resolvedAtStr *string
+	if dispute.ResolvedAt != nil {
+		str := dispute.ResolvedAt.Format(time.RFC3339)
+		resolvedAtStr = &str
+	}
+
 	return &ports.DisputeDTO{
-		ID:          dispute.ID,
-		BookingID:   dispute.BookingID,
-		Reason:      dispute.Reason,
-		Description: dispute.Description,
-		Status:      dispute.Status,
-		CreatedAt:   dispute.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:   dispute.UpdatedAt.Format(time.RFC3339),
+		ID:                  dispute.ID,
+		EscrowTransactionID: dispute.EscrowTransactionID,
+		BookingID:           dispute.BookingID,
+		TripID:              dispute.TripID,
+		ReporterID:          dispute.ReporterID,
+		DefendantID:         dispute.DefendantID,
+		Reason:              dispute.Reason,
+		Description:         dispute.Description,
+		EvidenceURLs:        dispute.EvidenceURLs,
+		Status:              dispute.Status,
+		AdminNotes:          dispute.AdminNotes,
+		ResolvedBy:          dispute.ResolvedBy,
+		ResolvedAt:          resolvedAtStr,
+		CreatedAt:           dispute.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:           dispute.UpdatedAt.Format(time.RFC3339),
 	}, nil
 }

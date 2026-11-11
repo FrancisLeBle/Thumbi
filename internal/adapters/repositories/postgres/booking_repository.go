@@ -88,9 +88,9 @@ func (r *bookingRepository) CreateWithHold(ctx context.Context, booking *domain.
 	insertBookingQuery := `
 		INSERT INTO bookings (
 			id, trip_id, passenger_id, seats_booked, unit_price, total_price,
-			status, pickup_stop_id, dropoff_stop_id, expires_at, created_at, updated_at
+			status, pickup_stop_id, dropoff_stop_id, payment_intent_id, expires_at, created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
 		)
 	`
 	_, err = exec.Exec(
@@ -105,6 +105,7 @@ func (r *bookingRepository) CreateWithHold(ctx context.Context, booking *domain.
 		string(booking.Status),
 		booking.PickupStopID,
 		booking.DropoffStopID,
+		booking.PaymentIntentID,
 		booking.ExpiresAt,
 		booking.CreatedAt,
 		booking.UpdatedAt,
@@ -129,7 +130,7 @@ func (r *bookingRepository) FindByID(ctx context.Context, id string) (*domain.Bo
 	query := `
 		SELECT 
 			id, trip_id, passenger_id, seats_booked, unit_price, total_price,
-			status, pickup_stop_id, dropoff_stop_id, expires_at, confirmed_at, cancelled_at,
+			status, pickup_stop_id, dropoff_stop_id, payment_intent_id, expires_at, confirmed_at, cancelled_at,
 			cancellation_reason, created_at, updated_at
 		FROM bookings
 		WHERE id = $1
@@ -148,6 +149,7 @@ func (r *bookingRepository) FindByID(ctx context.Context, id string) (*domain.Bo
 		&statusStr,
 		&b.PickupStopID,
 		&b.DropoffStopID,
+		&b.PaymentIntentID,
 		&b.ExpiresAt,
 		&b.ConfirmedAt,
 		&b.CancelledAt,
@@ -167,21 +169,62 @@ func (r *bookingRepository) FindByID(ctx context.Context, id string) (*domain.Bo
 	return &b, nil
 }
 
-// UpdateStatus actualiza el estado, motivos y marcas temporales de la reserva
-func (r *bookingRepository) UpdateStatus(ctx context.Context, bookingID string, newStatus domain.BookingStatus, reason *string) error {
+// FindByPaymentIntentID busca una reserva por el ID de la intención de pago emitida por la pasarela
+func (r *bookingRepository) FindByPaymentIntentID(ctx context.Context, intentID string) (*domain.Booking, error) {
 	query := `
-		UPDATE bookings
-		SET status = $1,
-		    cancellation_reason = COALESCE($2, cancellation_reason),
-		    confirmed_at = CASE WHEN $1 = 'CONFIRMED' THEN NOW() ELSE confirmed_at END,
-		    cancelled_at = CASE WHEN $1 IN ('CANCELLED_BY_PASSENGER', 'CANCELLED_BY_DRIVER') THEN NOW() ELSE cancelled_at END,
-		    updated_at = NOW()
-		WHERE id = $3
+		SELECT 
+			id, trip_id, passenger_id, seats_booked, unit_price, total_price,
+			status, pickup_stop_id, dropoff_stop_id, payment_intent_id, expires_at, confirmed_at, cancelled_at,
+			cancellation_reason, created_at, updated_at
+		FROM bookings
+		WHERE payment_intent_id = $1
 	`
 
-	cmd, err := r.db.Exec(ctx, query, string(newStatus), reason, bookingID)
+	var b domain.Booking
+	var statusStr string
+
+	err := r.db.QueryRow(ctx, query, intentID).Scan(
+		&b.ID,
+		&b.TripID,
+		&b.PassengerID,
+		&b.SeatsBooked,
+		&b.UnitPrice,
+		&b.TotalPrice,
+		&statusStr,
+		&b.PickupStopID,
+		&b.DropoffStopID,
+		&b.PaymentIntentID,
+		&b.ExpiresAt,
+		&b.ConfirmedAt,
+		&b.CancelledAt,
+		&b.CancellationReason,
+		&b.CreatedAt,
+		&b.UpdatedAt,
+	)
+
 	if err != nil {
-		return fmt.Errorf("error actualizando estado de reserva %s: %w", bookingID, err)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrBookingNotFound
+		}
+		return nil, fmt.Errorf("error consultando reserva por payment_intent_id %s: %w", intentID, err)
+	}
+
+	b.Status = domain.BookingStatus(statusStr)
+	return &b, nil
+}
+
+// UpdatePaymentIntent actualiza o asocia el identificador de orden/intención de la pasarela
+func (r *bookingRepository) UpdatePaymentIntent(ctx context.Context, bookingID, intentID string) error {
+	query := `
+		UPDATE bookings
+		SET payment_intent_id = $1,
+		    updated_at = NOW()
+		WHERE id = $2
+	`
+
+	cmd, err := r.db.Exec(ctx, query, intentID, bookingID)
+	if err != nil {
+		return fmt.Errorf("error actualizando payment_intent_id de reserva %s: %w", bookingID, err)
 	}
 
 	if cmd.RowsAffected() == 0 {
@@ -189,122 +232,6 @@ func (r *bookingRepository) UpdateStatus(ctx context.Context, bookingID string, 
 	}
 
 	return nil
-}
-
-// GetActiveBookingsByTrip retorna las reservas activas (PENDING_PAYMENT y CONFIRMED) de un viaje
-func (r *bookingRepository) GetActiveBookingsByTrip(ctx context.Context, tripID string) ([]*domain.Booking, error) {
-	query := `
-		SELECT 
-			id, trip_id, passenger_id, seats_booked, unit_price, total_price,
-			status, pickup_stop_id, dropoff_stop_id, expires_at, confirmed_at, cancelled_at,
-			cancellation_reason, created_at, updated_at
-		FROM bookings
-		WHERE trip_id = $1 AND status IN ('PENDING_PAYMENT', 'CONFIRMED')
-		ORDER BY created_at ASC
-	`
-
-	rows, err := r.db.Query(ctx, query, tripID)
-	if err != nil {
-		return nil, fmt.Errorf("error consultando reservas activas del viaje %s: %w", tripID, err)
-	}
-	defer rows.Close()
-
-	var bookings []*domain.Booking
-	for rows.Next() {
-		var b domain.Booking
-		var statusStr string
-
-		if err := rows.Scan(
-			&b.ID,
-			&b.TripID,
-			&b.PassengerID,
-			&b.SeatsBooked,
-			&b.UnitPrice,
-			&b.TotalPrice,
-			&statusStr,
-			&b.PickupStopID,
-			&b.DropoffStopID,
-			&b.ExpiresAt,
-			&b.ConfirmedAt,
-			&b.CancelledAt,
-			&b.CancellationReason,
-			&b.CreatedAt,
-			&b.UpdatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("error escaneando reserva activa: %w", err)
-		}
-
-		b.Status = domain.BookingStatus(statusStr)
-		bookings = append(bookings, &b)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterando reservas activas: %w", err)
-	}
-
-	return bookings, nil
-}
-
-// GetPassengerBookings recupera el historial de reservas de un pasajero
-func (r *bookingRepository) GetPassengerBookings(ctx context.Context, passengerID string, limit, offset int) ([]*domain.Booking, error) {
-	if limit <= 0 {
-		limit = 20
-	}
-	if offset < 0 {
-		offset = 0
-	}
-
-	query := `
-		SELECT 
-			id, trip_id, passenger_id, seats_booked, unit_price, total_price,
-			status, pickup_stop_id, dropoff_stop_id, expires_at, confirmed_at, cancelled_at,
-			cancellation_reason, created_at, updated_at
-		FROM bookings
-		WHERE passenger_id = $1
-		ORDER BY created_at DESC
-		LIMIT $2 OFFSET $3
-	`
-
-	rows, err := r.db.Query(ctx, query, passengerID, limit, offset)
-	if err != nil {
-		return nil, fmt.Errorf("error consultando historial de reservas del pasajero %s: %w", passengerID, err)
-	}
-	defer rows.Close()
-
-	var bookings []*domain.Booking
-	for rows.Next() {
-		var b domain.Booking
-		var statusStr string
-
-		if err := rows.Scan(
-			&b.ID,
-			&b.TripID,
-			&b.PassengerID,
-			&b.SeatsBooked,
-			&b.UnitPrice,
-			&b.TotalPrice,
-			&statusStr,
-			&b.PickupStopID,
-			&b.DropoffStopID,
-			&b.ExpiresAt,
-			&b.ConfirmedAt,
-			&b.CancelledAt,
-			&b.CancellationReason,
-			&b.CreatedAt,
-			&b.UpdatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("error escaneando reserva de pasajero: %w", err)
-		}
-
-		b.Status = domain.BookingStatus(statusStr)
-		bookings = append(bookings, &b)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterando reservas de pasajero: %w", err)
-	}
-
-	return bookings, nil
 }
 
 // ExpirePendingBookings transiciona reservas vencidas y reintegra los asientos al viaje atómicamente

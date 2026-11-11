@@ -34,6 +34,15 @@ type ConfirmPaymentRequest struct {
 	PaymentGatewayRef string `json:"payment_gateway_ref" binding:"required"`
 }
 
+// PaymentWebhookRequest payload para la notificación asíncrona de eventos de pago de la pasarela
+type PaymentWebhookRequest struct {
+	Event             string  `json:"event"`
+	BookingID         string  `json:"booking_id" binding:"required"`
+	PaymentGatewayRef string  `json:"payment_gateway_ref" binding:"required"`
+	Amount            float64 `json:"amount,omitempty"`
+	Currency          string  `json:"currency,omitempty"`
+}
+
 // CancelBookingRequest payload opcional con el motivo de cancelación
 type CancelBookingRequest struct {
 	Reason string `json:"reason"`
@@ -123,7 +132,7 @@ func (h *BookingHandler) CreateBooking(c *gin.Context) {
 // ConfirmPayment acredita la captura del pago y custodia los fondos en Escrow
 // POST /api/v1/bookings/:id/confirm-payment ó POST /v1/bookings/:id/confirm-payment
 func (h *BookingHandler) ConfirmPayment(c *gin.Context) {
-	_, exists := middleware.GetUserID(c)
+	userID, exists := middleware.GetUserID(c)
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"error": "usuario no autenticado",
@@ -153,7 +162,9 @@ func (h *BookingHandler) ConfirmPayment(c *gin.Context) {
 
 	dto, err := h.bookingService.ConfirmBookingPayment(c.Request.Context(), ports.ConfirmBookingPaymentInput{
 		BookingID:         bookingID,
+		RequestingUserID:  userID,
 		PaymentGatewayRef: req.PaymentGatewayRef,
+		IsWebhook:         false,
 	})
 
 	if err != nil {
@@ -162,6 +173,16 @@ func (h *BookingHandler) ConfirmPayment(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{
 				"error": "reserva no encontrada",
 				"code":  "BOOKING_NOT_FOUND",
+			})
+		case errors.Is(err, domain.ErrUnauthorized):
+			c.JSON(http.StatusForbidden, gin.H{
+				"error": "no tienes autorización para confirmar el pago de esta reserva (solo el pasajero puede confirmar)",
+				"code":  "FORBIDDEN",
+			})
+		case errors.Is(err, domain.ErrInvalidPaymentGatewayRef):
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "la referencia de pago provista no coincide con la intención creada para esta reserva",
+				"code":  "INVALID_PAYMENT_INTENT",
 			})
 		case errors.Is(err, domain.ErrBookingExpired):
 			c.JSON(http.StatusGone, gin.H{
@@ -188,6 +209,68 @@ func (h *BookingHandler) ConfirmPayment(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
+		"booking": dto,
+	})
+}
+
+// ProcessPaymentWebhook procesa la confirmación autoritativa de pago vía webhook firmado de la pasarela
+// POST /api/v1/payments/webhook ó POST /v1/payments/webhook
+func (h *BookingHandler) ProcessPaymentWebhook(c *gin.Context) {
+	var req PaymentWebhookRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "payload de webhook de pagos inválido",
+			"code":    "BAD_REQUEST",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	dto, err := h.bookingService.ConfirmBookingPayment(c.Request.Context(), ports.ConfirmBookingPaymentInput{
+		BookingID:         req.BookingID,
+		PaymentGatewayRef: req.PaymentGatewayRef,
+		IsWebhook:         true,
+	})
+
+	if err != nil {
+		switch {
+		case errors.Is(err, domain.ErrBookingNotFound):
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": "reserva no encontrada para el evento de pago",
+				"code":  "BOOKING_NOT_FOUND",
+			})
+		case errors.Is(err, domain.ErrInvalidPaymentGatewayRef):
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "la referencia de pago provista en el webhook no coincide con el intent de la reserva",
+				"code":  "INVALID_PAYMENT_INTENT",
+			})
+		case errors.Is(err, domain.ErrBookingExpired):
+			c.JSON(http.StatusGone, gin.H{
+				"error": "la reserva ha expirado antes de confirmarse el pago",
+				"code":  "BOOKING_EXPIRED",
+			})
+		case errors.Is(err, domain.ErrInvalidBookingStatus):
+			// Idempotencia: si ya está confirmada, responder 200 OK con mensaje informativo
+			c.JSON(http.StatusOK, gin.H{
+				"message": "notificación de pago recibida pero la reserva ya fue procesada",
+				"status":  "already_processed",
+			})
+		case errors.Is(err, domain.ErrPaymentFailed):
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "la pasarela de pagos no confirmó la captura del cobro",
+				"code":  "PAYMENT_FAILED",
+			})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "error interno procesando webhook de pago",
+				"code":  "INTERNAL_SERVER_ERROR",
+			})
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "pago confirmado exitosamente vía webhook y fondos custodiados en Escrow",
 		"booking": dto,
 	})
 }

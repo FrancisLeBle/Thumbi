@@ -3,6 +3,7 @@ package http
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/thumbi/auth-kyc-service/internal/adapters/handlers/http/middleware"
@@ -139,9 +140,9 @@ func (h *VehicleHandler) Status(c *gin.Context) {
 }
 
 // ProcessResolution simula o recibe la resolución asíncrona del trámite (RF-12, RF-13)
-// POST /v1/vehicles/:id/resolution
+// POST /v1/vehicles/:id/resolution (protegido por WebhookAuthMiddleware)
 func (h *VehicleHandler) ProcessResolution(c *gin.Context) {
-	vehicleID := c.Param("id")
+	vehicleID := strings.TrimSpace(c.Param("id"))
 	if vehicleID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "id de vehículo requerido"})
 		return
@@ -153,7 +154,12 @@ func (h *VehicleHandler) ProcessResolution(c *gin.Context) {
 		return
 	}
 
-	err := h.vehicleService.ProcessAsyncResolution(c.Request.Context(), vehicleID, req.Approved, req.Reason)
+	reason := strings.TrimSpace(req.Reason)
+	if !req.Approved && reason == "" {
+		reason = "Documentación no aprobada en trámite de validación vehicular"
+	}
+
+	err := h.vehicleService.ProcessAsyncResolution(c.Request.Context(), vehicleID, req.Approved, reason)
 	if err != nil {
 		if errors.Is(err, domain.ErrVehicleNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "vehículo no encontrado"})

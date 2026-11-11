@@ -162,14 +162,16 @@ func TestBookingService_ConfirmBookingPayment(t *testing.T) {
 		gateway := new(MockPaymentGateway)
 		notifier := new(MockNotifier)
 
+		intentRef := "pi_gateway_ref_999"
 		booking, _ := domain.NewBooking(domain.BookingParams{
-			ID:          "booking-abc",
-			TripID:      "trip-100",
-			PassengerID: "passenger-1",
-			DriverID:    "driver-1",
-			SeatsBooked: 2,
-			UnitPrice:   1500.0,
-			TTL:         15 * time.Minute,
+			ID:              "booking-abc",
+			TripID:          "trip-100",
+			PassengerID:     "passenger-1",
+			DriverID:        "driver-1",
+			SeatsBooked:     2,
+			UnitPrice:       1500.0,
+			PaymentIntentID: &intentRef,
+			TTL:             15 * time.Minute,
 		})
 
 		trip := createTestTrip("driver-1", 1, 48)
@@ -189,6 +191,7 @@ func TestBookingService_ConfirmBookingPayment(t *testing.T) {
 
 		res, err := service.ConfirmBookingPayment(ctx, ports.ConfirmBookingPaymentInput{
 			BookingID:         "booking-abc",
+			RequestingUserID:  "passenger-1",
 			PaymentGatewayRef: "pi_gateway_ref_999",
 		})
 
@@ -201,6 +204,122 @@ func TestBookingService_ConfirmBookingPayment(t *testing.T) {
 		bookingRepo.AssertExpectations(t)
 	})
 
+	t.Run("rechaza confirmación si el solicitante no es el pasajero de la reserva (ErrUnauthorized)", func(t *testing.T) {
+		tripRepo := new(MockTripRepository)
+		bookingRepo := new(MockBookingRepository)
+		escrowRepo := new(MockEscrowRepository)
+		userRepo := new(MockUserRepository)
+		vehicleRepo := new(MockVehicleRepository)
+		gateway := new(MockPaymentGateway)
+		notifier := new(MockNotifier)
+
+		intentRef := "pi_gateway_ref_999"
+		booking, _ := domain.NewBooking(domain.BookingParams{
+			ID:              "booking-abc",
+			TripID:          "trip-100",
+			PassengerID:     "passenger-1",
+			DriverID:        "driver-1",
+			SeatsBooked:     2,
+			UnitPrice:       1500.0,
+			PaymentIntentID: &intentRef,
+			TTL:             15 * time.Minute,
+		})
+
+		bookingRepo.On("FindByID", ctx, "booking-abc").Return(booking, nil)
+
+		service := services.NewBookingService(bookingRepo, escrowRepo, tripRepo, userRepo, vehicleRepo, gateway, notifier)
+
+		// Un atacante u otro usuario intenta confirmar la reserva
+		res, err := service.ConfirmBookingPayment(ctx, ports.ConfirmBookingPaymentInput{
+			BookingID:         "booking-abc",
+			RequestingUserID:  "attacker-or-wrong-user",
+			PaymentGatewayRef: "pi_gateway_ref_999",
+		})
+
+		assert.Nil(t, res)
+		assert.ErrorIs(t, err, domain.ErrUnauthorized)
+	})
+
+	t.Run("rechaza confirmación si la referencia de pasarela no coincide con el PaymentIntentID de la reserva", func(t *testing.T) {
+		tripRepo := new(MockTripRepository)
+		bookingRepo := new(MockBookingRepository)
+		escrowRepo := new(MockEscrowRepository)
+		userRepo := new(MockUserRepository)
+		vehicleRepo := new(MockVehicleRepository)
+		gateway := new(MockPaymentGateway)
+		notifier := new(MockNotifier)
+
+		intentRef := "pi_legitimate_intent_123"
+		booking, _ := domain.NewBooking(domain.BookingParams{
+			ID:              "booking-abc",
+			TripID:          "trip-100",
+			PassengerID:     "passenger-1",
+			DriverID:        "driver-1",
+			SeatsBooked:     2,
+			UnitPrice:       1500.0,
+			PaymentIntentID: &intentRef,
+			TTL:             15 * time.Minute,
+		})
+
+		bookingRepo.On("FindByID", ctx, "booking-abc").Return(booking, nil)
+
+		service := services.NewBookingService(bookingRepo, escrowRepo, tripRepo, userRepo, vehicleRepo, gateway, notifier)
+
+		// Envía un payment reference de otra transacción
+		res, err := service.ConfirmBookingPayment(ctx, ports.ConfirmBookingPaymentInput{
+			BookingID:         "booking-abc",
+			RequestingUserID:  "passenger-1",
+			PaymentGatewayRef: "pi_forged_or_different_ref",
+		})
+
+		assert.Nil(t, res)
+		assert.ErrorIs(t, err, domain.ErrInvalidPaymentGatewayRef)
+	})
+
+	t.Run("confirma exitosamente cuando la confirmación proviene de un webhook firmado por la pasarela", func(t *testing.T) {
+		tripRepo := new(MockTripRepository)
+		bookingRepo := new(MockBookingRepository)
+		escrowRepo := new(MockEscrowRepository)
+		userRepo := new(MockUserRepository)
+		vehicleRepo := new(MockVehicleRepository)
+		gateway := new(MockPaymentGateway)
+		notifier := new(MockNotifier)
+
+		intentRef := "pi_webhook_ref_777"
+		booking, _ := domain.NewBooking(domain.BookingParams{
+			ID:              "booking-webhook-test",
+			TripID:          "trip-100",
+			PassengerID:     "passenger-1",
+			DriverID:        "driver-1",
+			SeatsBooked:     1,
+			UnitPrice:       1500.0,
+			PaymentIntentID: &intentRef,
+			TTL:             15 * time.Minute,
+		})
+
+		trip := createTestTrip("driver-1", 1, 48)
+
+		bookingRepo.On("FindByID", ctx, "booking-webhook-test").Return(booking, nil)
+		gateway.On("ConfirmPayment", ctx, "pi_webhook_ref_777").Return(true, nil)
+		bookingRepo.On("UpdateStatus", ctx, "booking-webhook-test", domain.BookingStatusConfirmed, (*string)(nil)).Return(nil)
+		tripRepo.On("FindByID", ctx, "trip-100").Return(trip, nil)
+		escrowRepo.On("CreateEscrow", ctx, mock.AnythingOfType("*domain.EscrowTransaction")).Return(nil)
+		notifier.On("SendResolutionNotification", ctx, mock.Anything).Return(nil)
+		userRepo.On("GetByID", ctx, "driver-1").Return(&domain.User{FirstName: "Carlos", LastName: "Gomez"}, nil)
+		vehicleRepo.On("GetByID", ctx, "vehicle-100").Return(nil, nil)
+
+		service := services.NewBookingService(bookingRepo, escrowRepo, tripRepo, userRepo, vehicleRepo, gateway, notifier)
+
+		res, err := service.ConfirmBookingPayment(ctx, ports.ConfirmBookingPaymentInput{
+			BookingID:         "booking-webhook-test",
+			PaymentGatewayRef: "pi_webhook_ref_777",
+			IsWebhook:         true,
+		})
+
+		require.NoError(t, err)
+		assert.Equal(t, domain.BookingStatusConfirmed, res.Status)
+	})
+
 	t.Run("rechaza confirmación si la reserva expiró por exceder los 15 minutos de TTL", func(t *testing.T) {
 		tripRepo := new(MockTripRepository)
 		bookingRepo := new(MockBookingRepository)
@@ -211,14 +330,16 @@ func TestBookingService_ConfirmBookingPayment(t *testing.T) {
 		notifier := new(MockNotifier)
 
 		// Booking expirado
+		intentRef := "pi_gateway_ref"
 		booking, _ := domain.NewBooking(domain.BookingParams{
-			ID:          "booking-expired",
-			TripID:      "trip-100",
-			PassengerID: "passenger-1",
-			DriverID:    "driver-1",
-			SeatsBooked: 1,
-			UnitPrice:   1500.0,
-			TTL:         1 * time.Nanosecond, // Expirado de inmediato
+			ID:              "booking-expired",
+			TripID:          "trip-100",
+			PassengerID:     "passenger-1",
+			DriverID:        "driver-1",
+			SeatsBooked:     1,
+			UnitPrice:       1500.0,
+			PaymentIntentID: &intentRef,
+			TTL:             1 * time.Nanosecond, // Expirado de inmediato
 		})
 		time.Sleep(10 * time.Millisecond)
 
@@ -228,6 +349,7 @@ func TestBookingService_ConfirmBookingPayment(t *testing.T) {
 
 		res, err := service.ConfirmBookingPayment(ctx, ports.ConfirmBookingPaymentInput{
 			BookingID:         "booking-expired",
+			RequestingUserID:  "passenger-1",
 			PaymentGatewayRef: "pi_gateway_ref",
 		})
 
