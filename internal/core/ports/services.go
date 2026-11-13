@@ -90,7 +90,7 @@ type CreateTripInput struct {
 	DestinationCoords domain.Coordinates    `json:"destination_coords"`
 	DepartureTime     string                `json:"departure_time"` // ISO 8601 / RFC3339
 	SeatsOffered      int                   `json:"seats_offered"`
-	PricePerSeat      float64               `json:"price_per_seat"`
+	PricePerSeat      domain.Money          `json:"price_per_seat"`
 	Stops             []CreateTripStopInput `json:"stops,omitempty"`
 }
 
@@ -121,10 +121,11 @@ type TripSearchResult struct {
 	TotalDistanceKm      float64           `json:"total_distance_km"`
 	TotalDurationMinutes int               `json:"total_duration_minutes"`
 	AvailableSeats       int               `json:"available_seats"`
-	PricePerSeat         float64           `json:"price_per_seat"`
-	CapPricePerSeat      float64           `json:"cap_price_per_seat"`
+	PricePerSeat         domain.Money      `json:"price_per_seat"`
+	CapPricePerSeat      domain.Money      `json:"cap_price_per_seat"`
 	PickupWalkDistanceM  float64           `json:"pickup_walk_distance_m"`
 	DropoffWalkDistanceM float64           `json:"dropoff_walk_distance_m"`
+	RoutePreviewPolyline string            `json:"route_preview_polyline,omitempty"`
 	Status               domain.TripStatus `json:"status"`
 }
 
@@ -188,8 +189,8 @@ type BookingDTO struct {
 	TripID             string               `json:"trip_id"`
 	PassengerID        string               `json:"passenger_id"`
 	SeatsBooked        int                  `json:"seats_booked"`
-	UnitPrice          float64              `json:"unit_price"`
-	TotalPrice         float64              `json:"total_price"`
+	UnitPrice          domain.Money         `json:"unit_price"`
+	TotalPrice         domain.Money         `json:"total_price"`
 	Status             domain.BookingStatus `json:"status"`
 	PickupStopID       *string              `json:"pickup_stop_id,omitempty"`
 	DropoffStopID      *string              `json:"dropoff_stop_id,omitempty"`

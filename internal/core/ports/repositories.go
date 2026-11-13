@@ -73,9 +73,21 @@ type MatchedTripRecord struct {
 	VehicleBrand         string      `json:"vehicle_brand"`
 	VehicleModel         string      `json:"vehicle_model"`
 	VehiclePlate         string      `json:"vehicle_plate"`
+	RoutePreviewPolyline string      `json:"route_preview_polyline,omitempty"`
 	PickupWalkDistanceM  float64     `json:"pickup_walk_distance_m"`
 	DropoffWalkDistanceM float64     `json:"dropoff_walk_distance_m"`
 }
+
+// TransactionManager (UnitOfWork / TxManager) ejecuta múltiples operaciones de repositorio dentro de una única transacción atómica de base de datos
+type TransactionManager interface {
+	WithinTransaction(ctx context.Context, fn func(txCtx context.Context) error) error
+}
+
+// UnitOfWork es un alias semántico de TransactionManager para coordinar unidades de trabajo ACID en servicios
+type UnitOfWork = TransactionManager
+
+// TxManager es un alias abreviado de TransactionManager
+type TxManager = TransactionManager
 
 // TripRepository define el contrato de persistencia y consultas geoespaciales en PostGIS
 type TripRepository interface {
@@ -83,6 +95,7 @@ type TripRepository interface {
 	FindByID(ctx context.Context, id string) (*domain.Trip, error)
 	SearchMatchingTrips(ctx context.Context, params SearchTripsParams) ([]MatchedTripRecord, error)
 	UpdateStatus(ctx context.Context, tripID string, newStatus domain.TripStatus) error
+	ReleaseSeats(ctx context.Context, tripID string, seats int) error
 	ListByDriverID(ctx context.Context, driverID string, limit, offset int) ([]*domain.Trip, error)
 }
 
@@ -96,6 +109,9 @@ type BookingRepository interface {
 	UpdatePaymentIntent(ctx context.Context, bookingID, intentID string) error
 	GetActiveBookingsByTrip(ctx context.Context, tripID string) ([]*domain.Booking, error)
 	GetPassengerBookings(ctx context.Context, passengerID string, limit, offset int) ([]*domain.Booking, error)
+	// CheckPassengerBookingConstraints verifica en una sola consulta JOIN (bookings + trips) el solapamiento horario (tstzrange &&)
+	// y contabiliza las reservas PENDING_PAYMENT activas sin límite de paginación.
+	CheckPassengerBookingConstraints(ctx context.Context, passengerID, targetTripID string, departureTime, estimatedArrival, now time.Time) (hasOverlap bool, activePendingCount int, err error)
 	// ExpirePendingBookings transiciona reservas vencidas y reintegra los asientos al viaje
 	ExpirePendingBookings(ctx context.Context, now time.Time) (int, error)
 }

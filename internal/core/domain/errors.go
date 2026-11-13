@@ -27,6 +27,7 @@ var (
 	ErrLivenessCheckFailed         = errors.New("liveness check failed")
 	ErrDriverKYCRequired           = errors.New("driver kyc required")
 	ErrDriverNotActive             = errors.New("driver not active")
+	ErrDriverPhoneRequired         = errors.New("driver phone number is required")
 	ErrMaxRetriesExceeded          = errors.New("max retries exceeded")
 	ErrVehicleNotFound             = errors.New("vehicle not found")
 	ErrVehicleAlreadyExists        = errors.New("vehicle already exists")
@@ -75,7 +76,8 @@ var (
 	ErrIdentityNotFound            = errors.New("identity not found")
 	ErrIdentityAlreadyExists        = errors.New("identity already exists")
 	ErrUnverifiedEmail             = errors.New("unverified email cannot be linked")
-	ErrIdentityAlreadyLinked       = errors.New("identity already linked to another account")
 	ErrInvalidPaymentGatewayRef    = errors.New("payment gateway reference does not match booking payment intent")
+	ErrMaxPendingBookingsExceeded  = errors.New("maximum number of active pending bookings exceeded; please complete payment or cancel existing pending bookings")
+	ErrRateLimitExceeded           = errors.New("rate limit exceeded; too many requests")
 )
 

@@ -18,7 +18,7 @@ func TestBooking_CreationAndInvariants(t *testing.T) {
 			PassengerID: "passenger-789",
 			DriverID:    "driver-001",
 			SeatsBooked: 2,
-			UnitPrice:   1500.0,
+			UnitPrice:   domain.Money(150000),
 			TTL:         15 * time.Minute,
 		}
 
@@ -28,8 +28,8 @@ func TestBooking_CreationAndInvariants(t *testing.T) {
 		assert.Equal(t, "trip-456", b.TripID)
 		assert.Equal(t, "passenger-789", b.PassengerID)
 		assert.Equal(t, 2, b.SeatsBooked)
-		assert.Equal(t, 1500.0, b.UnitPrice)
-		assert.Equal(t, 3000.0, b.TotalPrice)
+		assert.Equal(t, domain.Money(150000), b.UnitPrice)
+		assert.Equal(t, domain.Money(300000), b.TotalPrice)
 		assert.Equal(t, domain.BookingStatusPendingPayment, b.Status)
 		assert.True(t, b.IsActive())
 		assert.WithinDuration(t, now.Add(15*time.Minute), b.ExpiresAt, 2*time.Second)
@@ -42,7 +42,7 @@ func TestBooking_CreationAndInvariants(t *testing.T) {
 			PassengerID: "user-same",
 			DriverID:    "user-same",
 			SeatsBooked: 1,
-			UnitPrice:   1500.0,
+			UnitPrice:   domain.Money(150000),
 		}
 
 		b, err := domain.NewBooking(params)
@@ -57,7 +57,7 @@ func TestBooking_CreationAndInvariants(t *testing.T) {
 			PassengerID: "passenger-789",
 			DriverID:    "driver-001",
 			SeatsBooked: 0,
-			UnitPrice:   1500.0,
+			UnitPrice:   domain.Money(150000),
 		}
 
 		b, err := domain.NewBooking(params)
@@ -72,7 +72,7 @@ func TestBooking_CreationAndInvariants(t *testing.T) {
 			PassengerID: "passenger-789",
 			DriverID:    "driver-001",
 			SeatsBooked: 1,
-			UnitPrice:   -100.0,
+			UnitPrice:   domain.Money(-10000),
 		}
 
 		b, err := domain.NewBooking(params)
@@ -89,7 +89,7 @@ func TestBooking_LifeCycleTransitions(t *testing.T) {
 			PassengerID: "passenger-1",
 			DriverID:    "driver-1",
 			SeatsBooked: 1,
-			UnitPrice:   2000.0,
+			UnitPrice:   domain.Money(200000),
 			TTL:         ttl,
 		})
 		return b
@@ -180,13 +180,13 @@ func TestEscrow_Lifecycle(t *testing.T) {
 			"trip-1",
 			"passenger-1",
 			"driver-1",
-			5000.0,
+			domain.Money(500000),
 			"ARS",
 			"pay_intent_999",
 		)
 		require.NoError(t, err)
 		assert.Equal(t, domain.EscrowStatusHeld, escrow.Status)
-		assert.Equal(t, 5000.0, escrow.Amount)
+		assert.Equal(t, domain.Money(500000), escrow.Amount)
 
 		// Liberar fondos al conductor al finalizar viaje
 		errRelease := escrow.Release(now.Add(3 * time.Hour))
@@ -207,7 +207,7 @@ func TestEscrow_Lifecycle(t *testing.T) {
 			"trip-2",
 			"passenger-2",
 			"driver-2",
-			3500.0,
+			domain.Money(350000),
 			"USD",
 			"pay_intent_888",
 		)
@@ -227,7 +227,7 @@ func TestEscrow_Lifecycle(t *testing.T) {
 
 func TestEscrow_CalculateCancellationRefund(t *testing.T) {
 	departureTime := time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC)
-	totalAmount := 10000.0 // ARS
+	totalAmount := domain.Money(1000000) // $10000.00 ARS
 
 	t.Run("cancelación por conductor otorga 100% de reembolso al pasajero", func(t *testing.T) {
 		cancellationTime := departureTime.Add(-2 * time.Hour) // Menos de 24hs pero es el conductor quien cancela
@@ -238,8 +238,8 @@ func TestEscrow_CalculateCancellationRefund(t *testing.T) {
 			true, // isDriverCancellation
 		)
 
-		assert.Equal(t, 10000.0, passengerRefund)
-		assert.Equal(t, 0.0, driverComp)
+		assert.Equal(t, domain.Money(1000000), passengerRefund)
+		assert.Equal(t, domain.Money(0), driverComp)
 		assert.Equal(t, domain.RefundTypeDriverCancellation, refundType)
 		assert.Equal(t, totalAmount, passengerRefund+driverComp)
 	})
@@ -253,8 +253,8 @@ func TestEscrow_CalculateCancellationRefund(t *testing.T) {
 			false, // passenger
 		)
 
-		assert.Equal(t, 10000.0, passengerRefund)
-		assert.Equal(t, 0.0, driverComp)
+		assert.Equal(t, domain.Money(1000000), passengerRefund)
+		assert.Equal(t, domain.Money(0), driverComp)
 		assert.Equal(t, domain.RefundTypePassengerEarly, refundType)
 		assert.Equal(t, totalAmount, passengerRefund+driverComp)
 	})
@@ -268,8 +268,8 @@ func TestEscrow_CalculateCancellationRefund(t *testing.T) {
 			false, // passenger
 		)
 
-		assert.Equal(t, 5000.0, passengerRefund)
-		assert.Equal(t, 5000.0, driverComp)
+		assert.Equal(t, domain.Money(500000), passengerRefund)
+		assert.Equal(t, domain.Money(500000), driverComp)
 		assert.Equal(t, domain.RefundTypePassengerLate, refundType)
 		assert.Equal(t, totalAmount, passengerRefund+driverComp)
 	})
@@ -279,14 +279,14 @@ func TestEscrow_CalculateCancellationRefund(t *testing.T) {
 			"refund-1",
 			"escrow-1",
 			"booking-1",
-			5000.0,
-			5000.0,
+			domain.Money(500000),
+			domain.Money(500000),
 			domain.RefundTypePassengerLate,
 			"re_gateway_123",
 		)
 		require.NoError(t, err)
-		assert.Equal(t, 5000.0, refund.PassengerRefundAmount)
-		assert.Equal(t, 5000.0, refund.DriverCompensationAmount)
+		assert.Equal(t, domain.Money(500000), refund.PassengerRefundAmount)
+		assert.Equal(t, domain.Money(500000), refund.DriverCompensationAmount)
 		assert.Equal(t, domain.RefundTypePassengerLate, refund.RefundType)
 
 		// Falla si los montos de reembolso son negativos o cero

@@ -226,6 +226,36 @@ func TestBookingHandler_CreateBooking(t *testing.T) {
 		assert.Equal(t, "OVERLAPPING_TRIP_BOOKING", resp["code"])
 	})
 
+	t.Run("falla con 429 Too Many Requests si el pasajero excede el límite de reservas pendientes activas", func(t *testing.T) {
+		mockSvc := new(MockBookingService)
+		router := setupBookingTestRouter(mockSvc, "passenger-123")
+
+		body := adapterHttp.CreateBookingRequest{
+			TripID:         "trip-rate",
+			SeatsRequested: 1,
+		}
+		jsonBytes, _ := json.Marshal(body)
+
+		mockSvc.On("CreateBooking", mock.Anything, ports.CreateBookingInput{
+			TripID:         "trip-rate",
+			PassengerID:    "passenger-123",
+			SeatsRequested: 1,
+		}).Return(nil, domain.ErrMaxPendingBookingsExceeded)
+
+		req, _ := http.NewRequest(http.MethodPost, "/api/v1/bookings", bytes.NewBuffer(jsonBytes))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer valid-token")
+
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusTooManyRequests, w.Code)
+		var resp map[string]any
+		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		require.NoError(t, err)
+		assert.Equal(t, "MAX_PENDING_BOOKINGS_EXCEEDED", resp["code"])
+	})
+
 	t.Run("crea exitosamente la reserva con 201 Created y orden de pago en pasarela", func(t *testing.T) {
 		mockSvc := new(MockBookingService)
 		router := setupBookingTestRouter(mockSvc, "passenger-123")
@@ -241,14 +271,14 @@ func TestBookingHandler_CreateBooking(t *testing.T) {
 			TripID:      "trip-ok",
 			PassengerID: "passenger-123",
 			SeatsBooked: 2,
-			UnitPrice:   1500.0,
-			TotalPrice:  3000.0,
+			UnitPrice:   domain.Money(150000),
+			TotalPrice:  domain.Money(300000),
 			Status:      domain.BookingStatusPendingPayment,
 			ExpiresAt:   time.Now().Add(15 * time.Minute).Format(time.RFC3339),
 			PaymentIntent: &ports.PaymentIntentResult{
 				GatewayRef:   "pi_mock_12345",
 				ClientSecret: "pi_mock_12345_secret_abc",
-				Amount:       3000.0,
+				Amount:       domain.Money(300000),
 				Currency:     "USD",
 				Status:       "requires_payment_method",
 			},
@@ -275,7 +305,7 @@ func TestBookingHandler_CreateBooking(t *testing.T) {
 		bookingData := resp["booking"].(map[string]any)
 		assert.Equal(t, "booking-999", bookingData["id"])
 		assert.Equal(t, "PENDING_PAYMENT", bookingData["status"])
-		assert.Equal(t, float64(3000), bookingData["total_price"])
+		assert.Equal(t, float64(300000), bookingData["total_price"])
 	})
 }
 
@@ -289,7 +319,7 @@ func TestBookingHandler_ConfirmPayment(t *testing.T) {
 			TripID:      "trip-ok",
 			PassengerID: "passenger-123",
 			SeatsBooked: 2,
-			TotalPrice:  3000.0,
+			TotalPrice:  domain.Money(300000),
 			Status:      domain.BookingStatusConfirmed,
 		}
 
@@ -445,7 +475,7 @@ func TestBookingHandler_ConfirmPayment(t *testing.T) {
 			TripID:      "trip-1",
 			PassengerID: "passenger-123",
 			SeatsBooked: 2,
-			TotalPrice:  3000.0,
+			TotalPrice:  domain.Money(300000),
 			Status:      domain.BookingStatusConfirmed,
 		}
 
@@ -459,7 +489,7 @@ func TestBookingHandler_ConfirmPayment(t *testing.T) {
 			Event:             "payment_intent.succeeded",
 			BookingID:         "booking-webhook-ok",
 			PaymentGatewayRef: "pi_gateway_webhook_ref",
-			Amount:            3000.0,
+			Amount:            domain.Money(300000),
 			Currency:          "USD",
 		}
 		jsonBytes, _ := json.Marshal(webhookBody)
@@ -489,8 +519,8 @@ func TestBookingHandler_CancelBooking(t *testing.T) {
 			ID:                       "ref-001",
 			EscrowTransactionID:      "esc-001",
 			BookingID:                "booking-123",
-			PassengerRefundAmount:    3000.0,
-			DriverCompensationAmount: 0.0,
+			PassengerRefundAmount:    domain.Money(300000),
+			DriverCompensationAmount: domain.Money(0),
 			RefundType:               domain.RefundTypePassengerEarly,
 			GatewayRefundRef:         "re_mock_12345",
 			ProcessedAt:              time.Now().UTC(),
@@ -557,7 +587,7 @@ func TestBookingHandler_GetBookingByID(t *testing.T) {
 			TripID:      "trip-456",
 			PassengerID: "passenger-123",
 			SeatsBooked: 2,
-			TotalPrice:  3000.0,
+			TotalPrice:  domain.Money(300000),
 			Status:      domain.BookingStatusConfirmed,
 		}
 
@@ -603,7 +633,7 @@ func TestBookingHandler_MyBookings(t *testing.T) {
 				TripID:      "trip-10",
 				PassengerID: "passenger-123",
 				SeatsBooked: 1,
-				TotalPrice:  1500.0,
+				TotalPrice:  domain.Money(150000),
 				Status:      domain.BookingStatusConfirmed,
 			},
 			{
@@ -611,7 +641,7 @@ func TestBookingHandler_MyBookings(t *testing.T) {
 				TripID:      "trip-20",
 				PassengerID: "passenger-123",
 				SeatsBooked: 2,
-				TotalPrice:  3000.0,
+				TotalPrice:  domain.Money(300000),
 				Status:      domain.BookingStatusPendingPayment,
 			},
 		}
@@ -711,6 +741,26 @@ func TestBookingHandler_GetContactLink(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, expectedDTO.WhatsAppURL, resp["whatsapp_url"])
 		assert.Equal(t, expectedDTO.DriverPhone, resp["driver_phone"])
+	})
+
+	t.Run("retorna 422 Unprocessable Entity si el conductor no posee teléfono registrado", func(t *testing.T) {
+		mockSvc := new(MockBookingService)
+		router := setupBookingTestRouter(mockSvc, "passenger-123")
+
+		mockSvc.On("GetContactLink", mock.Anything, "booking-1", "passenger-123").
+			Return(nil, domain.ErrDriverPhoneRequired)
+
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/bookings/booking-1/contact-link", nil)
+		req.Header.Set("Authorization", "Bearer valid-token")
+
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+		var resp map[string]any
+		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		require.NoError(t, err)
+		assert.Equal(t, "DRIVER_PHONE_REQUIRED", resp["code"])
 	})
 }
 

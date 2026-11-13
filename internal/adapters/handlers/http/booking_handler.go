@@ -36,11 +36,11 @@ type ConfirmPaymentRequest struct {
 
 // PaymentWebhookRequest payload para la notificación asíncrona de eventos de pago de la pasarela
 type PaymentWebhookRequest struct {
-	Event             string  `json:"event"`
-	BookingID         string  `json:"booking_id" binding:"required"`
-	PaymentGatewayRef string  `json:"payment_gateway_ref" binding:"required"`
-	Amount            float64 `json:"amount,omitempty"`
-	Currency          string  `json:"currency,omitempty"`
+	Event             string       `json:"event"`
+	BookingID         string       `json:"booking_id" binding:"required"`
+	PaymentGatewayRef string       `json:"payment_gateway_ref" binding:"required"`
+	Amount            domain.Money `json:"amount,omitempty"`
+	Currency          string       `json:"currency,omitempty"`
 }
 
 // CancelBookingRequest payload opcional con el motivo de cancelación
@@ -54,8 +54,9 @@ func (h *BookingHandler) CreateBooking(c *gin.Context) {
 	passengerID, exists := middleware.GetUserID(c)
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "usuario no autenticado",
-			"code":  "UNAUTHORIZED",
+			"error":      "usuario no autenticado",
+			"code":       "UNAUTHORIZED",
+			"request_id": middleware.GetRequestID(c),
 		})
 		return
 	}
@@ -63,9 +64,9 @@ func (h *BookingHandler) CreateBooking(c *gin.Context) {
 	var req CreateBookingRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "parámetros de reserva inválidos",
-			"code":    "BAD_REQUEST",
-			"details": err.Error(),
+			"error":      "parámetros de reserva inválidos",
+			"code":       "BAD_REQUEST",
+			"request_id": middleware.GetRequestID(c),
 		})
 		return
 	}
@@ -82,44 +83,54 @@ func (h *BookingHandler) CreateBooking(c *gin.Context) {
 		switch {
 		case errors.Is(err, domain.ErrCannotBookOwnTrip):
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "un conductor no puede reservar plazas en su propio viaje",
-				"code":  "CANNOT_BOOK_OWN_TRIP",
+				"error":      "un conductor no puede reservar plazas en su propio viaje",
+				"code":       "CANNOT_BOOK_OWN_TRIP",
+				"request_id": middleware.GetRequestID(c),
 			})
 		case errors.Is(err, domain.ErrInsufficientSeats):
 			c.JSON(http.StatusConflict, gin.H{
-				"error": "no hay suficientes asientos disponibles para la cantidad solicitada",
-				"code":  "INSUFFICIENT_SEATS",
+				"error":      "no hay suficientes asientos disponibles para la cantidad solicitada",
+				"code":       "INSUFFICIENT_SEATS",
+				"request_id": middleware.GetRequestID(c),
 			})
 		case errors.Is(err, domain.ErrOverlappingTripBooking):
 			c.JSON(http.StatusUnprocessableEntity, gin.H{
-				"error": "el pasajero ya posee una reserva activa en este viaje",
-				"code":  "OVERLAPPING_TRIP_BOOKING",
+				"error":      "el pasajero ya posee una reserva activa en este viaje",
+				"code":       "OVERLAPPING_TRIP_BOOKING",
+				"request_id": middleware.GetRequestID(c),
 			})
 		case errors.Is(err, domain.ErrInvalidSeatCount):
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "la cantidad de asientos solicitados debe ser mayor a cero",
-				"code":  "INVALID_SEAT_COUNT",
+				"error":      "la cantidad de asientos solicitados debe ser mayor a cero",
+				"code":       "INVALID_SEAT_COUNT",
+				"request_id": middleware.GetRequestID(c),
 			})
 		case errors.Is(err, domain.ErrTripNotFound):
 			c.JSON(http.StatusNotFound, gin.H{
-				"error": "viaje no encontrado",
-				"code":  "TRIP_NOT_FOUND",
+				"error":      "viaje no encontrado",
+				"code":       "TRIP_NOT_FOUND",
+				"request_id": middleware.GetRequestID(c),
 			})
 		case errors.Is(err, domain.ErrInvalidTripStatusChange):
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "el viaje no se encuentra disponible para reservas",
-				"code":  "TRIP_NOT_AVAILABLE",
+				"error":      "el viaje no se encuentra disponible para reservas",
+				"code":       "TRIP_NOT_AVAILABLE",
+				"request_id": middleware.GetRequestID(c),
 			})
 		case errors.Is(err, domain.ErrPaymentFailed):
 			c.JSON(http.StatusBadGateway, gin.H{
-				"error": "fallo al generar la intención de pago en la pasarela externa",
-				"code":  "PAYMENT_GATEWAY_ERROR",
+				"error":      "fallo al generar la intención de pago en la pasarela externa",
+				"code":       "PAYMENT_GATEWAY_ERROR",
+				"request_id": middleware.GetRequestID(c),
+			})
+		case errors.Is(err, domain.ErrMaxPendingBookingsExceeded):
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error":      "has alcanzado el límite máximo permitido de 3 reservas pendientes de pago simultáneas",
+				"code":       "MAX_PENDING_BOOKINGS_EXCEEDED",
+				"request_id": middleware.GetRequestID(c),
 			})
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": "error interno al procesar la reserva",
-				"code":  "INTERNAL_SERVER_ERROR",
-			})
+			HandleError(c, err)
 		}
 		return
 	}
@@ -135,8 +146,9 @@ func (h *BookingHandler) ConfirmPayment(c *gin.Context) {
 	userID, exists := middleware.GetUserID(c)
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "usuario no autenticado",
-			"code":  "UNAUTHORIZED",
+			"error":      "usuario no autenticado",
+			"code":       "UNAUTHORIZED",
+			"request_id": middleware.GetRequestID(c),
 		})
 		return
 	}
@@ -144,8 +156,9 @@ func (h *BookingHandler) ConfirmPayment(c *gin.Context) {
 	bookingID := strings.TrimSpace(c.Param("id"))
 	if bookingID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "id de reserva requerido",
-			"code":  "BAD_REQUEST",
+			"error":      "id de reserva requerido",
+			"code":       "BAD_REQUEST",
+			"request_id": middleware.GetRequestID(c),
 		})
 		return
 	}
@@ -153,9 +166,9 @@ func (h *BookingHandler) ConfirmPayment(c *gin.Context) {
 	var req ConfirmPaymentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "parámetros de confirmación inválidos",
-			"code":    "BAD_REQUEST",
-			"details": err.Error(),
+			"error":      "parámetros de confirmación inválidos",
+			"code":       "BAD_REQUEST",
+			"request_id": middleware.GetRequestID(c),
 		})
 		return
 	}
@@ -171,39 +184,42 @@ func (h *BookingHandler) ConfirmPayment(c *gin.Context) {
 		switch {
 		case errors.Is(err, domain.ErrBookingNotFound):
 			c.JSON(http.StatusNotFound, gin.H{
-				"error": "reserva no encontrada",
-				"code":  "BOOKING_NOT_FOUND",
+				"error":      "reserva no encontrada",
+				"code":       "BOOKING_NOT_FOUND",
+				"request_id": middleware.GetRequestID(c),
 			})
 		case errors.Is(err, domain.ErrUnauthorized):
 			c.JSON(http.StatusForbidden, gin.H{
-				"error": "no tienes autorización para confirmar el pago de esta reserva (solo el pasajero puede confirmar)",
-				"code":  "FORBIDDEN",
+				"error":      "no tienes autorización para confirmar el pago de esta reserva (solo el pasajero puede confirmar)",
+				"code":       "FORBIDDEN",
+				"request_id": middleware.GetRequestID(c),
 			})
 		case errors.Is(err, domain.ErrInvalidPaymentGatewayRef):
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "la referencia de pago provista no coincide con la intención creada para esta reserva",
-				"code":  "INVALID_PAYMENT_INTENT",
+				"error":      "la referencia de pago provista no coincide con la intención creada para esta reserva",
+				"code":       "INVALID_PAYMENT_INTENT",
+				"request_id": middleware.GetRequestID(c),
 			})
 		case errors.Is(err, domain.ErrBookingExpired):
 			c.JSON(http.StatusGone, gin.H{
-				"error": "el tiempo límite de retención (15 min) ha expirado; los asientos fueron liberados",
-				"code":  "BOOKING_EXPIRED",
+				"error":      "el tiempo límite de retención (15 min) ha expirado; los asientos fueron liberados",
+				"code":       "BOOKING_EXPIRED",
+				"request_id": middleware.GetRequestID(c),
 			})
 		case errors.Is(err, domain.ErrInvalidBookingStatus):
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "la reserva no se encuentra en estado pendiente de pago",
-				"code":  "INVALID_BOOKING_STATUS",
+				"error":      "la reserva no se encuentra en estado pendiente de pago",
+				"code":       "INVALID_BOOKING_STATUS",
+				"request_id": middleware.GetRequestID(c),
 			})
 		case errors.Is(err, domain.ErrPaymentFailed):
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "la pasarela de pagos no confirmó la captura de la transacción",
-				"code":  "PAYMENT_CONFIRMATION_FAILED",
+				"error":      "la pasarela de pagos no confirmó la captura de la transacción",
+				"code":       "PAYMENT_CONFIRMATION_FAILED",
+				"request_id": middleware.GetRequestID(c),
 			})
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": "error interno al confirmar el pago de la reserva",
-				"code":  "INTERNAL_SERVER_ERROR",
-			})
+			HandleError(c, err)
 		}
 		return
 	}
@@ -219,9 +235,9 @@ func (h *BookingHandler) ProcessPaymentWebhook(c *gin.Context) {
 	var req PaymentWebhookRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "payload de webhook de pagos inválido",
-			"code":    "BAD_REQUEST",
-			"details": err.Error(),
+			"error":      "payload de webhook de pagos inválido",
+			"code":       "BAD_REQUEST",
+			"request_id": middleware.GetRequestID(c),
 		})
 		return
 	}
@@ -236,18 +252,21 @@ func (h *BookingHandler) ProcessPaymentWebhook(c *gin.Context) {
 		switch {
 		case errors.Is(err, domain.ErrBookingNotFound):
 			c.JSON(http.StatusNotFound, gin.H{
-				"error": "reserva no encontrada para el evento de pago",
-				"code":  "BOOKING_NOT_FOUND",
+				"error":      "reserva no encontrada para el evento de pago",
+				"code":       "BOOKING_NOT_FOUND",
+				"request_id": middleware.GetRequestID(c),
 			})
 		case errors.Is(err, domain.ErrInvalidPaymentGatewayRef):
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "la referencia de pago provista en el webhook no coincide con el intent de la reserva",
-				"code":  "INVALID_PAYMENT_INTENT",
+				"error":      "la referencia de pago provista en el webhook no coincide con el intent de la reserva",
+				"code":       "INVALID_PAYMENT_INTENT",
+				"request_id": middleware.GetRequestID(c),
 			})
 		case errors.Is(err, domain.ErrBookingExpired):
 			c.JSON(http.StatusGone, gin.H{
-				"error": "la reserva ha expirado antes de confirmarse el pago",
-				"code":  "BOOKING_EXPIRED",
+				"error":      "la reserva ha expirado antes de confirmarse el pago",
+				"code":       "BOOKING_EXPIRED",
+				"request_id": middleware.GetRequestID(c),
 			})
 		case errors.Is(err, domain.ErrInvalidBookingStatus):
 			// Idempotencia: si ya está confirmada, responder 200 OK con mensaje informativo
@@ -257,14 +276,12 @@ func (h *BookingHandler) ProcessPaymentWebhook(c *gin.Context) {
 			})
 		case errors.Is(err, domain.ErrPaymentFailed):
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "la pasarela de pagos no confirmó la captura del cobro",
-				"code":  "PAYMENT_FAILED",
+				"error":      "la pasarela de pagos no confirmó la captura del cobro",
+				"code":       "PAYMENT_FAILED",
+				"request_id": middleware.GetRequestID(c),
 			})
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": "error interno procesando webhook de pago",
-				"code":  "INTERNAL_SERVER_ERROR",
-			})
+			HandleError(c, err)
 		}
 		return
 	}
@@ -281,8 +298,9 @@ func (h *BookingHandler) CancelBooking(c *gin.Context) {
 	requestingUserID, exists := middleware.GetUserID(c)
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "usuario no autenticado",
-			"code":  "UNAUTHORIZED",
+			"error":      "usuario no autenticado",
+			"code":       "UNAUTHORIZED",
+			"request_id": middleware.GetRequestID(c),
 		})
 		return
 	}
@@ -290,8 +308,9 @@ func (h *BookingHandler) CancelBooking(c *gin.Context) {
 	bookingID := strings.TrimSpace(c.Param("id"))
 	if bookingID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "id de reserva requerido",
-			"code":  "BAD_REQUEST",
+			"error":      "id de reserva requerido",
+			"code":       "BAD_REQUEST",
+			"request_id": middleware.GetRequestID(c),
 		})
 		return
 	}
@@ -309,29 +328,30 @@ func (h *BookingHandler) CancelBooking(c *gin.Context) {
 		switch {
 		case errors.Is(err, domain.ErrBookingNotFound):
 			c.JSON(http.StatusNotFound, gin.H{
-				"error": "reserva no encontrada",
-				"code":  "BOOKING_NOT_FOUND",
+				"error":      "reserva no encontrada",
+				"code":       "BOOKING_NOT_FOUND",
+				"request_id": middleware.GetRequestID(c),
 			})
 		case errors.Is(err, domain.ErrUnauthorized):
 			c.JSON(http.StatusForbidden, gin.H{
-				"error": "no tienes autorización para cancelar esta reserva",
-				"code":  "FORBIDDEN",
+				"error":      "no tienes autorización para cancelar esta reserva",
+				"code":       "FORBIDDEN",
+				"request_id": middleware.GetRequestID(c),
 			})
 		case errors.Is(err, domain.ErrBookingAlreadyCancelled):
 			c.JSON(http.StatusConflict, gin.H{
-				"error": "la reserva ya se encuentra cancelada",
-				"code":  "ALREADY_CANCELLED",
+				"error":      "la reserva ya se encuentra cancelada",
+				"code":       "ALREADY_CANCELLED",
+				"request_id": middleware.GetRequestID(c),
 			})
 		case errors.Is(err, domain.ErrInvalidBookingStatus):
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "la reserva no puede cancelarse en su estado actual",
-				"code":  "INVALID_STATUS",
+				"error":      "la reserva no puede cancelarse en su estado actual",
+				"code":       "INVALID_STATUS",
+				"request_id": middleware.GetRequestID(c),
 			})
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": "error interno al cancelar la reserva",
-				"code":  "INTERNAL_SERVER_ERROR",
-			})
+			HandleError(c, err)
 		}
 		return
 	}
@@ -348,8 +368,9 @@ func (h *BookingHandler) GetBookingByID(c *gin.Context) {
 	requestingUserID, exists := middleware.GetUserID(c)
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "usuario no autenticado",
-			"code":  "UNAUTHORIZED",
+			"error":      "usuario no autenticado",
+			"code":       "UNAUTHORIZED",
+			"request_id": middleware.GetRequestID(c),
 		})
 		return
 	}
@@ -357,8 +378,9 @@ func (h *BookingHandler) GetBookingByID(c *gin.Context) {
 	bookingID := strings.TrimSpace(c.Param("id"))
 	if bookingID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "id de reserva requerido",
-			"code":  "BAD_REQUEST",
+			"error":      "id de reserva requerido",
+			"code":       "BAD_REQUEST",
+			"request_id": middleware.GetRequestID(c),
 		})
 		return
 	}
@@ -368,19 +390,18 @@ func (h *BookingHandler) GetBookingByID(c *gin.Context) {
 		switch {
 		case errors.Is(err, domain.ErrBookingNotFound):
 			c.JSON(http.StatusNotFound, gin.H{
-				"error": "reserva no encontrada",
-				"code":  "BOOKING_NOT_FOUND",
+				"error":      "reserva no encontrada",
+				"code":       "BOOKING_NOT_FOUND",
+				"request_id": middleware.GetRequestID(c),
 			})
 		case errors.Is(err, domain.ErrUnauthorized):
 			c.JSON(http.StatusForbidden, gin.H{
-				"error": "no tienes permisos para visualizar esta reserva",
-				"code":  "FORBIDDEN",
+				"error":      "no tienes permisos para visualizar esta reserva",
+				"code":       "FORBIDDEN",
+				"request_id": middleware.GetRequestID(c),
 			})
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": "error interno al obtener la reserva",
-				"code":  "INTERNAL_SERVER_ERROR",
-			})
+			HandleError(c, err)
 		}
 		return
 	}
@@ -396,8 +417,9 @@ func (h *BookingHandler) MyBookings(c *gin.Context) {
 	passengerID, exists := middleware.GetUserID(c)
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "usuario no autenticado",
-			"code":  "UNAUTHORIZED",
+			"error":      "usuario no autenticado",
+			"code":       "UNAUTHORIZED",
+			"request_id": middleware.GetRequestID(c),
 		})
 		return
 	}
@@ -422,10 +444,7 @@ func (h *BookingHandler) MyBookings(c *gin.Context) {
 
 	bookings, err := h.bookingService.ListPassengerBookings(c.Request.Context(), passengerID, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "error interno al listar reservas",
-			"code":  "INTERNAL_SERVER_ERROR",
-		})
+		HandleError(c, err)
 		return
 	}
 
@@ -443,8 +462,9 @@ func (h *BookingHandler) GetContactLink(c *gin.Context) {
 	passengerID, exists := middleware.GetUserID(c)
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "usuario no autenticado",
-			"code":  "UNAUTHORIZED",
+			"error":      "usuario no autenticado",
+			"code":       "UNAUTHORIZED",
+			"request_id": middleware.GetRequestID(c),
 		})
 		return
 	}
@@ -452,8 +472,9 @@ func (h *BookingHandler) GetContactLink(c *gin.Context) {
 	bookingID := strings.TrimSpace(c.Param("id"))
 	if bookingID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "id de reserva requerido",
-			"code":  "BAD_REQUEST",
+			"error":      "id de reserva requerido",
+			"code":       "BAD_REQUEST",
+			"request_id": middleware.GetRequestID(c),
 		})
 		return
 	}
@@ -463,24 +484,30 @@ func (h *BookingHandler) GetContactLink(c *gin.Context) {
 		switch {
 		case errors.Is(err, domain.ErrBookingNotFound):
 			c.JSON(http.StatusNotFound, gin.H{
-				"error": "reserva no encontrada",
-				"code":  "BOOKING_NOT_FOUND",
+				"error":      "reserva no encontrada",
+				"code":       "BOOKING_NOT_FOUND",
+				"request_id": middleware.GetRequestID(c),
 			})
 		case errors.Is(err, domain.ErrUnauthorized):
 			c.JSON(http.StatusForbidden, gin.H{
-				"error": "no tienes autorización para acceder al contacto de esta reserva",
-				"code":  "FORBIDDEN",
+				"error":      "no tienes autorización para acceder al contacto de esta reserva",
+				"code":       "FORBIDDEN",
+				"request_id": middleware.GetRequestID(c),
 			})
 		case errors.Is(err, domain.ErrTripNotFound):
 			c.JSON(http.StatusNotFound, gin.H{
-				"error": "viaje asociado no encontrado",
-				"code":  "TRIP_NOT_FOUND",
+				"error":      "viaje asociado no encontrado",
+				"code":       "TRIP_NOT_FOUND",
+				"request_id": middleware.GetRequestID(c),
+			})
+		case errors.Is(err, domain.ErrDriverPhoneRequired):
+			c.JSON(http.StatusUnprocessableEntity, gin.H{
+				"error":      "el conductor no posee un número de teléfono válido registrado",
+				"code":       "DRIVER_PHONE_REQUIRED",
+				"request_id": middleware.GetRequestID(c),
 			})
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": "error interno al generar enlace de contacto",
-				"code":  "INTERNAL_SERVER_ERROR",
-			})
+			HandleError(c, err)
 		}
 		return
 	}

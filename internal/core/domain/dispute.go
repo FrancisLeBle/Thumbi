@@ -190,3 +190,10 @@ func (d *Dispute) IsClosed() bool {
 		d.Status == DisputeStatusResolvedDriverPayout ||
 		d.Status == DisputeStatusRejected
 }
+
+// IsValidDisputeResolution valida que el dictamen corresponda a un estado terminal permitido
+func IsValidDisputeResolution(status DisputeStatus) bool {
+	return status == DisputeStatusResolvedPassengerRefund ||
+		status == DisputeStatusResolvedDriverPayout ||
+		status == DisputeStatusRejected
+}

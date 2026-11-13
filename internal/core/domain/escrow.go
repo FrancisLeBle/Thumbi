@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"math"
 	"strings"
 	"time"
 )
@@ -34,7 +33,7 @@ type EscrowTransaction struct {
 	TripID            string       `json:"trip_id"`
 	PayerID           string       `json:"payer_id"` // Pasajero
 	PayeeID           string       `json:"payee_id"` // Conductor
-	Amount            float64      `json:"amount"`
+	Amount            Money        `json:"amount"`
 	Currency          string       `json:"currency"`
 	PaymentGatewayRef string       `json:"payment_gateway_ref"`
 	Status            EscrowStatus `json:"status"`
@@ -46,7 +45,7 @@ type EscrowTransaction struct {
 }
 
 // NewEscrowTransaction crea un registro de retención de fondos en custodia
-func NewEscrowTransaction(id, bookingID, tripID, payerID, payeeID string, amount float64, currency, gatewayRef string) (*EscrowTransaction, error) {
+func NewEscrowTransaction(id, bookingID, tripID, payerID, payeeID string, amount Money, currency, gatewayRef string) (*EscrowTransaction, error) {
 	if strings.TrimSpace(id) == "" || strings.TrimSpace(bookingID) == "" || strings.TrimSpace(tripID) == "" {
 		return nil, ErrEscrowNotFound
 	}
@@ -70,7 +69,7 @@ func NewEscrowTransaction(id, bookingID, tripID, payerID, payeeID string, amount
 		TripID:            tripID,
 		PayerID:           payerID,
 		PayeeID:           payeeID,
-		Amount:            math.Round(amount*100) / 100,
+		Amount:            amount,
 		Currency:          strings.ToUpper(currency),
 		PaymentGatewayRef: gatewayRef,
 		Status:            EscrowStatusHeld,
@@ -131,46 +130,54 @@ func (e *EscrowTransaction) OpenDispute(now time.Time) error {
 	return nil
 }
 
+// RestoreHeld restaura el estado HELD cuando una disputa es desestimada sin mérito
+func (e *EscrowTransaction) RestoreHeld(now time.Time) error {
+	if e.Status != EscrowStatusDisputed && e.Status != EscrowStatusHeld {
+		return ErrEscrowAlreadySettled
+	}
+
+	nowUTC := now.UTC()
+	e.Status = EscrowStatusHeld
+	e.UpdatedAt = nowUTC
+	return nil
+}
+
 // RefundTransaction documenta la trazabilidad y distribución contable de los reembolsos
 type RefundTransaction struct {
 	ID                       string     `json:"id"`
 	EscrowTransactionID      string     `json:"escrow_transaction_id"`
 	BookingID                string     `json:"booking_id"`
-	PassengerRefundAmount    float64    `json:"passenger_refund_amount"`
-	DriverCompensationAmount float64    `json:"driver_compensation_amount"`
+	PassengerRefundAmount    Money      `json:"passenger_refund_amount"`
+	DriverCompensationAmount Money      `json:"driver_compensation_amount"`
 	RefundType               RefundType `json:"refund_type"`
 	GatewayRefundRef         string     `json:"gateway_refund_ref,omitempty"`
 	ProcessedAt              time.Time  `json:"processed_at"`
 	CreatedAt                time.Time  `json:"created_at"`
 }
 
-// CalculateCancellationRefund computa la política de reembolsos de gastos compartidos
+// CalculateCancellationRefund computa la política de reembolsos de gastos compartidos en centavos exactos:
 // - Si cancela el conductor: 100% pasajero, 0% conductor (DRIVER_CANCELLATION)
-// - Si cancela el pasajero con > 24hs de antelación: 100% pasajero, 0% conductor (PASSENGER_EARLY)
+// - Si cancela el pasajero con >= 24hs de antelación: 100% pasajero, 0% conductor (PASSENGER_EARLY)
 // - Si cancela el pasajero con < 24hs de antelación: 50% pasajero, 50% compensación conductor (PASSENGER_LATE)
-func CalculateCancellationRefund(escrowAmount float64, departureTime, cancellationTime time.Time, isDriverCancellation bool) (passengerRefund float64, driverCompensation float64, refundType RefundType) {
-	roundedTotal := math.Round(escrowAmount*100) / 100
-
+func CalculateCancellationRefund(escrowAmount Money, departureTime, cancellationTime time.Time, isDriverCancellation bool) (passengerRefund Money, driverCompensation Money, refundType RefundType) {
 	if isDriverCancellation {
-		return roundedTotal, 0.0, RefundTypeDriverCancellation
+		return escrowAmount, 0, RefundTypeDriverCancellation
 	}
 
 	// Tiempo restante hasta la partida
 	timeUntilDeparture := departureTime.Sub(cancellationTime)
 
 	if timeUntilDeparture >= 24*time.Hour {
-		return roundedTotal, 0.0, RefundTypePassengerEarly
+		return escrowAmount, 0, RefundTypePassengerEarly
 	}
 
-	// Cancelación tardía con menos de 24 horas: 50% pasajero / 50% conductor
-	passengerHalf := math.Round(roundedTotal*0.5*100) / 100
-	driverHalf := math.Round((roundedTotal-passengerHalf)*100) / 100
-
+	// Cancelación tardía con menos de 24 horas: división entera conservando exactamente el total
+	passengerHalf, driverHalf := escrowAmount.SplitHalf()
 	return passengerHalf, driverHalf, RefundTypePassengerLate
 }
 
 // NewRefundTransaction genera el registro inmutable del reembolso procesado
-func NewRefundTransaction(id, escrowID, bookingID string, passengerRefund, driverCompensation float64, refundType RefundType, gatewayRefundRef string) (*RefundTransaction, error) {
+func NewRefundTransaction(id, escrowID, bookingID string, passengerRefund, driverCompensation Money, refundType RefundType, gatewayRefundRef string) (*RefundTransaction, error) {
 	if strings.TrimSpace(id) == "" || strings.TrimSpace(escrowID) == "" || strings.TrimSpace(bookingID) == "" {
 		return nil, ErrEscrowNotFound
 	}
@@ -183,8 +190,8 @@ func NewRefundTransaction(id, escrowID, bookingID string, passengerRefund, drive
 		ID:                       id,
 		EscrowTransactionID:      escrowID,
 		BookingID:                bookingID,
-		PassengerRefundAmount:    math.Round(passengerRefund*100) / 100,
-		DriverCompensationAmount: math.Round(driverCompensation*100) / 100,
+		PassengerRefundAmount:    passengerRefund,
+		DriverCompensationAmount: driverCompensation,
 		RefundType:               refundType,
 		GatewayRefundRef:         gatewayRefundRef,
 		ProcessedAt:              nowUTC,

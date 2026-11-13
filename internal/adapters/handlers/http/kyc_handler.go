@@ -31,15 +31,20 @@ type KYCSubmissionRequest struct {
 func (h *KYCHandler) Submit(c *gin.Context) {
 	userID, exists := middleware.GetUserID(c)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "usuario no autenticado"})
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error":      "usuario no autenticado",
+			"code":       "UNAUTHORIZED",
+			"request_id": middleware.GetRequestID(c),
+		})
 		return
 	}
 
 	var req KYCSubmissionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "datos de verificación biométrica incompletos",
-			"details": err.Error(),
+			"error":      "datos de verificación biométrica incompletos o inválidos",
+			"code":       "INVALID_KYC_PAYLOAD",
+			"request_id": middleware.GetRequestID(c),
 		})
 		return
 	}
@@ -57,47 +62,68 @@ func (h *KYCHandler) Submit(c *gin.Context) {
 		switch {
 		case errors.Is(err, domain.ErrKYCAlreadyApproved):
 			c.JSON(http.StatusConflict, gin.H{
-				"error":  err.Error(),
-				"status": domain.KYCStatusApproved,
+				"error":      "La identidad del usuario ya ha sido verificada y aprobada previamente",
+				"code":       "KYC_ALREADY_APPROVED",
+				"status":     domain.KYCStatusApproved,
+				"request_id": middleware.GetRequestID(c),
 			})
 			return
 
 		case errors.Is(err, domain.ErrMaxRetriesExceeded):
 			// RF-09: Tras superar 3 reintentos, estado PENDING_MANUAL_REVIEW
+			retryCount := 3
+			livenessScore := 0.0
+			if kyc != nil {
+				retryCount = kyc.RetryCount
+				livenessScore = kyc.LivenessScore
+			}
 			c.JSON(http.StatusUnprocessableEntity, gin.H{
 				"error":          "Se ha superado el máximo de 3 reintentos automatizados. Tu solicitud ha sido derivada a revisión manual por nuestra mesa de control.",
 				"code":           "PENDING_MANUAL_REVIEW",
 				"status":         domain.KYCStatusPendingManualReview,
-				"retry_count":    kyc.RetryCount,
-				"liveness_score": kyc.LivenessScore,
+				"retry_count":    retryCount,
+				"liveness_score": livenessScore,
 				"can_retry":      false,
+				"request_id":     middleware.GetRequestID(c),
 			})
 			return
 
 		case errors.Is(err, domain.ErrKYCInManualReview):
 			c.JSON(http.StatusLocked, gin.H{
-				"error":  "Tu trámite se encuentra actualmente en revisión manual. Te notificaremos cuando se complete el análisis.",
-				"status": domain.KYCStatusPendingManualReview,
+				"error":      "Tu trámite se encuentra actualmente en revisión manual. Te notificaremos cuando se complete el análisis.",
+				"code":       "PENDING_MANUAL_REVIEW",
+				"status":     domain.KYCStatusPendingManualReview,
+				"request_id": middleware.GetRequestID(c),
 			})
 			return
 
 		case errors.Is(err, domain.ErrLivenessCheckFailed):
 			// RF-08: Tolerancia de reintento (< 3)
-			remaining := domain.MaxKYCRetries - kyc.RetryCount
+			retryCount := 1
+			rejectionReason := "Prueba de vida insuficiente"
+			status := domain.KYCStatusRejected
+			canRetry := true
+			if kyc != nil {
+				retryCount = kyc.RetryCount
+				rejectionReason = kyc.RejectionReason
+				status = kyc.Status
+				canRetry = kyc.CanRetry()
+			}
+			remaining := domain.MaxKYCRetries - retryCount
 			c.JSON(http.StatusUnprocessableEntity, gin.H{
 				"error":             "La validación biométrica no fue satisfactoria.",
-				"reason":            kyc.RejectionReason,
-				"status":            kyc.Status,
-				"retry_count":       kyc.RetryCount,
+				"code":              "LIVENESS_CHECK_FAILED",
+				"reason":            rejectionReason,
+				"status":            status,
+				"retry_count":       retryCount,
 				"remaining_retries": remaining,
-				"can_retry":         kyc.CanRetry(),
+				"can_retry":         canRetry,
+				"request_id":        middleware.GetRequestID(c),
 			})
 			return
 
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": err.Error(),
-			})
+			HandleError(c, err)
 			return
 		}
 	}
@@ -116,7 +142,11 @@ func (h *KYCHandler) Submit(c *gin.Context) {
 func (h *KYCHandler) Status(c *gin.Context) {
 	userID, exists := middleware.GetUserID(c)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "usuario no autenticado"})
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error":      "usuario no autenticado",
+			"code":       "UNAUTHORIZED",
+			"request_id": middleware.GetRequestID(c),
+		})
 		return
 	}
 
@@ -129,7 +159,7 @@ func (h *KYCHandler) Status(c *gin.Context) {
 			})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		HandleError(c, err)
 		return
 	}
 

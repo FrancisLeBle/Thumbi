@@ -8,8 +8,16 @@ import (
 	"github.com/thumbi/auth-kyc-service/internal/core/ports"
 )
 
-// ExpirationWorker ejecuta de manera periódica la expiración de reservas en PENDING_PAYMENT
+const (
+	// ExpirationBatchSize coincide con el límite de lote en PostgreSQL (LIMIT 500)
+	// para detectar si quedaron filas pendientes por drenar tras una ejecución.
+	ExpirationBatchSize = 500
+	maxBatchesPerTick   = 10
+)
+
+// ExpirationWorker ejecuta de manera periódica la expiración en lotes de reservas en PENDING_PAYMENT
 // que hayan superado su TTL (15 min), restituyendo atómicamente los asientos retenidos.
+// Es seguro para ejecutarse en múltiples réplicas concurrentes gracias a FOR UPDATE SKIP LOCKED.
 type ExpirationWorker struct {
 	bookingService ports.BookingService
 	interval       time.Duration
@@ -31,7 +39,7 @@ func (w *ExpirationWorker) Start(ctx context.Context) {
 	ticker := time.NewTicker(w.interval)
 	defer ticker.Stop()
 
-	log.Printf("[INFO] ExpirationWorker iniciado. Frecuencia de chequeo: %v", w.interval)
+	log.Printf("[INFO] ExpirationWorker iniciado. Frecuencia de chequeo: %v | Tamaño de lote: %d", w.interval, ExpirationBatchSize)
 
 	for {
 		select {
@@ -45,18 +53,30 @@ func (w *ExpirationWorker) Start(ctx context.Context) {
 	}
 }
 
-// runOnce ejecuta un ciclo único de expiración con timeout controlado
+// runOnce drena lotes acotados (hasta ExpirationBatchSize por transacción) dentro de un timeout controlado.
 func (w *ExpirationWorker) runOnce(ctx context.Context) {
 	opCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	expiredCount, err := w.bookingService.ProcessExpiredBookings(opCtx)
-	if err != nil {
-		log.Printf("[ERROR] ExpirationWorker: error al procesar reservas vencidas: %v", err)
-		return
+	totalExpired := 0
+	for batch := 0; batch < maxBatchesPerTick; batch++ {
+		if opCtx.Err() != nil {
+			break
+		}
+
+		expiredCount, err := w.bookingService.ProcessExpiredBookings(opCtx)
+		if err != nil {
+			log.Printf("[ERROR] ExpirationWorker: error al procesar lote de reservas vencidas: %v", err)
+			break
+		}
+
+		totalExpired += expiredCount
+		if expiredCount < ExpirationBatchSize {
+			break
+		}
 	}
 
-	if expiredCount > 0 {
-		log.Printf("[INFO] ExpirationWorker: %d reservas pendientes vencidas fueron expiradas y sus asientos restituidos.", expiredCount)
+	if totalExpired > 0 {
+		log.Printf("[INFO] ExpirationWorker: %d reservas pendientes vencidas fueron expiradas y sus asientos restituidos.", totalExpired)
 	}
 }

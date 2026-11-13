@@ -95,3 +95,21 @@ func TestExpirationWorker_Lifecycle(t *testing.T) {
 	<-done
 	assert.True(t, len(mockService.Calls) >= 1)
 }
+
+func TestExpirationWorker_DrainsMultipleBatchesWhenFull(t *testing.T) {
+	mockService := new(MockBookingService)
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	// Primera llamada retorna un lote lleno (500); segunda retorna 42, detiene el drenado y finaliza el worker
+	mockService.On("ProcessExpiredBookings", mock.Anything).Return(worker.ExpirationBatchSize, nil).Once()
+	mockService.On("ProcessExpiredBookings", mock.Anything).Run(func(args mock.Arguments) {
+		cancel()
+	}).Return(42, nil).Once()
+
+	w := worker.NewExpirationWorker(mockService, 10*time.Millisecond)
+	w.Start(ctx)
+
+	mockService.AssertExpectations(t)
+}
+

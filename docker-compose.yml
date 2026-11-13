@@ -23,7 +23,9 @@ services:
       - APPLE_CLIENT_ID=${APPLE_CLIENT_ID}
       - LIVENESS_THRESHOLD=${LIVENESS_THRESHOLD:-0.85}
       - WEBHOOK_SECRET=${WEBHOOK_SECRET}
-      - OSRM_BASE_URL=${OSRM_BASE_URL:-http://router.project-osrm.org}
+      - OSRM_BASE_URL=${OSRM_BASE_URL:-https://router.project-osrm.org}
+      - REDIS_ADDR=${REDIS_ADDR:-redis:6379}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
     depends_on:
       postgres:
         condition: service_healthy

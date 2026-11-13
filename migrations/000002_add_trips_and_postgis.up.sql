@@ -62,6 +62,8 @@ CREATE TABLE IF NOT EXISTS trips (
 );
 
 -- Índices espaciales GIST (Críticos para rendimiento de ST_DWithin y ST_Distance)
+-- Índice de expresión sobre geography(4326) requerido para que ST_DWithin(route_path::geography, ...) use Index Scan
+CREATE INDEX IF NOT EXISTS idx_trips_route_path_geography ON trips USING GIST ((route_path::geography));
 CREATE INDEX IF NOT EXISTS idx_trips_route_path_gist ON trips USING GIST (route_path);
 CREATE INDEX IF NOT EXISTS idx_trips_origin_geom_gist ON trips USING GIST (origin_geom);
 CREATE INDEX IF NOT EXISTS idx_trips_destination_geom_gist ON trips USING GIST (destination_geom);

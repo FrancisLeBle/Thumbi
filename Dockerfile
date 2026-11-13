@@ -1,15 +1,15 @@
 # Dockerfile multi-stage optimizado para Thumbi Core API
-# Etapa 1: Compilación basada en golang:1.25-alpine
-FROM golang:1.25-alpine AS builder
+# Etapa 1: Compilación basada en golang:1.25-alpine fijado por digest inmutable
+FROM golang:1.25-alpine@sha256:1ae0735f00daffa3aaf1363a5184c0d2dc55c78e3db4ec70241cdac97bf84b59 AS builder
 
 WORKDIR /app
 
 # Instalar certificados CA, git y tzdata para compilación estática
 RUN apk add --no-cache ca-certificates git tzdata
 
-# Cachear capas de dependencias Go
-COPY go.mod go.sum* ./
-RUN go mod download || true
+# Cachear capas de dependencias Go y fallar inmediatamente ante errores de descarga o integridad
+COPY go.mod go.sum ./
+RUN go mod download && go mod verify
 
 # Copiar código fuente
 COPY . .
@@ -20,8 +20,8 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -o /app/thumbi-api \
     ./cmd/api/main.go
 
-# Etapa 2: Imagen mínima de ejecución en producción (alpine:latest con certificados CA)
-FROM alpine:latest
+# Etapa 2: Imagen mínima de ejecución en producción (alpine:3.21 fijado por digest inmutable con certificados CA)
+FROM alpine:3.21@sha256:87a4361f6c819618a6bafa2ed5228714cb0bb22195d2b49c95eb26799990128a
 
 WORKDIR /app
 

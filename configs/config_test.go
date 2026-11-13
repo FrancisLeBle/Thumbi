@@ -107,3 +107,49 @@ TEST_EXPORTED_VAR=unquoted_value
 	assert.Equal(t, "loaded_from_file", os.Getenv("TEST_CUSTOM_VAR"))
 	assert.Equal(t, "unquoted_value", os.Getenv("TEST_EXPORTED_VAR"))
 }
+
+func TestConfig_OSRMValidation_DefaultsToHTTPS(t *testing.T) {
+	os.Setenv("ENV", "production")
+	os.Setenv("JWT_SECRET", "super-secure-production-jwt-key-with-at-least-32-chars")
+	os.Setenv("DATABASE_URL", "postgres://user:pass@db:5432/mydb")
+	os.Setenv("WEBHOOK_SECRET", "super-secure-webhook-secret-key-with-at-least-32-chars")
+	os.Unsetenv("OSRM_BASE_URL")
+	defer func() {
+		os.Unsetenv("ENV")
+		os.Unsetenv("JWT_SECRET")
+		os.Unsetenv("DATABASE_URL")
+		os.Unsetenv("WEBHOOK_SECRET")
+		os.Unsetenv("OSRM_BASE_URL")
+	}()
+
+	cfg, err := LoadConfigWithEnvFile("")
+	require.NoError(t, err)
+	assert.Equal(t, DefaultOSRMBaseURL, cfg.OSRMBaseURL)
+	assert.True(t, len(cfg.OSRMBaseURL) > 8 && cfg.OSRMBaseURL[:8] == "https://")
+}
+
+func TestConfig_OSRMValidation_RejectsPlainHTTPPublicServer(t *testing.T) {
+	for _, rawURL := range []string{
+		"http://router.project-osrm.org",
+		"http://routing.example.com",
+		"ftp://router.project-osrm.org",
+	} {
+		err := validateOSRMURL(rawURL, false)
+		assert.Error(t, err, "expected error for %s", rawURL)
+	}
+	assert.Error(t, validateOSRMURL("http://router.project-osrm.org", true))
+}
+
+func TestConfig_OSRMValidation_AllowsHTTPSAndInternalSelfHostedOSRM(t *testing.T) {
+	for _, rawURL := range []string{
+		"https://router.project-osrm.org",
+		"https://osrm.thumbi.app",
+		"http://osrm:5000",
+		"http://10.0.1.25:5000",
+		"http://localhost:5000",
+		"http://127.0.0.1:5000",
+	} {
+		assert.NoError(t, validateOSRMURL(rawURL, false), "expected valid URL: %s", rawURL)
+	}
+}
+

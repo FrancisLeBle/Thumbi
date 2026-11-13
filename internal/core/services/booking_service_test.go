@@ -2,6 +2,7 @@ package services_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -32,9 +33,9 @@ func createTestTrip(driverID string, availableSeats int, departureInHours int) *
 		TotalDistanceKm:      300.0,
 		TotalDurationMinutes: 240,
 		TotalSeatsOffered:    4,
-		PricePerSeat:         1500.0,
-		EstimatedFuelCost:    10000.0,
-		EstimatedTollCost:    2000.0,
+		PricePerSeat:         domain.Money(150000),
+		EstimatedFuelCost:    domain.Money(1000000),
+		EstimatedTollCost:    domain.Money(200000),
 		MaxVehicleSeats:      5,
 	}, now)
 	_ = trip.UpdateAvailableSeats(availableSeats)
@@ -105,13 +106,13 @@ func TestBookingService_CreateBooking(t *testing.T) {
 
 		trip := createTestTrip("driver-1", 3, 48)
 		tripRepo.On("FindByID", ctx, "trip-100").Return(trip, nil)
-		bookingRepo.On("GetPassengerBookings", ctx, "passenger-2", 20, 0).Return([]*domain.Booking{}, nil)
+		bookingRepo.On("CheckPassengerBookingConstraints", ctx, "passenger-2", "trip-100", trip.DepartureTime, trip.EstimatedArrivalTime, mock.AnythingOfType("time.Time")).Return(false, 0, nil)
 		bookingRepo.On("CreateWithHold", ctx, mock.AnythingOfType("*domain.Booking")).Return(nil)
 
-		gateway.On("CreatePaymentIntent", ctx, mock.AnythingOfType("string"), 3000.0, "USD").Return(&ports.PaymentIntentResult{
+		gateway.On("CreatePaymentIntent", ctx, mock.AnythingOfType("string"), domain.Money(300000), "USD").Return(&ports.PaymentIntentResult{
 			GatewayRef:   "pi_test_123456",
 			ClientSecret: "secret_test_xyz",
-			Amount:       3000.0,
+			Amount:       domain.Money(300000),
 			Currency:     "USD",
 			Status:       "requires_payment_method",
 		}, nil)
@@ -138,7 +139,7 @@ func TestBookingService_CreateBooking(t *testing.T) {
 		assert.NotNil(t, res)
 		assert.Equal(t, domain.BookingStatusPendingPayment, res.Status)
 		assert.Equal(t, 2, res.SeatsBooked)
-		assert.Equal(t, 3000.0, res.TotalPrice)
+		assert.Equal(t, domain.Money(300000), res.TotalPrice)
 		assert.NotNil(t, res.PaymentIntent)
 		assert.Equal(t, "pi_test_123456", res.PaymentIntent.GatewayRef)
 		assert.Equal(t, "Carlos Gomez", res.TripSummary.DriverFullName)
@@ -147,6 +148,89 @@ func TestBookingService_CreateBooking(t *testing.T) {
 		tripRepo.AssertExpectations(t)
 		bookingRepo.AssertExpectations(t)
 		gateway.AssertExpectations(t)
+	})
+
+	t.Run("rechaza la reserva si el pasajero supera el límite de reservas pendientes activas (MaxPendingBookingsPerPassenger)", func(t *testing.T) {
+		tripRepo := new(MockTripRepository)
+		bookingRepo := new(MockBookingRepository)
+		escrowRepo := new(MockEscrowRepository)
+		userRepo := new(MockUserRepository)
+		vehicleRepo := new(MockVehicleRepository)
+		gateway := new(MockPaymentGateway)
+		notifier := new(MockNotifier)
+
+		trip := createTestTrip("driver-1", 4, 48)
+		tripRepo.On("FindByID", ctx, "trip-100").Return(trip, nil)
+
+		bookingRepo.On("CheckPassengerBookingConstraints", ctx, "passenger-hogger", "trip-100", trip.DepartureTime, trip.EstimatedArrivalTime, mock.AnythingOfType("time.Time")).Return(false, 3, nil)
+
+		service := services.NewBookingService(bookingRepo, escrowRepo, tripRepo, userRepo, vehicleRepo, gateway, notifier)
+
+		res, err := service.CreateBooking(ctx, ports.CreateBookingInput{
+			TripID:         "trip-100",
+			PassengerID:    "passenger-hogger",
+			SeatsRequested: 1,
+		})
+
+		assert.Nil(t, res)
+		assert.ErrorIs(t, err, domain.ErrMaxPendingBookingsExceeded)
+		tripRepo.AssertExpectations(t)
+		bookingRepo.AssertExpectations(t)
+	})
+
+	t.Run("rechaza la reserva si existe solapamiento horario con otra reserva activa del pasajero", func(t *testing.T) {
+		tripRepo := new(MockTripRepository)
+		bookingRepo := new(MockBookingRepository)
+		escrowRepo := new(MockEscrowRepository)
+		userRepo := new(MockUserRepository)
+		vehicleRepo := new(MockVehicleRepository)
+		gateway := new(MockPaymentGateway)
+		notifier := new(MockNotifier)
+
+		trip := createTestTrip("driver-1", 4, 48)
+		tripRepo.On("FindByID", ctx, "trip-100").Return(trip, nil)
+		bookingRepo.On("CheckPassengerBookingConstraints", ctx, "passenger-overlap", "trip-100", trip.DepartureTime, trip.EstimatedArrivalTime, mock.AnythingOfType("time.Time")).Return(true, 1, nil)
+
+		service := services.NewBookingService(bookingRepo, escrowRepo, tripRepo, userRepo, vehicleRepo, gateway, notifier)
+
+		res, err := service.CreateBooking(ctx, ports.CreateBookingInput{
+			TripID:         "trip-100",
+			PassengerID:    "passenger-overlap",
+			SeatsRequested: 1,
+		})
+
+		assert.Nil(t, res)
+		assert.ErrorIs(t, err, domain.ErrOverlappingTripBooking)
+		bookingRepo.AssertNotCalled(t, "CreateWithHold", mock.Anything, mock.Anything)
+		bookingRepo.AssertExpectations(t)
+	})
+
+	t.Run("propaga el error si falla la consulta de verificación de solapamiento", func(t *testing.T) {
+		tripRepo := new(MockTripRepository)
+		bookingRepo := new(MockBookingRepository)
+		escrowRepo := new(MockEscrowRepository)
+		userRepo := new(MockUserRepository)
+		vehicleRepo := new(MockVehicleRepository)
+		gateway := new(MockPaymentGateway)
+		notifier := new(MockNotifier)
+
+		trip := createTestTrip("driver-1", 4, 48)
+		dbErr := errors.New("connection refused")
+		tripRepo.On("FindByID", ctx, "trip-100").Return(trip, nil)
+		bookingRepo.On("CheckPassengerBookingConstraints", ctx, "passenger-err", "trip-100", trip.DepartureTime, trip.EstimatedArrivalTime, mock.AnythingOfType("time.Time")).Return(false, 0, dbErr)
+
+		service := services.NewBookingService(bookingRepo, escrowRepo, tripRepo, userRepo, vehicleRepo, gateway, notifier)
+
+		res, err := service.CreateBooking(ctx, ports.CreateBookingInput{
+			TripID:         "trip-100",
+			PassengerID:    "passenger-err",
+			SeatsRequested: 1,
+		})
+
+		assert.Nil(t, res)
+		assert.ErrorIs(t, err, dbErr)
+		bookingRepo.AssertNotCalled(t, "CreateWithHold", mock.Anything, mock.Anything)
+		bookingRepo.AssertExpectations(t)
 	})
 }
 
@@ -169,7 +253,7 @@ func TestBookingService_ConfirmBookingPayment(t *testing.T) {
 			PassengerID:     "passenger-1",
 			DriverID:        "driver-1",
 			SeatsBooked:     2,
-			UnitPrice:       1500.0,
+			UnitPrice:       domain.Money(150000),
 			PaymentIntentID: &intentRef,
 			TTL:             15 * time.Minute,
 		})
@@ -181,7 +265,7 @@ func TestBookingService_ConfirmBookingPayment(t *testing.T) {
 		bookingRepo.On("UpdateStatus", ctx, "booking-abc", domain.BookingStatusConfirmed, (*string)(nil)).Return(nil)
 		tripRepo.On("FindByID", ctx, "trip-100").Return(trip, nil)
 		escrowRepo.On("CreateEscrow", ctx, mock.MatchedBy(func(e *domain.EscrowTransaction) bool {
-			return e.BookingID == "booking-abc" && e.Amount == 3000.0 && e.Status == domain.EscrowStatusHeld
+			return e.BookingID == "booking-abc" && e.Amount == domain.Money(300000) && e.Status == domain.EscrowStatusHeld
 		})).Return(nil)
 		notifier.On("SendResolutionNotification", ctx, mock.Anything).Return(nil)
 		userRepo.On("GetByID", ctx, "driver-1").Return(&domain.User{FirstName: "Carlos", LastName: "Gomez"}, nil)
@@ -220,7 +304,7 @@ func TestBookingService_ConfirmBookingPayment(t *testing.T) {
 			PassengerID:     "passenger-1",
 			DriverID:        "driver-1",
 			SeatsBooked:     2,
-			UnitPrice:       1500.0,
+			UnitPrice:       domain.Money(150000),
 			PaymentIntentID: &intentRef,
 			TTL:             15 * time.Minute,
 		})
@@ -256,7 +340,7 @@ func TestBookingService_ConfirmBookingPayment(t *testing.T) {
 			PassengerID:     "passenger-1",
 			DriverID:        "driver-1",
 			SeatsBooked:     2,
-			UnitPrice:       1500.0,
+			UnitPrice:       domain.Money(150000),
 			PaymentIntentID: &intentRef,
 			TTL:             15 * time.Minute,
 		})
@@ -292,7 +376,7 @@ func TestBookingService_ConfirmBookingPayment(t *testing.T) {
 			PassengerID:     "passenger-1",
 			DriverID:        "driver-1",
 			SeatsBooked:     1,
-			UnitPrice:       1500.0,
+			UnitPrice:       domain.Money(150000),
 			PaymentIntentID: &intentRef,
 			TTL:             15 * time.Minute,
 		})
@@ -337,7 +421,7 @@ func TestBookingService_ConfirmBookingPayment(t *testing.T) {
 			PassengerID:     "passenger-1",
 			DriverID:        "driver-1",
 			SeatsBooked:     1,
-			UnitPrice:       1500.0,
+			UnitPrice:       domain.Money(150000),
 			PaymentIntentID: &intentRef,
 			TTL:             1 * time.Nanosecond, // Expirado de inmediato
 		})
@@ -355,6 +439,111 @@ func TestBookingService_ConfirmBookingPayment(t *testing.T) {
 
 		assert.Nil(t, res)
 		assert.ErrorIs(t, err, domain.ErrBookingExpired)
+	})
+
+	t.Run("ejecuta UpdateStatus y CreateEscrow dentro de la misma transacción y aborta si expiró concurrentemente", func(t *testing.T) {
+		tripRepo := new(MockTripRepository)
+		bookingRepo := new(MockBookingRepository)
+		escrowRepo := new(MockEscrowRepository)
+		userRepo := new(MockUserRepository)
+		vehicleRepo := new(MockVehicleRepository)
+		gateway := new(MockPaymentGateway)
+		notifier := new(MockNotifier)
+		txManager := new(MockTransactionManager)
+
+		intentRef := "pi_race_ref_123"
+		booking, _ := domain.NewBooking(domain.BookingParams{
+			ID:              "booking-race-expired",
+			TripID:          "trip-100",
+			PassengerID:     "passenger-1",
+			DriverID:        "driver-1",
+			SeatsBooked:     2,
+			UnitPrice:       domain.Money(150000),
+			PaymentIntentID: &intentRef,
+			TTL:             15 * time.Minute,
+		})
+
+		trip := createTestTrip("driver-1", 1, 48)
+		hasTx := func(c context.Context) bool {
+			v, _ := c.Value(mockTxCtxKey{}).(bool)
+			return v
+		}
+
+		bookingRepo.On("FindByID", ctx, "booking-race-expired").Return(booking, nil)
+		gateway.On("ConfirmPayment", ctx, intentRef).Return(true, nil)
+		tripRepo.On("FindByID", ctx, "trip-100").Return(trip, nil)
+		txManager.On("WithinTransaction", ctx).Return(nil)
+		// Simula que el worker expiró la reserva en BD justo antes del UPDATE condicional
+		bookingRepo.On("UpdateStatus", mock.MatchedBy(hasTx), "booking-race-expired", domain.BookingStatusConfirmed, (*string)(nil)).Return(domain.ErrBookingExpired)
+
+		service := services.NewBookingService(bookingRepo, escrowRepo, tripRepo, userRepo, vehicleRepo, gateway, notifier, txManager)
+
+		res, err := service.ConfirmBookingPayment(ctx, ports.ConfirmBookingPaymentInput{
+			BookingID:         "booking-race-expired",
+			RequestingUserID:  "passenger-1",
+			PaymentGatewayRef: intentRef,
+		})
+
+		assert.Nil(t, res)
+		assert.ErrorIs(t, err, domain.ErrBookingExpired)
+		escrowRepo.AssertNotCalled(t, "CreateEscrow", mock.Anything, mock.Anything)
+		txManager.AssertExpectations(t)
+		bookingRepo.AssertExpectations(t)
+	})
+
+	t.Run("ejecuta UpdateStatus y CreateEscrow dentro de la misma transacción en confirmación exitosa", func(t *testing.T) {
+		tripRepo := new(MockTripRepository)
+		bookingRepo := new(MockBookingRepository)
+		escrowRepo := new(MockEscrowRepository)
+		userRepo := new(MockUserRepository)
+		vehicleRepo := new(MockVehicleRepository)
+		gateway := new(MockPaymentGateway)
+		notifier := new(MockNotifier)
+		txManager := new(MockTransactionManager)
+
+		intentRef := "pi_tx_confirm_456"
+		booking, _ := domain.NewBooking(domain.BookingParams{
+			ID:              "booking-tx-confirm",
+			TripID:          "trip-100",
+			PassengerID:     "passenger-1",
+			DriverID:        "driver-1",
+			SeatsBooked:     2,
+			UnitPrice:       domain.Money(150000),
+			PaymentIntentID: &intentRef,
+			TTL:             15 * time.Minute,
+		})
+
+		trip := createTestTrip("driver-1", 1, 48)
+		hasTx := func(c context.Context) bool {
+			v, _ := c.Value(mockTxCtxKey{}).(bool)
+			return v
+		}
+
+		bookingRepo.On("FindByID", ctx, "booking-tx-confirm").Return(booking, nil)
+		gateway.On("ConfirmPayment", ctx, intentRef).Return(true, nil)
+		tripRepo.On("FindByID", ctx, "trip-100").Return(trip, nil)
+		txManager.On("WithinTransaction", ctx).Return(nil)
+		bookingRepo.On("UpdateStatus", mock.MatchedBy(hasTx), "booking-tx-confirm", domain.BookingStatusConfirmed, (*string)(nil)).Return(nil)
+		escrowRepo.On("CreateEscrow", mock.MatchedBy(hasTx), mock.MatchedBy(func(e *domain.EscrowTransaction) bool {
+			return e.BookingID == "booking-tx-confirm" && e.Amount == domain.Money(300000)
+		})).Return(nil)
+		notifier.On("SendResolutionNotification", ctx, mock.Anything).Return(nil)
+		userRepo.On("GetByID", ctx, "driver-1").Return(&domain.User{FirstName: "Carlos", LastName: "Gomez"}, nil)
+		vehicleRepo.On("GetByID", ctx, "vehicle-100").Return(nil, nil)
+
+		service := services.NewBookingService(bookingRepo, escrowRepo, tripRepo, userRepo, vehicleRepo, gateway, notifier, txManager)
+
+		res, err := service.ConfirmBookingPayment(ctx, ports.ConfirmBookingPaymentInput{
+			BookingID:         "booking-tx-confirm",
+			RequestingUserID:  "passenger-1",
+			PaymentGatewayRef: intentRef,
+		})
+
+		require.NoError(t, err)
+		assert.Equal(t, domain.BookingStatusConfirmed, res.Status)
+		txManager.AssertExpectations(t)
+		bookingRepo.AssertExpectations(t)
+		escrowRepo.AssertExpectations(t)
 	})
 }
 
@@ -379,27 +568,25 @@ func TestBookingService_CancelBooking(t *testing.T) {
 			PassengerID: "passenger-1",
 			DriverID:    "driver-1",
 			SeatsBooked: 2,
-			UnitPrice:   2000.0,
+			UnitPrice:   domain.Money(200000),
 		})
 		_ = booking.Confirm(now)
 
-		escrow, _ := domain.NewEscrowTransaction("escrow-1", booking.ID, trip.ID, booking.PassengerID, trip.DriverID, 4000.0, "USD", "pi_ref_123")
+		escrow, _ := domain.NewEscrowTransaction("escrow-1", booking.ID, trip.ID, booking.PassengerID, trip.DriverID, domain.Money(400000), "USD", "pi_ref_123")
 
 		bookingRepo.On("FindByID", ctx, "booking-cancel-early").Return(booking, nil)
 		tripRepo.On("FindByID", ctx, trip.ID).Return(trip, nil)
 		bookingRepo.On("UpdateStatus", ctx, "booking-cancel-early", domain.BookingStatusCancelledByPassenger, mock.Anything).Return(nil)
-		tripRepo.On("Save", ctx, mock.MatchedBy(func(tr *domain.Trip) bool {
-			return tr.AvailableSeats == 3 // 1 + 2 restituidos
-		})).Return(nil)
+		tripRepo.On("ReleaseSeats", ctx, trip.ID, 2).Return(nil)
 		escrowRepo.On("FindByBookingID", ctx, "booking-cancel-early").Return(escrow, nil)
-		gateway.On("ProcessRefund", ctx, "pi_ref_123", 4000.0, string(domain.RefundTypePassengerEarly)).Return(&ports.RefundResult{
+		gateway.On("ProcessRefund", ctx, "pi_ref_123", domain.Money(400000), string(domain.RefundTypePassengerEarly)).Return(&ports.RefundResult{
 			GatewayRefundRef: "re_test_999",
-			Amount:           4000.0,
+			Amount:           domain.Money(400000),
 			Status:           "succeeded",
 		}, nil)
 		escrowRepo.On("UpdateEscrowStatus", ctx, "escrow-1", domain.EscrowStatusRefundedFull).Return(nil)
 		escrowRepo.On("RecordRefund", ctx, mock.MatchedBy(func(r *domain.RefundTransaction) bool {
-			return r.PassengerRefundAmount == 4000.0 && r.DriverCompensationAmount == 0.0 && r.RefundType == domain.RefundTypePassengerEarly
+			return r.PassengerRefundAmount == domain.Money(400000) && r.DriverCompensationAmount == domain.Money(0) && r.RefundType == domain.RefundTypePassengerEarly
 		})).Return(nil)
 
 		service := services.NewBookingService(bookingRepo, escrowRepo, tripRepo, userRepo, vehicleRepo, gateway, notifier)
@@ -412,8 +599,8 @@ func TestBookingService_CancelBooking(t *testing.T) {
 
 		require.NoError(t, err)
 		assert.NotNil(t, refund)
-		assert.Equal(t, 4000.0, refund.PassengerRefundAmount)
-		assert.Equal(t, 0.0, refund.DriverCompensationAmount)
+		assert.Equal(t, domain.Money(400000), refund.PassengerRefundAmount)
+		assert.Equal(t, domain.Money(0), refund.DriverCompensationAmount)
 		assert.Equal(t, domain.RefundTypePassengerEarly, refund.RefundType)
 
 		tripRepo.AssertExpectations(t)
@@ -439,27 +626,25 @@ func TestBookingService_CancelBooking(t *testing.T) {
 			PassengerID: "passenger-1",
 			DriverID:    "driver-1",
 			SeatsBooked: 2,
-			UnitPrice:   2000.0,
+			UnitPrice:   domain.Money(200000),
 		})
 		_ = booking.Confirm(now)
 
-		escrow, _ := domain.NewEscrowTransaction("escrow-2", booking.ID, trip.ID, booking.PassengerID, trip.DriverID, 4000.0, "USD", "pi_ref_456")
+		escrow, _ := domain.NewEscrowTransaction("escrow-2", booking.ID, trip.ID, booking.PassengerID, trip.DriverID, domain.Money(400000), "USD", "pi_ref_456")
 
 		bookingRepo.On("FindByID", ctx, "booking-cancel-late").Return(booking, nil)
 		tripRepo.On("FindByID", ctx, trip.ID).Return(trip, nil)
 		bookingRepo.On("UpdateStatus", ctx, "booking-cancel-late", domain.BookingStatusCancelledByPassenger, mock.Anything).Return(nil)
-		tripRepo.On("Save", ctx, mock.MatchedBy(func(tr *domain.Trip) bool {
-			return tr.AvailableSeats == 3 // 1 + 2 restituidos
-		})).Return(nil)
+		tripRepo.On("ReleaseSeats", ctx, trip.ID, 2).Return(nil)
 		escrowRepo.On("FindByBookingID", ctx, "booking-cancel-late").Return(escrow, nil)
-		gateway.On("ProcessRefund", ctx, "pi_ref_456", 2000.0, string(domain.RefundTypePassengerLate)).Return(&ports.RefundResult{
+		gateway.On("ProcessRefund", ctx, "pi_ref_456", domain.Money(200000), string(domain.RefundTypePassengerLate)).Return(&ports.RefundResult{
 			GatewayRefundRef: "re_late_456",
-			Amount:           2000.0,
+			Amount:           domain.Money(200000),
 			Status:           "succeeded",
 		}, nil)
 		escrowRepo.On("UpdateEscrowStatus", ctx, "escrow-2", domain.EscrowStatusRefundedPartial).Return(nil)
 		escrowRepo.On("RecordRefund", ctx, mock.MatchedBy(func(r *domain.RefundTransaction) bool {
-			return r.PassengerRefundAmount == 2000.0 && r.DriverCompensationAmount == 2000.0 && r.RefundType == domain.RefundTypePassengerLate
+			return r.PassengerRefundAmount == domain.Money(200000) && r.DriverCompensationAmount == domain.Money(200000) && r.RefundType == domain.RefundTypePassengerLate
 		})).Return(nil)
 
 		service := services.NewBookingService(bookingRepo, escrowRepo, tripRepo, userRepo, vehicleRepo, gateway, notifier)
@@ -472,8 +657,8 @@ func TestBookingService_CancelBooking(t *testing.T) {
 
 		require.NoError(t, err)
 		assert.NotNil(t, refund)
-		assert.Equal(t, 2000.0, refund.PassengerRefundAmount)
-		assert.Equal(t, 2000.0, refund.DriverCompensationAmount)
+		assert.Equal(t, domain.Money(200000), refund.PassengerRefundAmount)
+		assert.Equal(t, domain.Money(200000), refund.DriverCompensationAmount)
 		assert.Equal(t, domain.RefundTypePassengerLate, refund.RefundType)
 
 		tripRepo.AssertExpectations(t)
@@ -499,6 +684,181 @@ func TestBookingService_CancelBooking(t *testing.T) {
 		assert.Equal(t, 3, expiredCount)
 		bookingRepo.AssertExpectations(t)
 	})
+
+	t.Run("cancelación ejecuta UpdateStatus y ReleaseSeats dentro de la misma transacción y nunca llama Save", func(t *testing.T) {
+		tripRepo := new(MockTripRepository)
+		bookingRepo := new(MockBookingRepository)
+		escrowRepo := new(MockEscrowRepository)
+		userRepo := new(MockUserRepository)
+		vehicleRepo := new(MockVehicleRepository)
+		gateway := new(MockPaymentGateway)
+		notifier := new(MockNotifier)
+		txManager := new(MockTransactionManager)
+
+		trip := createTestTrip("driver-1", 0, 48)
+		booking, _ := domain.NewBooking(domain.BookingParams{
+			ID:          "booking-tx-cancel",
+			TripID:      trip.ID,
+			PassengerID: "passenger-1",
+			DriverID:    "driver-1",
+			SeatsBooked: 2,
+			UnitPrice:   domain.Money(150000),
+		})
+
+		hasTx := func(c context.Context) bool {
+			v, _ := c.Value(mockTxCtxKey{}).(bool)
+			return v
+		}
+
+		bookingRepo.On("FindByID", ctx, "booking-tx-cancel").Return(booking, nil)
+		tripRepo.On("FindByID", ctx, trip.ID).Return(trip, nil)
+		txManager.On("WithinTransaction", ctx).Return(nil)
+		bookingRepo.On("UpdateStatus", mock.MatchedBy(hasTx), "booking-tx-cancel", domain.BookingStatusCancelledByPassenger, mock.Anything).Return(nil)
+		tripRepo.On("ReleaseSeats", mock.MatchedBy(hasTx), trip.ID, 2).Return(nil)
+		escrowRepo.On("FindByBookingID", ctx, "booking-tx-cancel").Return(nil, domain.ErrEscrowNotFound)
+
+		service := services.NewBookingService(bookingRepo, escrowRepo, tripRepo, userRepo, vehicleRepo, gateway, notifier, txManager)
+
+		refund, err := service.CancelBooking(ctx, ports.CancelBookingInput{
+			BookingID:        "booking-tx-cancel",
+			RequestingUserID: "passenger-1",
+			Reason:           "Cancelación antes de pagar",
+		})
+
+		require.NoError(t, err)
+		assert.Nil(t, refund)
+		tripRepo.AssertNotCalled(t, "Save", mock.Anything, mock.Anything)
+		txManager.AssertExpectations(t)
+		bookingRepo.AssertExpectations(t)
+		tripRepo.AssertExpectations(t)
+	})
+
+	t.Run("cancelación propaga error si ReleaseSeats falla dentro de la transacción", func(t *testing.T) {
+		tripRepo := new(MockTripRepository)
+		bookingRepo := new(MockBookingRepository)
+		escrowRepo := new(MockEscrowRepository)
+		userRepo := new(MockUserRepository)
+		vehicleRepo := new(MockVehicleRepository)
+		gateway := new(MockPaymentGateway)
+		notifier := new(MockNotifier)
+		txManager := new(MockTransactionManager)
+
+		trip := createTestTrip("driver-1", 1, 48)
+		booking, _ := domain.NewBooking(domain.BookingParams{
+			ID:          "booking-tx-err",
+			TripID:      trip.ID,
+			PassengerID: "passenger-1",
+			DriverID:    "driver-1",
+			SeatsBooked: 2,
+			UnitPrice:   domain.Money(150000),
+		})
+
+		dbErr := errors.New("deadlock detected")
+		bookingRepo.On("FindByID", ctx, "booking-tx-err").Return(booking, nil)
+		tripRepo.On("FindByID", ctx, trip.ID).Return(trip, nil)
+		txManager.On("WithinTransaction", ctx).Return(nil)
+		bookingRepo.On("UpdateStatus", mock.Anything, "booking-tx-err", domain.BookingStatusCancelledByPassenger, mock.Anything).Return(nil)
+		tripRepo.On("ReleaseSeats", mock.Anything, trip.ID, 2).Return(dbErr)
+
+		service := services.NewBookingService(bookingRepo, escrowRepo, tripRepo, userRepo, vehicleRepo, gateway, notifier, txManager)
+
+		refund, err := service.CancelBooking(ctx, ports.CancelBookingInput{
+			BookingID:        "booking-tx-err",
+			RequestingUserID: "passenger-1",
+			Reason:           "Error de BD",
+		})
+
+		assert.Nil(t, refund)
+		assert.ErrorIs(t, err, dbErr)
+		tripRepo.AssertNotCalled(t, "Save", mock.Anything, mock.Anything)
+	})
+
+	t.Run("fallo en CreatePaymentIntent revierte reserva y libera asientos en la misma transacción", func(t *testing.T) {
+		tripRepo := new(MockTripRepository)
+		bookingRepo := new(MockBookingRepository)
+		escrowRepo := new(MockEscrowRepository)
+		userRepo := new(MockUserRepository)
+		vehicleRepo := new(MockVehicleRepository)
+		gateway := new(MockPaymentGateway)
+		notifier := new(MockNotifier)
+		txManager := new(MockTransactionManager)
+
+		trip := createTestTrip("driver-1", 3, 48)
+		hasTx := func(c context.Context) bool {
+			v, _ := c.Value(mockTxCtxKey{}).(bool)
+			return v
+		}
+
+		tripRepo.On("FindByID", ctx, "trip-100").Return(trip, nil)
+		bookingRepo.On("CheckPassengerBookingConstraints", ctx, "passenger-2", "trip-100", trip.DepartureTime, trip.EstimatedArrivalTime, mock.AnythingOfType("time.Time")).Return(false, 0, nil)
+		bookingRepo.On("CreateWithHold", ctx, mock.AnythingOfType("*domain.Booking")).Return(nil)
+		gateway.On("CreatePaymentIntent", ctx, mock.AnythingOfType("string"), domain.Money(300000), "USD").Return(nil, errors.New("gateway timeout"))
+
+		txManager.On("WithinTransaction", ctx).Return(nil)
+		bookingRepo.On("UpdateStatus", mock.MatchedBy(hasTx), mock.AnythingOfType("string"), domain.BookingStatusRejected, mock.Anything).Return(nil)
+		tripRepo.On("ReleaseSeats", mock.MatchedBy(hasTx), "trip-100", 2).Return(nil)
+
+		service := services.NewBookingService(bookingRepo, escrowRepo, tripRepo, userRepo, vehicleRepo, gateway, notifier, txManager)
+
+		res, err := service.CreateBooking(ctx, ports.CreateBookingInput{
+			TripID:         "trip-100",
+			PassengerID:    "passenger-2",
+			SeatsRequested: 2,
+		})
+
+		assert.Nil(t, res)
+		assert.ErrorIs(t, err, domain.ErrPaymentFailed)
+		tripRepo.AssertNotCalled(t, "Save", mock.Anything, mock.Anything)
+		txManager.AssertExpectations(t)
+		bookingRepo.AssertExpectations(t)
+		tripRepo.AssertExpectations(t)
+	})
+
+	t.Run("fallo en UpdatePaymentIntent revierte reserva y libera asientos en la misma transacción", func(t *testing.T) {
+		tripRepo := new(MockTripRepository)
+		bookingRepo := new(MockBookingRepository)
+		escrowRepo := new(MockEscrowRepository)
+		userRepo := new(MockUserRepository)
+		vehicleRepo := new(MockVehicleRepository)
+		gateway := new(MockPaymentGateway)
+		notifier := new(MockNotifier)
+		txManager := new(MockTransactionManager)
+
+		trip := createTestTrip("driver-1", 3, 48)
+		hasTx := func(c context.Context) bool {
+			v, _ := c.Value(mockTxCtxKey{}).(bool)
+			return v
+		}
+		intentErr := errors.New("db write error on payment_intent_id")
+
+		tripRepo.On("FindByID", ctx, "trip-100").Return(trip, nil)
+		bookingRepo.On("CheckPassengerBookingConstraints", ctx, "passenger-2", "trip-100", trip.DepartureTime, trip.EstimatedArrivalTime, mock.AnythingOfType("time.Time")).Return(false, 0, nil)
+		bookingRepo.On("CreateWithHold", ctx, mock.AnythingOfType("*domain.Booking")).Return(nil)
+		gateway.On("CreatePaymentIntent", ctx, mock.AnythingOfType("string"), domain.Money(300000), "USD").Return(&ports.PaymentIntentResult{
+			GatewayRef: "pi_intent_999",
+			Amount:     domain.Money(300000),
+			Currency:   "USD",
+		}, nil)
+		bookingRepo.On("UpdatePaymentIntent", ctx, mock.AnythingOfType("string"), "pi_intent_999").Return(intentErr)
+
+		txManager.On("WithinTransaction", ctx).Return(nil)
+		bookingRepo.On("UpdateStatus", mock.MatchedBy(hasTx), mock.AnythingOfType("string"), domain.BookingStatusRejected, mock.Anything).Return(nil)
+		tripRepo.On("ReleaseSeats", mock.MatchedBy(hasTx), "trip-100", 2).Return(nil)
+
+		service := services.NewBookingService(bookingRepo, escrowRepo, tripRepo, userRepo, vehicleRepo, gateway, notifier, txManager)
+
+		res, err := service.CreateBooking(ctx, ports.CreateBookingInput{
+			TripID:         "trip-100",
+			PassengerID:    "passenger-2",
+			SeatsRequested: 2,
+		})
+
+		assert.Nil(t, res)
+		assert.ErrorIs(t, err, intentErr)
+		txManager.AssertExpectations(t)
+		bookingRepo.AssertExpectations(t)
+		tripRepo.AssertExpectations(t)
+	})
 }
 
 func TestBookingService_GetContactLink(t *testing.T) {
@@ -523,7 +883,7 @@ func TestBookingService_GetContactLink(t *testing.T) {
 			PassengerID: passengerID,
 			DriverID:    driverID,
 			SeatsBooked: 2,
-			UnitPrice:   1500.0,
+			UnitPrice:   domain.Money(150000),
 		})
 
 		trip := createTestTrip(driverID, 2, 24)
@@ -573,7 +933,7 @@ func TestBookingService_GetContactLink(t *testing.T) {
 			PassengerID: "passenger-original",
 			DriverID:    "driver-1",
 			SeatsBooked: 1,
-			UnitPrice:   1500.0,
+			UnitPrice:   domain.Money(150000),
 		})
 
 		bookingRepo.On("FindByID", ctx, "booking-99").Return(booking, nil)
@@ -600,6 +960,78 @@ func TestBookingService_GetContactLink(t *testing.T) {
 
 		linkDTO, err := service.GetContactLink(ctx, "non-existent", "passenger-1")
 		assert.ErrorIs(t, err, domain.ErrBookingNotFound)
+		assert.Nil(t, linkDTO)
+	})
+
+	t.Run("falla con ErrDriverPhoneRequired si el conductor no tiene teléfono registrado", func(t *testing.T) {
+		tripRepo := new(MockTripRepository)
+		bookingRepo := new(MockBookingRepository)
+		escrowRepo := new(MockEscrowRepository)
+		userRepo := new(MockUserRepository)
+		vehicleRepo := new(MockVehicleRepository)
+		gateway := new(MockPaymentGateway)
+		notifier := new(MockNotifier)
+
+		booking, _ := domain.NewBooking(domain.BookingParams{
+			ID:          "booking-no-phone",
+			TripID:      "trip-100",
+			PassengerID: "passenger-1",
+			DriverID:    "driver-no-phone",
+			SeatsBooked: 1,
+			UnitPrice:   domain.Money(150000),
+		})
+		trip := createTestTrip("driver-no-phone", 2, 24)
+		driverWithoutPhone := &domain.User{
+			ID:        "driver-no-phone",
+			FirstName: "Lucía",
+			LastName:  "Pérez",
+			Phone:     "   ",
+		}
+
+		bookingRepo.On("FindByID", ctx, "booking-no-phone").Return(booking, nil)
+		tripRepo.On("FindByID", ctx, "trip-100").Return(trip, nil)
+		userRepo.On("GetByID", ctx, "driver-no-phone").Return(driverWithoutPhone, nil)
+
+		service := services.NewBookingService(bookingRepo, escrowRepo, tripRepo, userRepo, vehicleRepo, gateway, notifier)
+
+		linkDTO, err := service.GetContactLink(ctx, "booking-no-phone", "passenger-1")
+		assert.ErrorIs(t, err, domain.ErrDriverPhoneRequired)
+		assert.Nil(t, linkDTO)
+	})
+
+	t.Run("falla con ErrDriverPhoneRequired si el teléfono del conductor no contiene suficientes dígitos válidos", func(t *testing.T) {
+		tripRepo := new(MockTripRepository)
+		bookingRepo := new(MockBookingRepository)
+		escrowRepo := new(MockEscrowRepository)
+		userRepo := new(MockUserRepository)
+		vehicleRepo := new(MockVehicleRepository)
+		gateway := new(MockPaymentGateway)
+		notifier := new(MockNotifier)
+
+		booking, _ := domain.NewBooking(domain.BookingParams{
+			ID:          "booking-bad-phone",
+			TripID:      "trip-100",
+			PassengerID: "passenger-1",
+			DriverID:    "driver-bad-phone",
+			SeatsBooked: 1,
+			UnitPrice:   domain.Money(150000),
+		})
+		trip := createTestTrip("driver-bad-phone", 2, 24)
+		driverWithInvalidPhone := &domain.User{
+			ID:        "driver-bad-phone",
+			FirstName: "Pedro",
+			LastName:  "Sánchez",
+			Phone:     "---",
+		}
+
+		bookingRepo.On("FindByID", ctx, "booking-bad-phone").Return(booking, nil)
+		tripRepo.On("FindByID", ctx, "trip-100").Return(trip, nil)
+		userRepo.On("GetByID", ctx, "driver-bad-phone").Return(driverWithInvalidPhone, nil)
+
+		service := services.NewBookingService(bookingRepo, escrowRepo, tripRepo, userRepo, vehicleRepo, gateway, notifier)
+
+		linkDTO, err := service.GetContactLink(ctx, "booking-bad-phone", "passenger-1")
+		assert.ErrorIs(t, err, domain.ErrDriverPhoneRequired)
 		assert.Nil(t, linkDTO)
 	})
 }

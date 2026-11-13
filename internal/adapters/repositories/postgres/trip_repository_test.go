@@ -3,12 +3,14 @@ package postgres_test
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -107,6 +109,17 @@ func (r *MockRows) Scan(dest ...any) error {
 			}
 		case *float64:
 			*target = val.(float64)
+		case *pgtype.Numeric:
+			switch v := val.(type) {
+			case pgtype.Numeric:
+				*target = v
+			case domain.Money:
+				*target = pgtype.Numeric{Int: big.NewInt(int64(v)), Exp: -2, Valid: true}
+			case int64:
+				*target = pgtype.Numeric{Int: big.NewInt(v), Exp: -2, Valid: true}
+			default:
+				return fmt.Errorf("unsupported mock pgtype.Numeric source type: %T", val)
+			}
 		case *int:
 			*target = val.(int)
 		case *time.Time:
@@ -173,9 +186,9 @@ func TestTripRepository_Save(t *testing.T) {
 		TotalDurationMinutes: 240,
 		TotalSeatsOffered:    3,
 		MaxVehicleSeats:      4,
-		PricePerSeat:         10000.0,
-		EstimatedFuelCost:    28050.0,
-		EstimatedTollCost:    3000.0,
+		PricePerSeat:         domain.Money(1000000),
+		EstimatedFuelCost:    domain.Money(2805000),
+		EstimatedTollCost:    domain.Money(300000),
 		Stops:                []domain.TripStop{*stop},
 	}
 
@@ -243,10 +256,10 @@ func TestTripRepository_FindByID(t *testing.T) {
 				*(dest[11].(*int)) = 240
 				*(dest[12].(*int)) = 3
 				*(dest[13].(*int)) = 3
-				*(dest[14].(*float64)) = 11000.0
-				*(dest[15].(*float64)) = 11385.0
-				*(dest[16].(*float64)) = 28050.0
-				*(dest[17].(*float64)) = 3000.0
+				*(dest[14].(*pgtype.Numeric)) = pgtype.Numeric{Int: big.NewInt(1100000), Exp: -2, Valid: true}
+				*(dest[15].(*pgtype.Numeric)) = pgtype.Numeric{Int: big.NewInt(1138500), Exp: -2, Valid: true}
+				*(dest[16].(*pgtype.Numeric)) = pgtype.Numeric{Int: big.NewInt(2805000), Exp: -2, Valid: true}
+				*(dest[17].(*pgtype.Numeric)) = pgtype.Numeric{Int: big.NewInt(300000), Exp: -2, Valid: true}
 				*(dest[18].(*string)) = "PUBLISHED"
 				*(dest[19].(*time.Time)) = now
 				*(dest[20].(*time.Time)) = now
@@ -316,8 +329,9 @@ func TestTripRepository_SearchMatchingTrips(t *testing.T) {
 		Offset:          0,
 	}
 
-	t.Run("ejecuta consulta CTE con ST_DWithin y mapea los resultados correctamente", func(t *testing.T) {
+	t.Run("ejecuta consulta CTE con ST_DWithin omitiendo WKT completo y retornando polilínea simplificada", func(t *testing.T) {
 		mockDB := new(MockDBExecutor)
+		encodedPreview := "p`~rE~lxbJc~kH|m}M"
 
 		mockData := [][]any{
 			{
@@ -333,17 +347,17 @@ func TestTripRepository_SearchMatchingTrips(t *testing.T) {
 				"Rosario",
 				"POINT(-58.381600 -34.603700)",
 				"POINT(-60.639300 -32.946800)",
-				"LINESTRING(-58.381600 -34.603700, -60.639300 -32.946800)",
+				encodedPreview,
 				now.Add(24 * time.Hour),
 				now.Add(28 * time.Hour),
 				300.0,
 				240,
 				3,
 				2,
-				10500.0,
-				11385.0,
-				28050.0,
-				3000.0,
+				domain.Money(1050000),
+				domain.Money(1138500),
+				domain.Money(2805000),
+				domain.Money(300000),
 				350.0,
 				720.0,
 				"PUBLISHED",
@@ -355,8 +369,12 @@ func TestTripRepository_SearchMatchingTrips(t *testing.T) {
 		mockRows := NewMockRows(mockData)
 
 		mockDB.On("Query", ctx, mock.MatchedBy(func(sql string) bool {
-			return strings.Contains(sql, "passenger_input") &&
+			return strings.Contains(sql, "passenger_input AS NOT MATERIALIZED") &&
 				strings.Contains(sql, "ST_DWithin(t.route_path::geography, p.orig_pt::geography, $5)") &&
+				strings.Contains(sql, "ST_DWithin(t.route_path::geography, p.dest_pt::geography, $5)") &&
+				strings.Contains(sql, "ST_AsEncodedPolyline(ST_Simplify(r.route_path, 0.001), 5)") &&
+				!strings.Contains(sql, "ST_AsText(r.route_path)") &&
+				strings.Contains(sql, "ranked_trips") &&
 				strings.Contains(sql, "ST_LineLocatePoint") &&
 				strings.Contains(sql, "ORDER BY")
 		}), mock.MatchedBy(func(args []any) bool {
@@ -379,8 +397,61 @@ func TestTripRepository_SearchMatchingTrips(t *testing.T) {
 		assert.Equal(t, "Toyota", rec.VehicleBrand)
 		assert.Equal(t, 350.0, rec.PickupWalkDistanceM)
 		assert.Equal(t, 720.0, rec.DropoffWalkDistanceM)
+		assert.Equal(t, encodedPreview, rec.RoutePreviewPolyline)
+		assert.Empty(t, rec.Trip.RoutePath.Coordinates, "El listado de búsqueda no debe inflarse con la geometría WKT completa")
 		assert.Equal(t, domain.TripStatusPublished, rec.Trip.Status)
-		assert.Len(t, rec.Trip.RoutePath.Coordinates, 2)
+	})
+}
+
+func TestTripRepository_ListByDriverID(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	t.Run("lista viajes del conductor con polilínea simplificada y sin WKT completo", func(t *testing.T) {
+		mockDB := new(MockDBExecutor)
+		encodedPreview := "p`~rE~lxbJc~kH|m}M"
+
+		mockData := [][]any{
+			{
+				"trip-driver-1",
+				"driver-99",
+				"vehicle-1",
+				"Buenos Aires",
+				"POINT(-58.381600 -34.603700)",
+				"Rosario",
+				"POINT(-60.639300 -32.946800)",
+				encodedPreview,
+				now.Add(24 * time.Hour),
+				now.Add(28 * time.Hour),
+				300.0,
+				240,
+				3,
+				2,
+				domain.Money(1050000),
+				domain.Money(1138500),
+				domain.Money(2805000),
+				domain.Money(300000),
+				"PUBLISHED",
+				now,
+				now,
+			},
+		}
+
+		mockRows := NewMockRows(mockData)
+		mockDB.On("Query", ctx, mock.MatchedBy(func(sql string) bool {
+			return strings.Contains(sql, "FROM trips") &&
+				strings.Contains(sql, "ST_AsEncodedPolyline(ST_Simplify(route_path, 0.001), 5)") &&
+				!strings.Contains(sql, "ST_AsText(route_path)")
+		}), []any{"driver-99", 10, 0}).Return(mockRows, nil)
+
+		repo := postgres.NewTripRepository(mockDB)
+		trips, err := repo.ListByDriverID(ctx, "driver-99", 10, 0)
+
+		require.NoError(t, err)
+		assert.Len(t, trips, 1)
+		assert.Equal(t, encodedPreview, trips[0].RoutePreviewPolyline)
+		assert.Empty(t, trips[0].RoutePath.Coordinates)
+		mockDB.AssertExpectations(t)
 	})
 }
 
@@ -407,3 +478,40 @@ func TestTripRepository_UpdateStatus(t *testing.T) {
 		assert.ErrorIs(t, err, domain.ErrTripNotFound)
 	})
 }
+
+func TestTripRepository_ReleaseSeats(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("incrementa atómicamente available_seats y reabre viajes FULL", func(t *testing.T) {
+		mockDB := new(MockDBExecutor)
+		mockDB.On("Exec", ctx, mock.MatchedBy(func(sql string) bool {
+			return strings.Contains(sql, "UPDATE trips") &&
+				strings.Contains(sql, "available_seats = available_seats + $1") &&
+				strings.Contains(sql, "WHERE id = $2")
+		}), []any{2, "trip-100"}).Return(pgconn.NewCommandTag("UPDATE 1"), nil)
+
+		repo := postgres.NewTripRepository(mockDB)
+		err := repo.ReleaseSeats(ctx, "trip-100", 2)
+		require.NoError(t, err)
+		mockDB.AssertExpectations(t)
+	})
+
+	t.Run("rechaza cantidad de asientos no positiva sin tocar la base de datos", func(t *testing.T) {
+		mockDB := new(MockDBExecutor)
+		repo := postgres.NewTripRepository(mockDB)
+
+		err := repo.ReleaseSeats(ctx, "trip-100", 0)
+		assert.ErrorIs(t, err, domain.ErrInvalidSeatCount)
+		mockDB.AssertNotCalled(t, "Exec", mock.Anything, mock.Anything, mock.Anything)
+	})
+
+	t.Run("retorna ErrTripNotFound si el viaje no existe", func(t *testing.T) {
+		mockDB := new(MockDBExecutor)
+		mockDB.On("Exec", ctx, mock.Anything, []any{2, "trip-missing"}).Return(pgconn.NewCommandTag("UPDATE 0"), nil)
+
+		repo := postgres.NewTripRepository(mockDB)
+		err := repo.ReleaseSeats(ctx, "trip-missing", 2)
+		assert.ErrorIs(t, err, domain.ErrTripNotFound)
+	})
+}
+

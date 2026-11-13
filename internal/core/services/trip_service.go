@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/thumbi/auth-kyc-service/internal/core/domain"
 	"github.com/thumbi/auth-kyc-service/internal/core/ports"
+	"github.com/thumbi/auth-kyc-service/pkg/whatsapp"
 )
 
 // tripService implementa ports.TripService bajo Clean Architecture
@@ -67,6 +68,9 @@ func (s *tripService) CreateTrip(ctx context.Context, input ports.CreateTripInpu
 	}
 	if !driver.IsDriverActive {
 		return nil, domain.ErrDriverNotActive
+	}
+	if strings.TrimSpace(driver.Phone) == "" || len(whatsapp.CleanPhoneNumber(driver.Phone)) < 7 {
+		return nil, domain.ErrDriverPhoneRequired
 	}
 
 	// 2. Validar que el vehículo exista, pertenezca al conductor y esté en estado APPROVED (RF-02)
@@ -296,6 +300,7 @@ func (s *tripService) SearchTrips(ctx context.Context, query ports.SearchTripsQu
 			CapPricePerSeat:      r.Trip.CapPricePerSeat,
 			PickupWalkDistanceM:  r.PickupWalkDistanceM,
 			DropoffWalkDistanceM: r.DropoffWalkDistanceM,
+			RoutePreviewPolyline: r.RoutePreviewPolyline,
 			Status:               r.Trip.Status,
 		}
 	}

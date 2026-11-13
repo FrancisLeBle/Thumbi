@@ -39,8 +39,9 @@ func (h *AuthHandler) SocialLogin(c *gin.Context) {
 	var req SocialLoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "parámetros inválidos en la solicitud",
-			"details": err.Error(),
+			"error":      "parámetros inválidos en la solicitud",
+			"code":       "INVALID_REQUEST_PARAMETERS",
+			"request_id": middleware.GetRequestID(c),
 		})
 		return
 	}
@@ -52,13 +53,7 @@ func (h *AuthHandler) SocialLogin(c *gin.Context) {
 		ClientIP:  c.ClientIP(),
 	})
 	if err != nil {
-		status := http.StatusUnauthorized
-		if errors.Is(err, domain.ErrInvalidCredentials) {
-			status = http.StatusUnauthorized
-		}
-		c.JSON(status, gin.H{
-			"error": err.Error(),
-		})
+		HandleError(c, err)
 		return
 	}
 
@@ -104,24 +99,16 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 
 	if currentToken == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "debe proporcionar el token actual a renovar",
+			"error":      "debe proporcionar el token actual a renovar",
+			"code":       "MISSING_TOKEN",
+			"request_id": middleware.GetRequestID(c),
 		})
 		return
 	}
 
 	result, err := h.authService.RefreshSession(c.Request.Context(), currentToken, c.Request.UserAgent(), c.ClientIP())
 	if err != nil {
-		status := http.StatusUnauthorized
-		if errors.Is(err, domain.ErrSessionExpired) {
-			c.JSON(status, gin.H{
-				"error": "la sesión ha expirado. Por favor inicie sesión nuevamente.",
-				"code":  "SESSION_EXPIRED",
-			})
-			return
-		}
-		c.JSON(status, gin.H{
-			"error": err.Error(),
-		})
+		HandleError(c, err)
 		return
 	}
 
@@ -139,13 +126,25 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 func (h *AuthHandler) Me(c *gin.Context) {
 	userID, exists := middleware.GetUserID(c)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "no autenticado"})
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error":      "no autenticado",
+			"code":       "UNAUTHORIZED",
+			"request_id": middleware.GetRequestID(c),
+		})
 		return
 	}
 
 	user, err := h.userRepo.GetByID(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "usuario no encontrado"})
+		if errors.Is(err, domain.ErrUserNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error":      "usuario no encontrado",
+				"code":       "USER_NOT_FOUND",
+				"request_id": middleware.GetRequestID(c),
+			})
+			return
+		}
+		HandleError(c, err)
 		return
 	}
 

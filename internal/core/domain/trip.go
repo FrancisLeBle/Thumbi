@@ -56,17 +56,18 @@ type Trip struct {
 	OriginCoords         Coordinates  `json:"origin_coords"`
 	DestinationTitle     string       `json:"destination_title"`
 	DestinationCoords    Coordinates  `json:"destination_coords"`
-	RoutePath            LineString   `json:"route_path"`
+	RoutePath            LineString   `json:"route_path,omitempty"`
+	RoutePreviewPolyline string       `json:"route_preview_polyline,omitempty"`
 	DepartureTime        time.Time    `json:"departure_time"`
 	EstimatedArrivalTime time.Time    `json:"estimated_arrival_time"`
 	TotalDistanceKm      float64      `json:"total_distance_km"`
 	TotalDurationMinutes int          `json:"total_duration_minutes"`
 	TotalSeatsOffered    int          `json:"total_seats_offered"`
 	AvailableSeats       int          `json:"available_seats"`
-	PricePerSeat         float64      `json:"price_per_seat"`
-	CapPricePerSeat      float64      `json:"cap_price_per_seat"`
-	EstimatedFuelCost    float64      `json:"estimated_fuel_cost"`
-	EstimatedTollCost    float64      `json:"estimated_toll_cost"`
+	PricePerSeat         Money        `json:"price_per_seat"`
+	CapPricePerSeat      Money        `json:"cap_price_per_seat"`
+	EstimatedFuelCost    Money        `json:"estimated_fuel_cost"`
+	EstimatedTollCost    Money        `json:"estimated_toll_cost"`
 	Status               TripStatus   `json:"status"`
 	Stops                []TripStop   `json:"stops,omitempty"`
 	CreatedAt            time.Time    `json:"created_at"`
@@ -89,9 +90,9 @@ type TripCreationParams struct {
 	TotalDurationMinutes int
 	TotalSeatsOffered    int
 	MaxVehicleSeats      int
-	PricePerSeat         float64
-	EstimatedFuelCost    float64
-	EstimatedTollCost    float64
+	PricePerSeat         Money
+	EstimatedFuelCost    Money
+	EstimatedTollCost    Money
 	Stops                []TripStop
 }
 

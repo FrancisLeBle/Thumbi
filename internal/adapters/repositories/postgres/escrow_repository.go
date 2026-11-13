@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/thumbi/auth-kyc-service/internal/core/domain"
 	"github.com/thumbi/auth-kyc-service/internal/core/ports"
 )
@@ -33,7 +34,7 @@ func (r *escrowRepository) CreateEscrow(ctx context.Context, escrow *domain.Escr
 		)
 	`
 
-	_, err := r.db.Exec(
+	_, err := executor(ctx, r.db).Exec(
 		ctx,
 		query,
 		escrow.ID,
@@ -41,7 +42,7 @@ func (r *escrowRepository) CreateEscrow(ctx context.Context, escrow *domain.Escr
 		escrow.TripID,
 		escrow.PayerID,
 		escrow.PayeeID,
-		escrow.Amount,
+		moneyToPGNumeric(escrow.Amount),
 		escrow.Currency,
 		escrow.PaymentGatewayRef,
 		string(escrow.Status),
@@ -67,16 +68,19 @@ func (r *escrowRepository) FindByBookingID(ctx context.Context, bookingID string
 		WHERE booking_id = $1
 	`
 
-	var e domain.EscrowTransaction
-	var statusStr string
+	var (
+		e         domain.EscrowTransaction
+		amountNum pgtype.Numeric
+		statusStr string
+	)
 
-	err := r.db.QueryRow(ctx, query, bookingID).Scan(
+	err := executor(ctx, r.db).QueryRow(ctx, query, bookingID).Scan(
 		&e.ID,
 		&e.BookingID,
 		&e.TripID,
 		&e.PayerID,
 		&e.PayeeID,
-		&e.Amount,
+		&amountNum,
 		&e.Currency,
 		&e.PaymentGatewayRef,
 		&statusStr,
@@ -94,6 +98,10 @@ func (r *escrowRepository) FindByBookingID(ctx context.Context, bookingID string
 		return nil, fmt.Errorf("error consultando escrow para reserva %s: %w", bookingID, err)
 	}
 
+	if e.Amount, err = pgNumericToMoney(amountNum); err != nil {
+		return nil, fmt.Errorf("error convirtiendo monto de escrow: %w", err)
+	}
+
 	e.Status = domain.EscrowStatus(statusStr)
 	return &e, nil
 }
@@ -109,7 +117,7 @@ func (r *escrowRepository) UpdateEscrowStatus(ctx context.Context, escrowID stri
 		WHERE id = $2
 	`
 
-	cmd, err := r.db.Exec(ctx, query, string(newStatus), escrowID)
+	cmd, err := executor(ctx, r.db).Exec(ctx, query, string(newStatus), escrowID)
 	if err != nil {
 		return fmt.Errorf("error actualizando estado de custodia %s: %w", escrowID, err)
 	}
@@ -137,14 +145,14 @@ func (r *escrowRepository) RecordRefund(ctx context.Context, refund *domain.Refu
 		)
 	`
 
-	_, err := r.db.Exec(
+	_, err := executor(ctx, r.db).Exec(
 		ctx,
 		query,
 		refund.ID,
 		refund.EscrowTransactionID,
 		refund.BookingID,
-		refund.PassengerRefundAmount,
-		refund.DriverCompensationAmount,
+		moneyToPGNumeric(refund.PassengerRefundAmount),
+		moneyToPGNumeric(refund.DriverCompensationAmount),
 		string(refund.RefundType),
 		refund.GatewayRefundRef,
 		refund.ProcessedAt,

@@ -18,7 +18,7 @@ func NewMockPaymentGateway() ports.PaymentGateway {
 }
 
 // CreatePaymentIntent genera una orden o intención de cobro simulada para la reserva
-func (g *mockPaymentGateway) CreatePaymentIntent(ctx context.Context, bookingID string, amount float64, currency string) (*ports.PaymentIntentResult, error) {
+func (g *mockPaymentGateway) CreatePaymentIntent(ctx context.Context, bookingID string, amount domain.Money, currency string) (*ports.PaymentIntentResult, error) {
 	if strings.TrimSpace(bookingID) == "" {
 		return nil, domain.ErrBookingNotFound
 	}
@@ -61,7 +61,7 @@ func (g *mockPaymentGateway) ConfirmPayment(ctx context.Context, gatewayRef stri
 }
 
 // ProcessRefund liquida la devolución o reintegro total/parcial del depósito
-func (g *mockPaymentGateway) ProcessRefund(ctx context.Context, gatewayRef string, amount float64, reason string) (*ports.RefundResult, error) {
+func (g *mockPaymentGateway) ProcessRefund(ctx context.Context, gatewayRef string, amount domain.Money, reason string) (*ports.RefundResult, error) {
 	if strings.TrimSpace(gatewayRef) == "" {
 		return nil, domain.ErrPaymentFailed
 	}

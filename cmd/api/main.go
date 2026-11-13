@@ -18,6 +18,7 @@ import (
 	"github.com/thumbi/auth-kyc-service/internal/adapters/external/notifier"
 	"github.com/thumbi/auth-kyc-service/internal/adapters/external/oauth"
 	"github.com/thumbi/auth-kyc-service/internal/adapters/external/payment"
+	"github.com/thumbi/auth-kyc-service/internal/adapters/external/redis"
 	"github.com/thumbi/auth-kyc-service/internal/adapters/external/routing"
 	adapterHttp "github.com/thumbi/auth-kyc-service/internal/adapters/handlers/http"
 	"github.com/thumbi/auth-kyc-service/internal/adapters/handlers/http/middleware"
@@ -76,8 +77,7 @@ func main() {
 	reviewRepo := postgres.NewReviewRepository(dbPool)
 	disputeRepo := postgres.NewDisputeRepository(dbPool)
 	identityRepo := postgres.NewIdentityRepository(dbPool)
-	sessionRepo := postgres.NewMemorySessionRepository(1 * time.Minute)
-	defer sessionRepo.Close()
+	sessionRepo := postgres.NewSessionRepository(dbPool)
 
 	// 3.2 Seguridad y Tokens JWT (TTL de exactamente 20 minutos según RF-04)
 	tokenManager := jwt.NewTokenManager(cfg.JWTSecret, cfg.JWTIssuer)
@@ -89,7 +89,7 @@ func main() {
 
 	biometricsProvider := biometrics.NewMockBiometricsProvider()
 	notifierService := notifier.NewPushNotifier()
-	routingProvider := routing.NewOSRMProvider(cfg.OSRMBaseURL, &http.Client{Timeout: 6 * time.Second})
+	routingProvider := routing.NewOSRMProvider(cfg.OSRMBaseURL, routing.NewSecureHTTPClient(6*time.Second))
 	paymentGateway := payment.NewMockPaymentGateway()
 
 	// 3.4 Casos de Uso / Servicios del Dominio
@@ -121,6 +121,7 @@ func main() {
 		bookingRepo,
 		escrowRepo,
 	)
+	txManager := postgres.NewTransactionManager(dbPool)
 	bookingService := services.NewBookingService(
 		bookingRepo,
 		escrowRepo,
@@ -129,6 +130,7 @@ func main() {
 		vehicleRepo,
 		paymentGateway,
 		notifierService,
+		txManager,
 	)
 	reputationService := services.NewReputationService(
 		reviewRepo,
@@ -142,6 +144,7 @@ func main() {
 		bookingRepo,
 		tripRepo,
 		paymentGateway,
+		txManager,
 	)
 
 	// 3.5 Handlers y Middleware HTTP
@@ -155,7 +158,9 @@ func main() {
 	healthHandler := adapterHttp.NewHealthHandler(dbPool)
 	authMiddleware := middleware.AuthMiddleware(authService)
 
-	// 3.6 Router de Gin con configuración de CORS restringido a orígenes de confianza
+	// 3.6 Router de Gin con Rate Limiting respaldado por Redis y CORS restringido a orígenes de confianza
+	rateLimiter := redis.NewRateLimiter(cfg.RedisAddr)
+
 	allowedOrigins := []string{}
 	if cfg.AppURL != "" {
 		allowedOrigins = append(allowedOrigins, cfg.AppURL)
@@ -179,16 +184,18 @@ func main() {
 		DisputeHandler: disputeHandler,
 		HealthHandler:  healthHandler,
 		AuthMiddleware: authMiddleware,
+		RateLimiter:    rateLimiter,
 		WebhookSecret:  cfg.WebhookSecret,
 		AllowedOrigins: allowedOrigins,
 	})
 
-	// 3.7 Worker en segundo plano para expiración automática de reservas por TTL (15 min)
+	// 3.7 Workers en segundo plano: expiración de reservas (15 min TTL) y limpieza de sesiones expiradas
 	workerCtx, cancelWorker := context.WithCancel(context.Background())
 	defer cancelWorker()
 
 	expirationWorker := worker.NewExpirationWorker(bookingService, 1*time.Minute)
 	go expirationWorker.Start(workerCtx)
+	go sessionRepo.StartCleanup(workerCtx, 5*time.Minute)
 
 	// 4. Configurar Servidor HTTP
 	httpServer := &http.Server{

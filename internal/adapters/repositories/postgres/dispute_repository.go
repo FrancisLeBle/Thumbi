@@ -42,7 +42,8 @@ func (r *disputeRepository) Save(ctx context.Context, dispute *domain.Dispute) e
 		evidence = []string{}
 	}
 
-	_, err := r.db.Exec(
+	exec := executor(ctx, r.db)
+	_, err := exec.Exec(
 		ctx,
 		query,
 		dispute.ID,
@@ -84,7 +85,8 @@ func (r *disputeRepository) FindByID(ctx context.Context, id string) (*domain.Di
 		WHERE id = $1
 	`
 
-	return r.scanDispute(r.db.QueryRow(ctx, query, id))
+	exec := executor(ctx, r.db)
+	return r.scanDispute(exec.QueryRow(ctx, query, id))
 }
 
 // FindByEscrowID recupera la disputa asociada a una transacción de fondos en custodia específica
@@ -99,7 +101,8 @@ func (r *disputeRepository) FindByEscrowID(ctx context.Context, escrowID string)
 		WHERE escrow_transaction_id = $1
 	`
 
-	return r.scanDispute(r.db.QueryRow(ctx, query, escrowID))
+	exec := executor(ctx, r.db)
+	return r.scanDispute(exec.QueryRow(ctx, query, escrowID))
 }
 
 // Update persiste los cambios de estado, notas administrativas y resolución de la disputa
@@ -114,7 +117,8 @@ func (r *disputeRepository) Update(ctx context.Context, dispute *domain.Dispute)
 		WHERE id = $6
 	`
 
-	tag, err := r.db.Exec(
+	exec := executor(ctx, r.db)
+	tag, err := exec.Exec(
 		ctx,
 		query,
 		string(dispute.Status),
@@ -148,7 +152,8 @@ func (r *disputeRepository) List(ctx context.Context, limit, offset int) ([]*dom
 		LIMIT $1 OFFSET $2
 	`
 
-	rows, err := r.db.Query(ctx, query, limit, offset)
+	exec := executor(ctx, r.db)
+	rows, err := exec.Query(ctx, query, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("error listando disputas: %w", err)
 	}

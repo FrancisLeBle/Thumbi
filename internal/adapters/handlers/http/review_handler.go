@@ -44,8 +44,9 @@ func (h *ReviewHandler) CreateReview(c *gin.Context) {
 	var req CreateReviewRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "cuerpo de solicitud inválido o incompleto: " + err.Error(),
-			"code":  "INVALID_REQUEST_BODY",
+			"error":      "cuerpo de solicitud inválido o incompleto",
+			"code":       "INVALID_REQUEST_BODY",
+			"request_id": middleware.GetRequestID(c),
 		})
 		return
 	}
@@ -62,58 +63,62 @@ func (h *ReviewHandler) CreateReview(c *gin.Context) {
 		switch {
 		case errors.Is(err, domain.ErrTripNotCompletedForReview):
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "Solo se pueden calificar viajes y reservas completadas",
-				"code":  "TRIP_NOT_COMPLETED_FOR_REVIEW",
+				"error":      "Solo se pueden calificar viajes y reservas completadas",
+				"code":       "TRIP_NOT_COMPLETED_FOR_REVIEW",
+				"request_id": middleware.GetRequestID(c),
 			})
 			return
 
 		case errors.Is(err, domain.ErrInvalidRating):
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "La calificación debe ser un valor entero entre 1 y 5 estrellas",
-				"code":  "INVALID_RATING",
+				"error":      "La calificación debe ser un valor entero entre 1 y 5 estrellas",
+				"code":       "INVALID_RATING",
+				"request_id": middleware.GetRequestID(c),
 			})
 			return
 
 		case errors.Is(err, domain.ErrReviewSelfNotAllowed):
 			c.JSON(http.StatusUnprocessableEntity, gin.H{
-				"error": "No está permitido calificarse a sí mismo",
-				"code":  "SELF_REVIEW_NOT_ALLOWED",
+				"error":      "No está permitido calificarse a sí mismo",
+				"code":       "SELF_REVIEW_NOT_ALLOWED",
+				"request_id": middleware.GetRequestID(c),
 			})
 			return
 
 		case errors.Is(err, domain.ErrDuplicateReview):
 			c.JSON(http.StatusConflict, gin.H{
-				"error": "Ya has emitido una calificación previa para esta reserva",
-				"code":  "DUPLICATE_REVIEW",
+				"error":      "Ya has emitido una calificación previa para esta reserva",
+				"code":       "DUPLICATE_REVIEW",
+				"request_id": middleware.GetRequestID(c),
 			})
 			return
 
 		case errors.Is(err, domain.ErrBookingNotFound):
 			c.JSON(http.StatusNotFound, gin.H{
-				"error": "Reserva no encontrada",
-				"code":  "BOOKING_NOT_FOUND",
+				"error":      "Reserva no encontrada",
+				"code":       "BOOKING_NOT_FOUND",
+				"request_id": middleware.GetRequestID(c),
 			})
 			return
 
 		case errors.Is(err, domain.ErrTripNotFound):
 			c.JSON(http.StatusNotFound, gin.H{
-				"error": "Viaje no encontrado",
-				"code":  "TRIP_NOT_FOUND",
+				"error":      "Viaje no encontrado",
+				"code":       "TRIP_NOT_FOUND",
+				"request_id": middleware.GetRequestID(c),
 			})
 			return
 
 		case errors.Is(err, domain.ErrUnauthorized):
 			c.JSON(http.StatusForbidden, gin.H{
-				"error": "No estás autorizado para calificar esta reserva",
-				"code":  "FORBIDDEN",
+				"error":      "No estás autorizado para calificar esta reserva",
+				"code":       "FORBIDDEN",
+				"request_id": middleware.GetRequestID(c),
 			})
 			return
 
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": err.Error(),
-				"code":  "INTERNAL_SERVER_ERROR",
-			})
+			HandleError(c, err)
 			return
 		}
 	}
@@ -127,8 +132,9 @@ func (h *ReviewHandler) GetUserReviews(c *gin.Context) {
 	userID := strings.TrimSpace(c.Param("user_id"))
 	if userID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "ID de usuario no especificado",
-			"code":  "MISSING_USER_ID",
+			"error":      "ID de usuario no especificado",
+			"code":       "MISSING_USER_ID",
+			"request_id": middleware.GetRequestID(c),
 		})
 		return
 	}
@@ -149,10 +155,7 @@ func (h *ReviewHandler) GetUserReviews(c *gin.Context) {
 
 	profile, err := h.reputationService.GetUserReviews(c.Request.Context(), userID, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
-			"code":  "INTERNAL_SERVER_ERROR",
-		})
+		HandleError(c, err)
 		return
 	}
 

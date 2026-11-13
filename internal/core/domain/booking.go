@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"math"
 	"strings"
 	"time"
 )
@@ -22,6 +21,9 @@ const (
 // DefaultBookingTTL tiempo límite de retención de asientos sin pago confirmado (15 minutos)
 const DefaultBookingTTL = 15 * time.Minute
 
+// MaxPendingBookingsPerPassenger tope máximo de reservas en PENDING_PAYMENT activas por pasajero
+const MaxPendingBookingsPerPassenger = 3
+
 // BookingParams DTO para la instanciación de una nueva reserva en el dominio
 type BookingParams struct {
 	ID              string
@@ -29,7 +31,7 @@ type BookingParams struct {
 	PassengerID     string
 	DriverID        string
 	SeatsBooked     int
-	UnitPrice       float64
+	UnitPrice       Money
 	PickupStopID    *string
 	DropoffStopID   *string
 	PaymentIntentID *string
@@ -42,8 +44,8 @@ type Booking struct {
 	TripID             string        `json:"trip_id"`
 	PassengerID        string        `json:"passenger_id"`
 	SeatsBooked        int           `json:"seats_booked"`
-	UnitPrice          float64       `json:"unit_price"`
-	TotalPrice         float64       `json:"total_price"`
+	UnitPrice          Money         `json:"unit_price"`
+	TotalPrice         Money         `json:"total_price"`
 	Status             BookingStatus `json:"status"`
 	PickupStopID       *string       `json:"pickup_stop_id,omitempty"`
 	DropoffStopID      *string       `json:"dropoff_stop_id,omitempty"`
@@ -83,7 +85,7 @@ func NewBooking(params BookingParams) (*Booking, error) {
 	}
 
 	nowUTC := time.Now().UTC()
-	totalPrice := math.Round(params.UnitPrice*float64(params.SeatsBooked)*100) / 100
+	totalPrice := params.UnitPrice * Money(params.SeatsBooked)
 
 	return &Booking{
 		ID:              params.ID,

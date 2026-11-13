@@ -2,9 +2,11 @@ package routing_test
 
 import (
 	"context"
+	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -57,8 +59,8 @@ func TestOSRMProvider_CalculateRoute(t *testing.T) {
 		assert.InDelta(t, 300.45, details.DistanceKm, 0.1)
 		assert.Equal(t, 240, details.DurationMinutes)
 		assert.Equal(t, 2, details.TollsCount) // ~300km / 130km = 2
-		assert.Equal(t, 3000.0, details.EstimatedTollCost)
-		assert.Greater(t, details.EstimatedFuelCost, 0.0)
+		assert.Equal(t, domain.Money(300000), details.EstimatedTollCost)
+		assert.Greater(t, details.EstimatedFuelCost, domain.Money(0))
 		assert.Len(t, details.RoutePath.Coordinates, 3)
 	})
 
@@ -86,4 +88,46 @@ func TestOSRMProvider_CalculateRoute(t *testing.T) {
 		})
 		assert.ErrorIs(t, err, domain.ErrInvalidRouteCoordinates)
 	})
+
+	t.Run("soporta servidor OSRM sobre HTTPS/TLS", func(t *testing.T) {
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{
+				"code": "Ok",
+				"routes": [
+					{
+						"distance": 300450.0,
+						"duration": 14400.0,
+						"geometry": {
+							"type": "LineString",
+							"coordinates": [
+								[-58.3816, -34.6037],
+								[-60.6393, -32.9468]
+							]
+						}
+					}
+				]
+			}`))
+		}))
+		defer server.Close()
+
+		provider := routing.NewOSRMProvider(server.URL, server.Client())
+		details, err := provider.CalculateRoute(ctx, req)
+
+		require.NoError(t, err)
+		assert.InDelta(t, 300.45, details.DistanceKm, 0.1)
+	})
 }
+
+func TestNewSecureHTTPClient_EnforcesTLS12(t *testing.T) {
+	client := routing.NewSecureHTTPClient(5 * time.Second)
+	require.NotNil(t, client)
+	assert.Equal(t, 5*time.Second, client.Timeout)
+
+	transport, ok := client.Transport.(*http.Transport)
+	require.True(t, ok)
+	require.NotNil(t, transport.TLSClientConfig)
+	assert.Equal(t, uint16(tls.VersionTLS12), transport.TLSClientConfig.MinVersion)
+}
+

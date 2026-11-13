@@ -2,10 +2,12 @@ package routing
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -38,21 +40,47 @@ type osrmProvider struct {
 	httpClient *http.Client
 }
 
+const defaultOSRMBaseURL = "https://router.project-osrm.org"
+
+// NewSecureHTTPClient construye un cliente HTTP endurecido con TLS 1.2+ mínimo y timeout acotado.
+func NewSecureHTTPClient(timeout time.Duration) *http.Client {
+	if timeout <= 0 {
+		timeout = 6 * time.Second
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = &tls.Config{
+		MinVersion: tls.VersionTLS12,
+	}
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: transport,
+	}
+}
+
 // NewOSRMProvider construye el proveedor de rutas cartográficas con cliente HTTP configurado
 func NewOSRMProvider(baseURL string, httpClient *http.Client) ports.RoutingProvider {
-	trimmed := strings.TrimRight(strings.TrimSpace(baseURL), "/")
-	if trimmed == "" {
-		trimmed = "http://router.project-osrm.org"
-	}
+	trimmed := normalizeOSRMBaseURL(baseURL)
 	if httpClient == nil {
-		httpClient = &http.Client{
-			Timeout: 6 * time.Second,
-		}
+		httpClient = NewSecureHTTPClient(6 * time.Second)
 	}
 	return &osrmProvider{
 		baseURL:    trimmed,
 		httpClient: httpClient,
 	}
+}
+
+func normalizeOSRMBaseURL(baseURL string) string {
+	trimmed := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if trimmed == "" {
+		return defaultOSRMBaseURL
+	}
+	if parsed, err := url.Parse(trimmed); err == nil {
+		if strings.EqualFold(parsed.Scheme, "http") && strings.EqualFold(parsed.Hostname(), "router.project-osrm.org") {
+			parsed.Scheme = "https"
+			return strings.TrimRight(parsed.String(), "/")
+		}
+	}
+	return trimmed
 }
 
 // CalculateRoute consulta OSRM para obtener polilínea vectorial, distancias, duraciones y costos
@@ -127,7 +155,8 @@ func (p *osrmProvider) CalculateRoute(ctx context.Context, req ports.RouteCalcul
 
 	// Estimación de peajes según distancia interurbana (promedio 1 peaje cada 130 km)
 	tollsCount := int(distanceKm / 130.0)
-	estimatedTollCost := float64(tollsCount) * 1500.0 // $1500 ARS por estación de peaje
+	const tollRatePerStation domain.Money = 150000 // $1500.00 ARS por estación de peaje (en centavos)
+	estimatedTollCost := domain.Money(tollsCount) * tollRatePerStation
 
 	fuelEstimate := domain.CalculateFuelEstimate(distanceKm, 0, 0)
 
@@ -192,7 +221,8 @@ func (p *osrmProvider) calculateDeterministicFallback(req ports.RouteCalculation
 	}
 
 	tollsCount := int(distanceKm / 130.0)
-	estimatedTollCost := float64(tollsCount) * 1500.0
+	const tollRatePerStation domain.Money = 150000
+	estimatedTollCost := domain.Money(tollsCount) * tollRatePerStation
 
 	fuelEstimate := domain.CalculateFuelEstimate(distanceKm, 0, 0)
 

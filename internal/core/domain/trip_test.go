@@ -11,34 +11,34 @@ import (
 
 func TestPricing_CalculateCapPrice(t *testing.T) {
 	t.Run("calcula correctamente el Cap Price según fórmula EARS RF-06 con 10% margen", func(t *testing.T) {
-		fuelCost := 30000.0 // ARS
-		tollCost := 3000.0  // ARS
+		fuelCost := domain.Money(3000000) // $30000.00 ARS
+		tollCost := domain.Money(300000)  // $3000.00 ARS
 		seats := 3
 
-		// Total = 33000
-		// CostPerSeat = 33000 / 3 = 11000
-		// CapPrice = 11000 * 1.10 = 12100
+		// Total = 33000.00
+		// CostPerSeat = 33000.00 / 3 = 11000.00
+		// CapPrice = 11000.00 * 1.10 = 12100.00
 		matrix := domain.CalculateCapPrice(fuelCost, tollCost, seats)
 
-		assert.Equal(t, 33000.0, matrix.TotalSharedCost)
-		assert.Equal(t, 11000.0, matrix.CostPerSeat)
-		assert.Equal(t, 12100.0, matrix.CapPricePerSeat)
+		assert.Equal(t, domain.Money(3300000), matrix.TotalSharedCost)
+		assert.Equal(t, domain.Money(1100000), matrix.CostPerSeat)
+		assert.Equal(t, domain.Money(1210000), matrix.CapPricePerSeat)
 		assert.Equal(t, 0.10, matrix.ContingencyMargin)
 
 		// Precios iguales o menores al Cap Price deben permitirse
-		assert.True(t, matrix.IsPricePermitted(12100.0))
-		assert.True(t, matrix.IsPricePermitted(10000.0))
-		assert.True(t, matrix.IsPricePermitted(8500.0))
+		assert.True(t, matrix.IsPricePermitted(domain.Money(1210000)))
+		assert.True(t, matrix.IsPricePermitted(domain.Money(1000000)))
+		assert.True(t, matrix.IsPricePermitted(domain.Money(850000)))
 
 		// Precios superiores al Cap Price deben rechazarse
-		assert.False(t, matrix.IsPricePermitted(12101.0))
-		assert.False(t, matrix.IsPricePermitted(15000.0))
+		assert.False(t, matrix.IsPricePermitted(domain.Money(1210100)))
+		assert.False(t, matrix.IsPricePermitted(domain.Money(1500000)))
 	})
 
 	t.Run("previene división por cero si asientos ofertados es cero o negativo", func(t *testing.T) {
-		matrix := domain.CalculateCapPrice(10000.0, 0.0, 0)
+		matrix := domain.CalculateCapPrice(domain.Money(1000000), domain.Money(0), 0)
 		assert.Equal(t, 1, matrix.SeatsOffered)
-		assert.Equal(t, 11000.0, matrix.CapPricePerSeat)
+		assert.Equal(t, domain.Money(1100000), matrix.CapPricePerSeat)
 	})
 }
 
@@ -108,9 +108,9 @@ func TestTrip_DomainInvariants(t *testing.T) {
 		TotalDurationMinutes: 240,
 		TotalSeatsOffered:    3,
 		MaxVehicleSeats:      4,
-		PricePerSeat:         12000.0,
-		EstimatedFuelCost:    30000.0,
-		EstimatedTollCost:    3000.0,
+		PricePerSeat:         domain.Money(1200000),
+		EstimatedFuelCost:    domain.Money(3000000),
+		EstimatedTollCost:    domain.Money(300000),
 	}
 
 	t.Run("crea un viaje exitosamente cuando cumple todas las invariantes", func(t *testing.T) {
@@ -119,12 +119,12 @@ func TestTrip_DomainInvariants(t *testing.T) {
 		assert.NotNil(t, trip)
 		assert.Equal(t, domain.TripStatusPublished, trip.Status)
 		assert.Equal(t, 3, trip.AvailableSeats)
-		assert.Equal(t, 12100.0, trip.CapPricePerSeat)
+		assert.Equal(t, domain.Money(1210000), trip.CapPricePerSeat)
 	})
 
 	t.Run("rechaza publicación si el precio supera el Cap Price (RF-07)", func(t *testing.T) {
 		invalidParams := validParams
-		invalidParams.PricePerSeat = 12500.0 // Supera el Cap Price de 12100.0
+		invalidParams.PricePerSeat = domain.Money(1250000) // Supera el Cap Price de $12100.00
 
 		trip, err := domain.NewTrip(invalidParams, now)
 		assert.Nil(t, trip)

@@ -6,13 +6,13 @@ import (
 
 // PricingCalculator define el contrato del motor de cálculo de costos de combustible, peajes y Cap Pricing
 type PricingCalculator interface {
-	CalculatePricing(distanceKm, tollCost float64, seatsOffered int) domain.CostMatrix
-	CalculatePricingWithCustomRates(distanceKm, tollCost float64, seatsOffered int, consumptionLiters, pricePerLiter float64) domain.CostMatrix
+	CalculatePricing(distanceKm float64, tollCost domain.Money, seatsOffered int) domain.CostMatrix
+	CalculatePricingWithCustomRates(distanceKm float64, tollCost domain.Money, seatsOffered int, consumptionLiters float64, pricePerLiter domain.Money) domain.CostMatrix
 }
 
 type pricingCalculator struct {
 	defaultConsumption float64
-	defaultFuelPrice   float64
+	defaultFuelPrice   domain.Money
 }
 
 // NewPricingCalculator inicializa el calculador con valores de referencia estándar
@@ -24,7 +24,7 @@ func NewPricingCalculator() PricingCalculator {
 }
 
 // NewPricingCalculatorWithRates inicializa el calculador con tarifas personalizadas de combustible
-func NewPricingCalculatorWithRates(consumptionLiters, pricePerLiter float64) PricingCalculator {
+func NewPricingCalculatorWithRates(consumptionLiters float64, pricePerLiter domain.Money) PricingCalculator {
 	if consumptionLiters <= 0 {
 		consumptionLiters = domain.DefaultFuelConsumptionLitersPer100Km
 	}
@@ -38,12 +38,12 @@ func NewPricingCalculatorWithRates(consumptionLiters, pricePerLiter float64) Pri
 }
 
 // CalculatePricing calcula la matriz de costos y el Cap Price con las tasas vigentes
-func (c *pricingCalculator) CalculatePricing(distanceKm, tollCost float64, seatsOffered int) domain.CostMatrix {
+func (c *pricingCalculator) CalculatePricing(distanceKm float64, tollCost domain.Money, seatsOffered int) domain.CostMatrix {
 	return c.CalculatePricingWithCustomRates(distanceKm, tollCost, seatsOffered, c.defaultConsumption, c.defaultFuelPrice)
 }
 
 // CalculatePricingWithCustomRates calcula los costos admitiendo parámetros de consumo específicos
-func (c *pricingCalculator) CalculatePricingWithCustomRates(distanceKm, tollCost float64, seatsOffered int, consumptionLiters, pricePerLiter float64) domain.CostMatrix {
+func (c *pricingCalculator) CalculatePricingWithCustomRates(distanceKm float64, tollCost domain.Money, seatsOffered int, consumptionLiters float64, pricePerLiter domain.Money) domain.CostMatrix {
 	fuelEstimate := domain.CalculateFuelEstimate(distanceKm, consumptionLiters, pricePerLiter)
 	return domain.CalculateCapPrice(fuelEstimate.TotalFuelCost, tollCost, seatsOffered)
 }

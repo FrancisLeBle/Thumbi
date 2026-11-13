@@ -41,15 +41,20 @@ type AsyncResolutionRequest struct {
 func (h *VehicleHandler) Register(c *gin.Context) {
 	userID, exists := middleware.GetUserID(c)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "usuario no autenticado"})
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error":      "usuario no autenticado",
+			"code":       "UNAUTHORIZED",
+			"request_id": middleware.GetRequestID(c),
+		})
 		return
 	}
 
 	var req VehicleRegistrationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "datos del vehículo o documentación incompletos",
-			"details": err.Error(),
+			"error":      "datos del vehículo o documentación incompletos",
+			"code":       "INVALID_VEHICLE_PAYLOAD",
+			"request_id": middleware.GetRequestID(c),
 		})
 		return
 	}
@@ -71,26 +76,30 @@ func (h *VehicleHandler) Register(c *gin.Context) {
 		switch {
 		case errors.Is(err, domain.ErrDriverKYCRequired):
 			c.JSON(http.StatusForbidden, gin.H{
-				"error": "Es obligatorio completar y aprobar la verificación de identidad biométrica (DNI y selfie 3D) antes de dar de alta un vehículo.",
-				"code":  "DRIVER_KYC_REQUIRED",
+				"error":      "Es obligatorio completar y aprobar la verificación de identidad biométrica (DNI y selfie 3D) antes de dar de alta un vehículo.",
+				"code":       "DRIVER_KYC_REQUIRED",
+				"request_id": middleware.GetRequestID(c),
 			})
 			return
 
 		case errors.Is(err, domain.ErrVehicleAlreadyVerified):
 			c.JSON(http.StatusConflict, gin.H{
-				"error": "El dominio/patente especificado ya se encuentra registrado y verificado en la plataforma.",
-				"code":  "VEHICLE_ALREADY_VERIFIED",
+				"error":      "El dominio/patente especificado ya se encuentra registrado y verificado en la plataforma.",
+				"code":       "VEHICLE_ALREADY_VERIFIED",
+				"request_id": middleware.GetRequestID(c),
 			})
 			return
 
 		case errors.Is(err, domain.ErrInvalidVehicleData):
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "Los datos del vehículo ingresados son inválidos.",
+				"error":      "Los datos del vehículo ingresados son inválidos.",
+				"code":       "INVALID_VEHICLE_DATA",
+				"request_id": middleware.GetRequestID(c),
 			})
 			return
 
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			HandleError(c, err)
 			return
 		}
 	}
@@ -116,7 +125,11 @@ func (h *VehicleHandler) Register(c *gin.Context) {
 func (h *VehicleHandler) Status(c *gin.Context) {
 	userID, exists := middleware.GetUserID(c)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "usuario no autenticado"})
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error":      "usuario no autenticado",
+			"code":       "UNAUTHORIZED",
+			"request_id": middleware.GetRequestID(c),
+		})
 		return
 	}
 
@@ -129,7 +142,7 @@ func (h *VehicleHandler) Status(c *gin.Context) {
 			})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		HandleError(c, err)
 		return
 	}
 
@@ -144,13 +157,21 @@ func (h *VehicleHandler) Status(c *gin.Context) {
 func (h *VehicleHandler) ProcessResolution(c *gin.Context) {
 	vehicleID := strings.TrimSpace(c.Param("id"))
 	if vehicleID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "id de vehículo requerido"})
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":      "id de vehículo requerido",
+			"code":       "MISSING_VEHICLE_ID",
+			"request_id": middleware.GetRequestID(c),
+		})
 		return
 	}
 
 	var req AsyncResolutionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "cuerpo de resolución inválido"})
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":      "cuerpo de resolución inválido",
+			"code":       "INVALID_RESOLUTION_PAYLOAD",
+			"request_id": middleware.GetRequestID(c),
+		})
 		return
 	}
 
@@ -162,10 +183,14 @@ func (h *VehicleHandler) ProcessResolution(c *gin.Context) {
 	err := h.vehicleService.ProcessAsyncResolution(c.Request.Context(), vehicleID, req.Approved, reason)
 	if err != nil {
 		if errors.Is(err, domain.ErrVehicleNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "vehículo no encontrado"})
+			c.JSON(http.StatusNotFound, gin.H{
+				"error":      "vehículo no encontrado",
+				"code":       "VEHICLE_NOT_FOUND",
+				"request_id": middleware.GetRequestID(c),
+			})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		HandleError(c, err)
 		return
 	}
 

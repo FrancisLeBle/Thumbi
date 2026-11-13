@@ -15,18 +15,18 @@ func TestMockPaymentGateway_CreatePaymentIntent(t *testing.T) {
 	gateway := payment.NewMockPaymentGateway()
 
 	t.Run("crea exitosamente una intención de pago", func(t *testing.T) {
-		res, err := gateway.CreatePaymentIntent(ctx, "booking-123", 2500.0, "USD")
+		res, err := gateway.CreatePaymentIntent(ctx, "booking-123", domain.Money(250000), "USD")
 		require.NoError(t, err)
 		assert.NotNil(t, res)
 		assert.Contains(t, res.GatewayRef, "pi_mock_")
 		assert.Contains(t, res.ClientSecret, "secret_")
-		assert.Equal(t, 2500.0, res.Amount)
+		assert.Equal(t, domain.Money(250000), res.Amount)
 		assert.Equal(t, "USD", res.Currency)
 		assert.Equal(t, "requires_payment_method", res.Status)
 	})
 
 	t.Run("falla con bookingID vacío", func(t *testing.T) {
-		res, err := gateway.CreatePaymentIntent(ctx, "", 2500.0, "USD")
+		res, err := gateway.CreatePaymentIntent(ctx, "", domain.Money(250000), "USD")
 		assert.Nil(t, res)
 		assert.ErrorIs(t, err, domain.ErrBookingNotFound)
 	})
@@ -38,7 +38,7 @@ func TestMockPaymentGateway_CreatePaymentIntent(t *testing.T) {
 	})
 
 	t.Run("falla con bookingID simulando error de pasarela", func(t *testing.T) {
-		res, err := gateway.CreatePaymentIntent(ctx, "fail_gateway_booking", 1000.0, "USD")
+		res, err := gateway.CreatePaymentIntent(ctx, "fail_gateway_booking", domain.Money(100000), "USD")
 		assert.Nil(t, res)
 		assert.ErrorIs(t, err, domain.ErrPaymentFailed)
 	})
@@ -72,11 +72,11 @@ func TestMockPaymentGateway_ProcessRefund(t *testing.T) {
 	gateway := payment.NewMockPaymentGateway()
 
 	t.Run("procesa reembolso exitosamente", func(t *testing.T) {
-		res, err := gateway.ProcessRefund(ctx, "pi_mock_123", 1500.0, "PASSENGER_EARLY")
+		res, err := gateway.ProcessRefund(ctx, "pi_mock_123", domain.Money(150000), "PASSENGER_EARLY")
 		require.NoError(t, err)
 		assert.NotNil(t, res)
 		assert.Contains(t, res.GatewayRefundRef, "re_mock_")
-		assert.Equal(t, 1500.0, res.Amount)
+		assert.Equal(t, domain.Money(150000), res.Amount)
 		assert.Equal(t, "succeeded", res.Status)
 	})
 
@@ -87,7 +87,7 @@ func TestMockPaymentGateway_ProcessRefund(t *testing.T) {
 	})
 
 	t.Run("falla con gatewayRef de error", func(t *testing.T) {
-		res, err := gateway.ProcessRefund(ctx, "pi_refund_error", 1000.0, "PASSENGER_EARLY")
+		res, err := gateway.ProcessRefund(ctx, "pi_refund_error", domain.Money(100000), "PASSENGER_EARLY")
 		assert.Nil(t, res)
 		assert.ErrorIs(t, err, domain.ErrPaymentFailed)
 	})

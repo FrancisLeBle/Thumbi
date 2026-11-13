@@ -85,7 +85,7 @@ func TestDispute_CannotDisputeSettledEscrow(t *testing.T) {
 
 func TestDispute_DriverPayoutResolutionAllowsEscrowRelease(t *testing.T) {
 	now := time.Now().UTC()
-	escrow, err := domain.NewEscrowTransaction("escrow-400", "book-400", "trip-400", "pass-1", "driver-1", 45.00, "USD", "pi_test_400")
+	escrow, err := domain.NewEscrowTransaction("escrow-400", "book-400", "trip-400", "pass-1", "driver-1", domain.Money(4500), "USD", "pi_test_400")
 	assert.NoError(t, err)
 
 	// Se abre disputa sobre el escrow

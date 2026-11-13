@@ -35,7 +35,7 @@ func TestDisputeService_OpenDispute(t *testing.T) {
 		"trip-d-1",
 		"passenger-1",
 		"driver-1",
-		5000.0,
+		domain.Money(500000),
 		"ARS",
 		"pi_test_d1",
 	)
@@ -190,7 +190,7 @@ func TestDisputeService_ResolveDispute(t *testing.T) {
 		"trip-res-1",
 		"passenger-1",
 		"driver-1",
-		4500.0,
+		domain.Money(450000),
 		"ARS",
 		"pi_gateway_123",
 	)
@@ -226,9 +226,9 @@ func TestDisputeService_ResolveDispute(t *testing.T) {
 		mockEscrowRepo.On("FindByBookingID", ctx, "booking-res-1").Return(&escrowCopy, nil)
 
 		mockEscrowRepo.On("UpdateEscrowStatus", ctx, "escrow-res-1", domain.EscrowStatusRefundedFull).Return(nil)
-		mockPaymentGateway.On("ProcessRefund", ctx, "pi_gateway_123", 4500.0, mock.Anything).Return(&ports.RefundResult{
+		mockPaymentGateway.On("ProcessRefund", ctx, "pi_gateway_123", domain.Money(450000), mock.Anything).Return(&ports.RefundResult{
 			GatewayRefundRef: "ref_gw_999",
-			Amount:           4500.0,
+			Amount:           domain.Money(450000),
 			Status:           "succeeded",
 		}, nil)
 		mockEscrowRepo.On("RecordRefund", ctx, mock.AnythingOfType("*domain.RefundTransaction")).Return(nil)
@@ -353,5 +353,102 @@ func TestDisputeService_GetAndList(t *testing.T) {
 		require.NoError(t, err)
 		assert.Len(t, res, 1)
 		assert.Equal(t, "disp-1", res[0].ID)
+		mockDisputeRepo.AssertExpectations(t)
+	})
+
+	t.Run("ListDisputes aplica límites por defecto si limit u offset están fuera de rango", func(t *testing.T) {
+		mockDisputeRepo := new(MockDisputeRepository)
+		mockDisputeRepo.On("List", ctx, 20, 0).Return([]*domain.Dispute{}, nil)
+
+		svc := services.NewDisputeService(mockDisputeRepo, nil, nil, nil, nil)
+		res, err := svc.ListDisputes(ctx, -5, -1)
+
+		require.NoError(t, err)
+		assert.NotNil(t, res)
+		assert.Empty(t, res)
+		mockDisputeRepo.AssertExpectations(t)
+	})
+}
+
+func TestDisputeService_ResolveDispute_ValidationAndTransaction(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("rechaza estados arbitrarios o literales no válidos como resolución", func(t *testing.T) {
+		mockDisputeRepo := new(MockDisputeRepository)
+		svc := services.NewDisputeService(mockDisputeRepo, nil, nil, nil, nil)
+
+		for _, invalid := range []domain.DisputeStatus{
+			domain.DisputeStatus("RESOLVED"),
+			domain.DisputeStatus("INVALID_ACTION"),
+			domain.DisputeStatusOpened,
+			domain.DisputeStatusInReview,
+			domain.DisputeStatus(""),
+		} {
+			res, err := svc.ResolveDispute(ctx, ports.ResolveDisputeInput{
+				DisputeID:  "disp-res-1",
+				AdminID:    "admin-root",
+				Resolution: invalid,
+				AdminNotes: "Nota administrativa",
+			})
+			assert.ErrorIs(t, err, domain.ErrInvalidDisputeData)
+			assert.Nil(t, res)
+		}
+		mockDisputeRepo.AssertNotCalled(t, "FindByID", mock.Anything, mock.Anything)
+	})
+
+	t.Run("ejecuta reembolso, registro contable y actualización de disputa dentro de TransactionManager", func(t *testing.T) {
+		mockDisputeRepo := new(MockDisputeRepository)
+		mockEscrowRepo := new(MockEscrowRepository)
+		mockPaymentGateway := new(MockPaymentGateway)
+		mockTx := new(MockTransactionManager)
+
+		dispute := &domain.Dispute{
+			ID:                  "disp-tx-1",
+			EscrowTransactionID: "escrow-tx-1",
+			BookingID:           "booking-tx-1",
+			TripID:              "trip-tx-1",
+			ReporterID:          "passenger-1",
+			DefendantID:         "driver-1",
+			Reason:              domain.DisputeReasonNoShow,
+			Description:         "Conductor ausente",
+			Status:              domain.DisputeStatusOpened,
+			CreatedAt:           time.Now().UTC(),
+			UpdatedAt:           time.Now().UTC(),
+		}
+		escrow, err := domain.NewEscrowTransaction("escrow-tx-1", "booking-tx-1", "trip-tx-1", "passenger-1", "driver-1", domain.Money(320000), "ARS", "pi_tx_1")
+		require.NoError(t, err)
+		require.NoError(t, escrow.OpenDispute(time.Now().UTC()))
+
+		mockDisputeRepo.On("FindByID", ctx, "disp-tx-1").Return(dispute, nil)
+		mockEscrowRepo.On("FindByBookingID", ctx, "booking-tx-1").Return(escrow, nil)
+		mockPaymentGateway.On("ProcessRefund", ctx, "pi_tx_1", domain.Money(320000), mock.Anything).Return(&ports.RefundResult{
+			GatewayRefundRef: "re_tx_1",
+			Amount:           domain.Money(320000),
+			Status:           "succeeded",
+		}, nil)
+
+		mockTx.On("WithinTransaction", ctx).Return(nil)
+		mockEscrowRepo.On("UpdateEscrowStatus", mock.Anything, "escrow-tx-1", domain.EscrowStatusRefundedFull).Return(nil)
+		mockEscrowRepo.On("RecordRefund", mock.Anything, mock.MatchedBy(func(r *domain.RefundTransaction) bool {
+			return r.RefundType == domain.RefundTypeAdminDispute && r.PassengerRefundAmount == domain.Money(320000) && r.GatewayRefundRef == "re_tx_1"
+		})).Return(nil)
+		mockDisputeRepo.On("Update", mock.Anything, mock.MatchedBy(func(d *domain.Dispute) bool {
+			return d.ID == "disp-tx-1" && d.Status == domain.DisputeStatusResolvedPassengerRefund
+		})).Return(nil)
+
+		svc := services.NewDisputeService(mockDisputeRepo, mockEscrowRepo, nil, nil, mockPaymentGateway, mockTx)
+		res, err := svc.ResolveDispute(ctx, ports.ResolveDisputeInput{
+			DisputeID:  "disp-tx-1",
+			AdminID:    "admin-1",
+			Resolution: domain.DisputeStatusResolvedPassengerRefund,
+			AdminNotes: "Reembolso verificado",
+		})
+
+		require.NoError(t, err)
+		assert.Equal(t, domain.DisputeStatusResolvedPassengerRefund, res.Status)
+		mockTx.AssertExpectations(t)
+		mockEscrowRepo.AssertExpectations(t)
+		mockDisputeRepo.AssertExpectations(t)
+		mockPaymentGateway.AssertExpectations(t)
 	})
 }

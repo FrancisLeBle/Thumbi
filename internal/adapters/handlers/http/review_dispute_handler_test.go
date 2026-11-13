@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -517,6 +518,26 @@ func TestDisputeHandler_ResolveDispute(t *testing.T) {
 		assert.Equal(t, http.StatusForbidden, w.Code)
 		assert.Contains(t, w.Body.String(), "FORBIDDEN")
 	})
+
+	t.Run("retorna 400 Bad Request si el dictamen de resolución no pertenece al enum del dominio", func(t *testing.T) {
+		mockDisp := new(MockDisputeServiceForHandlers)
+		router := setupModule4Router(nil, nil, mockDisp, "admin-user")
+
+		payload := map[string]any{
+			"resolution":  "RESOLVED",
+			"admin_notes": "Resolución con estado inválido",
+		}
+		body, _ := json.Marshal(payload)
+
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodPost, "/api/v1/disputes/disp-1/resolve", bytes.NewBuffer(body))
+		req.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "INVALID_RESOLUTION")
+		mockDisp.AssertNotCalled(t, "ResolveDispute", mock.Anything, mock.Anything)
+	})
 }
 
 func TestDisputeHandler_GetDisputeByID(t *testing.T) {
@@ -616,5 +637,54 @@ func TestDisputeHandler_GetDisputeByID(t *testing.T) {
 
 		assert.Equal(t, http.StatusNotFound, w.Code)
 		mockDisp.AssertExpectations(t)
+	})
+}
+
+func TestDisputeHandler_ListDisputes(t *testing.T) {
+	t.Run("lista disputas pasando limit y offset al servicio (200 OK)", func(t *testing.T) {
+		mockDisp := new(MockDisputeServiceForHandlers)
+		router := setupModule4Router(nil, nil, mockDisp, "admin-user")
+
+		expected := []*ports.DisputeDTO{
+			{ID: "disp-1", Status: domain.DisputeStatusOpened},
+		}
+		mockDisp.On("ListDisputes", mock.Anything, 15, 30).Return(expected, nil)
+
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/disputes?limit=15&offset=30", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var res []*ports.DisputeDTO
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &res))
+		assert.Len(t, res, 1)
+		assert.Equal(t, "disp-1", res[0].ID)
+		mockDisp.AssertExpectations(t)
+	})
+
+	t.Run("convierte parámetro page a offset cuando offset no se envía", func(t *testing.T) {
+		mockDisp := new(MockDisputeServiceForHandlers)
+		router := setupModule4Router(nil, nil, mockDisp, "admin-user")
+
+		mockDisp.On("ListDisputes", mock.Anything, 10, 20).Return([]*ports.DisputeDTO{}, nil)
+
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/disputes?page=3&limit=10", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		mockDisp.AssertExpectations(t)
+	})
+
+	t.Run("retorna 403 Forbidden para usuarios no administradores", func(t *testing.T) {
+		mockDisp := new(MockDisputeServiceForHandlers)
+		router := setupModule4Router(nil, nil, mockDisp, "passenger-1")
+
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/disputes", nil)
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		mockDisp.AssertNotCalled(t, "ListDisputes", mock.Anything, mock.Anything, mock.Anything)
 	})
 }

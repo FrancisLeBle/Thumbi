@@ -99,7 +99,7 @@ func ParseWKTPoint(wkt string) (Coordinates, error) {
 
 // LineString representa una secuencia ordenada de coordenadas que forman el trazado de una ruta
 type LineString struct {
-	Coordinates []Coordinates `json:"coordinates"`
+	Coordinates []Coordinates `json:"coordinates,omitempty"`
 }
 
 // NewLineString crea y valida una secuencia de puntos para una polilínea

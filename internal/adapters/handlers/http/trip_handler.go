@@ -41,7 +41,7 @@ type CreateTripRequest struct {
 	DestinationLon   float64                 `json:"destination_lon" binding:"required"`
 	DepartureTime    string                  `json:"departure_time" binding:"required"`
 	SeatsOffered     int                     `json:"seats_offered" binding:"required,min=1,max=8"`
-	PricePerSeat     float64                 `json:"price_per_seat" binding:"required,gte=0"`
+	PricePerSeat     domain.Money            `json:"price_per_seat" binding:"required,gte=0"`
 	Stops            []CreateTripStopRequest `json:"stops"`
 }
 
@@ -51,8 +51,9 @@ func (h *TripHandler) CreateTrip(c *gin.Context) {
 	driverID, exists := middleware.GetUserID(c)
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "usuario no autenticado",
-			"code":  "UNAUTHORIZED",
+			"error":      "usuario no autenticado",
+			"code":       "UNAUTHORIZED",
+			"request_id": middleware.GetRequestID(c),
 		})
 		return
 	}
@@ -60,9 +61,9 @@ func (h *TripHandler) CreateTrip(c *gin.Context) {
 	var req CreateTripRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "datos de publicación de viaje incompletos o inválidos",
-			"details": err.Error(),
-			"code":    "INVALID_REQUEST_PAYLOAD",
+			"error":      "datos de publicación de viaje incompletos o inválidos",
+			"code":       "INVALID_REQUEST_PAYLOAD",
+			"request_id": middleware.GetRequestID(c),
 		})
 		return
 	}
@@ -70,8 +71,9 @@ func (h *TripHandler) CreateTrip(c *gin.Context) {
 	origCoords, err := domain.NewCoordinates(req.OriginLat, req.OriginLon)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "coordenadas de origen inválidas",
-			"code":  "INVALID_COORDINATES",
+			"error":      "coordenadas de origen inválidas",
+			"code":       "INVALID_COORDINATES",
+			"request_id": middleware.GetRequestID(c),
 		})
 		return
 	}
@@ -79,8 +81,9 @@ func (h *TripHandler) CreateTrip(c *gin.Context) {
 	destCoords, err := domain.NewCoordinates(req.DestinationLat, req.DestinationLon)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "coordenadas de destino inválidas",
-			"code":  "INVALID_COORDINATES",
+			"error":      "coordenadas de destino inválidas",
+			"code":       "INVALID_COORDINATES",
+			"request_id": middleware.GetRequestID(c),
 		})
 		return
 	}
@@ -90,8 +93,9 @@ func (h *TripHandler) CreateTrip(c *gin.Context) {
 		stopCoords, errStop := domain.NewCoordinates(s.Lat, s.Lon)
 		if errStop != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "coordenadas de parada intermedia inválidas",
-				"code":  "INVALID_COORDINATES",
+				"error":      "coordenadas de parada intermedia inválidas",
+				"code":       "INVALID_COORDINATES",
+				"request_id": middleware.GetRequestID(c),
 			})
 			return
 		}
@@ -121,65 +125,78 @@ func (h *TripHandler) CreateTrip(c *gin.Context) {
 		switch {
 		case errors.Is(err, domain.ErrDriverNotActive):
 			c.JSON(http.StatusForbidden, gin.H{
-				"error": "El usuario no cuenta con rol de conductor activo o no ha completado la verificación KYC.",
-				"code":  "DRIVER_NOT_ACTIVE",
+				"error":      "El usuario no cuenta con rol de conductor activo o no ha completado la verificación KYC.",
+				"code":       "DRIVER_NOT_ACTIVE",
+				"request_id": middleware.GetRequestID(c),
+			})
+			return
+
+		case errors.Is(err, domain.ErrDriverPhoneRequired):
+			c.JSON(http.StatusUnprocessableEntity, gin.H{
+				"error":      "Debes registrar un número de teléfono válido en tu perfil antes de publicar un viaje.",
+				"code":       "DRIVER_PHONE_REQUIRED",
+				"request_id": middleware.GetRequestID(c),
 			})
 			return
 
 		case errors.Is(err, domain.ErrPriceExceedsCapPrice):
 			c.JSON(http.StatusUnprocessableEntity, gin.H{
-				"error": "El precio fijado excede el límite máximo permitido (Cap Price) para el trayecto según la normativa de economía colaborativa no lucrativa.",
-				"code":  "PRICE_EXCEEDS_CAP_PRICE",
+				"error":      "El precio fijado excede el límite máximo permitido (Cap Price) para el trayecto según la normativa de economía colaborativa no lucrativa.",
+				"code":       "PRICE_EXCEEDS_CAP_PRICE",
+				"request_id": middleware.GetRequestID(c),
 			})
 			return
 
 		case errors.Is(err, domain.ErrVehicleNotAvailable):
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "El vehículo no se encuentra aprobado para realizar viajes.",
-				"code":  "VEHICLE_NOT_APPROVED",
+				"error":      "El vehículo no se encuentra aprobado para realizar viajes.",
+				"code":       "VEHICLE_NOT_APPROVED",
+				"request_id": middleware.GetRequestID(c),
 			})
 			return
 
 		case errors.Is(err, domain.ErrVehicleNotFound):
 			c.JSON(http.StatusNotFound, gin.H{
-				"error": "Vehículo no encontrado.",
-				"code":  "VEHICLE_NOT_FOUND",
+				"error":      "Vehículo no encontrado.",
+				"code":       "VEHICLE_NOT_FOUND",
+				"request_id": middleware.GetRequestID(c),
 			})
 			return
 
 		case errors.Is(err, domain.ErrUnauthorized):
 			c.JSON(http.StatusForbidden, gin.H{
-				"error": "El vehículo no pertenece al usuario autenticado.",
-				"code":  "FORBIDDEN",
+				"error":      "El vehículo no pertenece al usuario autenticado.",
+				"code":       "FORBIDDEN",
+				"request_id": middleware.GetRequestID(c),
 			})
 			return
 
 		case errors.Is(err, domain.ErrDepartureTimeMustBeFuture):
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "La fecha y hora de salida debe ser estrictamente en el futuro.",
-				"code":  "INVALID_DEPARTURE_TIME",
+				"error":      "La fecha y hora de salida debe ser estrictamente en el futuro.",
+				"code":       "INVALID_DEPARTURE_TIME",
+				"request_id": middleware.GetRequestID(c),
 			})
 			return
 
 		case errors.Is(err, domain.ErrInvalidRouteCoordinates):
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "Las coordenadas geográficas proporcionadas son inválidas.",
-				"code":  "INVALID_COORDINATES",
+				"error":      "Las coordenadas geográficas proporcionadas son inválidas.",
+				"code":       "INVALID_COORDINATES",
+				"request_id": middleware.GetRequestID(c),
 			})
 			return
 
 		case errors.Is(err, domain.ErrSeatsExceedCapacity):
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "La cantidad de asientos ofertados supera la capacidad del vehículo.",
-				"code":  "SEATS_EXCEED_CAPACITY",
+				"error":      "La cantidad de asientos ofertados supera la capacidad del vehículo.",
+				"code":       "SEATS_EXCEED_CAPACITY",
+				"request_id": middleware.GetRequestID(c),
 			})
 			return
 
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": err.Error(),
-				"code":  "INTERNAL_SERVER_ERROR",
-			})
+			HandleError(c, err)
 			return
 		}
 	}
@@ -284,10 +301,7 @@ func (h *TripHandler) SearchTrips(c *gin.Context) {
 
 	results, err := h.tripService.SearchTrips(c.Request.Context(), query)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
-			"code":  "SEARCH_FAILED",
-		})
+		HandleError(c, err)
 		return
 	}
 
@@ -303,8 +317,9 @@ func (h *TripHandler) GetTripByID(c *gin.Context) {
 	tripID := strings.TrimSpace(c.Param("id"))
 	if tripID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "ID de viaje no proporcionado",
-			"code":  "MISSING_TRIP_ID",
+			"error":      "ID de viaje no proporcionado",
+			"code":       "MISSING_TRIP_ID",
+			"request_id": middleware.GetRequestID(c),
 		})
 		return
 	}
@@ -313,15 +328,13 @@ func (h *TripHandler) GetTripByID(c *gin.Context) {
 	if err != nil {
 		if errors.Is(err, domain.ErrTripNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{
-				"error": "Viaje no encontrado",
-				"code":  "TRIP_NOT_FOUND",
+				"error":      "Viaje no encontrado",
+				"code":       "TRIP_NOT_FOUND",
+				"request_id": middleware.GetRequestID(c),
 			})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
-			"code":  "INTERNAL_SERVER_ERROR",
-		})
+		HandleError(c, err)
 		return
 	}
 
@@ -334,8 +347,9 @@ func (h *TripHandler) CancelTrip(c *gin.Context) {
 	driverID, exists := middleware.GetUserID(c)
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "usuario no autenticado",
-			"code":  "UNAUTHORIZED",
+			"error":      "usuario no autenticado",
+			"code":       "UNAUTHORIZED",
+			"request_id": middleware.GetRequestID(c),
 		})
 		return
 	}
@@ -343,8 +357,9 @@ func (h *TripHandler) CancelTrip(c *gin.Context) {
 	tripID := strings.TrimSpace(c.Param("id"))
 	if tripID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "ID de viaje no proporcionado",
-			"code":  "MISSING_TRIP_ID",
+			"error":      "ID de viaje no proporcionado",
+			"code":       "MISSING_TRIP_ID",
+			"request_id": middleware.GetRequestID(c),
 		})
 		return
 	}
@@ -354,30 +369,30 @@ func (h *TripHandler) CancelTrip(c *gin.Context) {
 		switch {
 		case errors.Is(err, domain.ErrTripNotFound):
 			c.JSON(http.StatusNotFound, gin.H{
-				"error": "Viaje no encontrado",
-				"code":  "TRIP_NOT_FOUND",
+				"error":      "Viaje no encontrado",
+				"code":       "TRIP_NOT_FOUND",
+				"request_id": middleware.GetRequestID(c),
 			})
 			return
 
 		case errors.Is(err, domain.ErrUnauthorized):
 			c.JSON(http.StatusForbidden, gin.H{
-				"error": "No estás autorizado para cancelar este viaje",
-				"code":  "FORBIDDEN",
+				"error":      "No estás autorizado para cancelar este viaje",
+				"code":       "FORBIDDEN",
+				"request_id": middleware.GetRequestID(c),
 			})
 			return
 
 		case errors.Is(err, domain.ErrCannotCancelStartedTrip):
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "No es posible cancelar un viaje que ya se encuentra en curso o completado",
-				"code":  "CANNOT_CANCEL_STARTED_TRIP",
+				"error":      "No es posible cancelar un viaje que ya se encuentra en curso o completado",
+				"code":       "CANNOT_CANCEL_STARTED_TRIP",
+				"request_id": middleware.GetRequestID(c),
 			})
 			return
 
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": err.Error(),
-				"code":  "INTERNAL_SERVER_ERROR",
-			})
+			HandleError(c, err)
 			return
 		}
 	}
@@ -394,8 +409,9 @@ func (h *TripHandler) CompleteTrip(c *gin.Context) {
 	driverID, exists := middleware.GetUserID(c)
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "usuario no autenticado",
-			"code":  "UNAUTHORIZED",
+			"error":      "usuario no autenticado",
+			"code":       "UNAUTHORIZED",
+			"request_id": middleware.GetRequestID(c),
 		})
 		return
 	}
@@ -403,8 +419,9 @@ func (h *TripHandler) CompleteTrip(c *gin.Context) {
 	tripID := strings.TrimSpace(c.Param("id"))
 	if tripID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "ID de viaje no proporcionado",
-			"code":  "MISSING_TRIP_ID",
+			"error":      "ID de viaje no proporcionado",
+			"code":       "MISSING_TRIP_ID",
+			"request_id": middleware.GetRequestID(c),
 		})
 		return
 	}
@@ -414,30 +431,30 @@ func (h *TripHandler) CompleteTrip(c *gin.Context) {
 		switch {
 		case errors.Is(err, domain.ErrTripNotFound):
 			c.JSON(http.StatusNotFound, gin.H{
-				"error": "Viaje no encontrado",
-				"code":  "TRIP_NOT_FOUND",
+				"error":      "Viaje no encontrado",
+				"code":       "TRIP_NOT_FOUND",
+				"request_id": middleware.GetRequestID(c),
 			})
 			return
 
 		case errors.Is(err, domain.ErrUnauthorized):
 			c.JSON(http.StatusForbidden, gin.H{
-				"error": "No estás autorizado para finalizar este viaje",
-				"code":  "FORBIDDEN",
+				"error":      "No estás autorizado para finalizar este viaje",
+				"code":       "FORBIDDEN",
+				"request_id": middleware.GetRequestID(c),
 			})
 			return
 
 		case errors.Is(err, domain.ErrInvalidTripStatusChange):
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "El viaje no se encuentra en un estado que permita su finalización",
-				"code":  "INVALID_TRIP_STATUS",
+				"error":      "El viaje no se encuentra en un estado que permita su finalización",
+				"code":       "INVALID_TRIP_STATUS",
+				"request_id": middleware.GetRequestID(c),
 			})
 			return
 
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": err.Error(),
-				"code":  "INTERNAL_SERVER_ERROR",
-			})
+			HandleError(c, err)
 			return
 		}
 	}

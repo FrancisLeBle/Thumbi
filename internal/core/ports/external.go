@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"time"
 
 	"github.com/thumbi/auth-kyc-service/internal/core/domain"
 )
@@ -65,9 +66,9 @@ type RouteDetails struct {
 	RoutePath         domain.LineString `json:"route_path"`
 	DistanceKm        float64           `json:"distance_km"`
 	DurationMinutes   int               `json:"duration_minutes"`
-	EstimatedTollCost float64           `json:"estimated_toll_cost"`
+	EstimatedTollCost domain.Money      `json:"estimated_toll_cost"`
 	TollsCount        int               `json:"tolls_count"`
-	EstimatedFuelCost float64           `json:"estimated_fuel_cost"`
+	EstimatedFuelCost domain.Money      `json:"estimated_fuel_cost"`
 }
 
 // RoutingProvider contrato para consultar polilínea, distancias, peajes y tiempos estimados a un motor de rutas
@@ -77,23 +78,31 @@ type RoutingProvider interface {
 
 // PaymentIntentResult resultado de la inicialización de intención de cobro con pasarela de pagos
 type PaymentIntentResult struct {
-	GatewayRef   string  `json:"gateway_ref"`
-	ClientSecret string  `json:"client_secret,omitempty"`
-	Amount       float64 `json:"amount"`
-	Currency     string  `json:"currency"`
-	Status       string  `json:"status"` // Ej: requires_payment_method, succeeded, pending
+	GatewayRef   string       `json:"gateway_ref"`
+	ClientSecret string       `json:"client_secret,omitempty"`
+	Amount       domain.Money `json:"amount"`
+	Currency     string       `json:"currency"`
+	Status       string       `json:"status"` // Ej: requires_payment_method, succeeded, pending
 }
 
 // RefundResult resultado de la solicitud de reintegro ante la pasarela
 type RefundResult struct {
-	GatewayRefundRef string  `json:"gateway_refund_ref"`
-	Amount           float64 `json:"amount"`
-	Status           string  `json:"status"`
+	GatewayRefundRef string       `json:"gateway_refund_ref"`
+	Amount           domain.Money `json:"amount"`
+	Status           string       `json:"status"`
 }
 
 // PaymentGateway define el contrato desacoplado para interactuar con pasarelas de pago (Stripe, MercadoPago, etc.)
 type PaymentGateway interface {
-	CreatePaymentIntent(ctx context.Context, bookingID string, amount float64, currency string) (*PaymentIntentResult, error)
+	CreatePaymentIntent(ctx context.Context, bookingID string, amount domain.Money, currency string) (*PaymentIntentResult, error)
 	ConfirmPayment(ctx context.Context, gatewayRef string) (bool, error)
-	ProcessRefund(ctx context.Context, gatewayRef string, amount float64, reason string) (*RefundResult, error)
+	ProcessRefund(ctx context.Context, gatewayRef string, amount domain.Money, reason string) (*RefundResult, error)
 }
+
+// RateLimiter define el contrato para limitación de tasa y protección contra abusos/DoS
+type RateLimiter interface {
+	// Allow verifica si la clave identificadora (IP o User ID) puede realizar una solicitud según el límite y ventana temporal.
+	// Retorna allowed (true/false), remaining (solicitudes restantes), resetDuration (tiempo restante de la ventana), y error si lo hubiere.
+	Allow(ctx context.Context, key string, limit int, window time.Duration) (allowed bool, remaining int, resetDuration time.Duration, err error)
+}
+

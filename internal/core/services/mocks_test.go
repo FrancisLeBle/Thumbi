@@ -291,6 +291,11 @@ func (m *MockTripRepository) UpdateStatus(ctx context.Context, tripID string, ne
 	return args.Error(0)
 }
 
+func (m *MockTripRepository) ReleaseSeats(ctx context.Context, tripID string, seats int) error {
+	args := m.Called(ctx, tripID, seats)
+	return args.Error(0)
+}
+
 func (m *MockTripRepository) ListByDriverID(ctx context.Context, driverID string, limit, offset int) ([]*domain.Trip, error) {
 	args := m.Called(ctx, driverID, limit, offset)
 	if args.Get(0) == nil {
@@ -374,6 +379,11 @@ func (m *MockBookingRepository) GetPassengerBookings(ctx context.Context, passen
 	return args.Get(0).([]*domain.Booking), args.Error(1)
 }
 
+func (m *MockBookingRepository) CheckPassengerBookingConstraints(ctx context.Context, passengerID, targetTripID string, departureTime, estimatedArrival, now time.Time) (bool, int, error) {
+	args := m.Called(ctx, passengerID, targetTripID, departureTime, estimatedArrival, now)
+	return args.Bool(0), args.Int(1), args.Error(2)
+}
+
 func (m *MockBookingRepository) ExpirePendingBookings(ctx context.Context, now time.Time) (int, error) {
 	args := m.Called(ctx, now)
 	return args.Int(0), args.Error(1)
@@ -412,7 +422,7 @@ type MockPaymentGateway struct {
 	mock.Mock
 }
 
-func (m *MockPaymentGateway) CreatePaymentIntent(ctx context.Context, bookingID string, amount float64, currency string) (*ports.PaymentIntentResult, error) {
+func (m *MockPaymentGateway) CreatePaymentIntent(ctx context.Context, bookingID string, amount domain.Money, currency string) (*ports.PaymentIntentResult, error) {
 	args := m.Called(ctx, bookingID, amount, currency)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -425,7 +435,7 @@ func (m *MockPaymentGateway) ConfirmPayment(ctx context.Context, gatewayRef stri
 	return args.Bool(0), args.Error(1)
 }
 
-func (m *MockPaymentGateway) ProcessRefund(ctx context.Context, gatewayRef string, amount float64, reason string) (*ports.RefundResult, error) {
+func (m *MockPaymentGateway) ProcessRefund(ctx context.Context, gatewayRef string, amount domain.Money, reason string) (*ports.RefundResult, error) {
 	args := m.Called(ctx, gatewayRef, amount, reason)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -568,3 +578,20 @@ func (m *MockDisputeService) ListDisputes(ctx context.Context, limit, offset int
 	}
 	return args.Get(0).([]*ports.DisputeDTO), args.Error(1)
 }
+
+type mockTxCtxKey struct{}
+
+// MockTransactionManager simula TransactionManager marcando el contexto con una transacción activa.
+type MockTransactionManager struct {
+	mock.Mock
+}
+
+func (m *MockTransactionManager) WithinTransaction(ctx context.Context, fn func(txCtx context.Context) error) error {
+	args := m.Called(ctx)
+	if err := args.Error(0); err != nil {
+		return err
+	}
+	txCtx := context.WithValue(ctx, mockTxCtxKey{}, true)
+	return fn(txCtx)
+}
+

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -104,8 +105,8 @@ func TestTripHandler_CreateTrip(t *testing.T) {
 		TotalDurationMinutes: 240,
 		TotalSeatsOffered:    3,
 		AvailableSeats:       3,
-		PricePerSeat:         11000.0,
-		CapPricePerSeat:      11385.0,
+		PricePerSeat:         domain.Money(1100000),
+		CapPricePerSeat:      domain.Money(1138500),
 		Status:               domain.TripStatusPublished,
 	}
 
@@ -119,7 +120,7 @@ func TestTripHandler_CreateTrip(t *testing.T) {
 		DestinationLon:   -60.6393,
 		DepartureTime:    departure.Format(time.RFC3339),
 		SeatsOffered:     3,
-		PricePerSeat:     11000.0,
+		PricePerSeat:     domain.Money(1100000),
 	}
 
 	t.Run("publica viaje exitosamente (201 Created)", func(t *testing.T) {
@@ -127,7 +128,7 @@ func TestTripHandler_CreateTrip(t *testing.T) {
 		mockSvc.On("CreateTrip", mock.Anything, mock.MatchedBy(func(in ports.CreateTripInput) bool {
 			return in.DriverID == "driver-auth-1" &&
 				in.VehicleID == "vehicle-1" &&
-				in.PricePerSeat == 11000.0 &&
+				in.PricePerSeat == domain.Money(1100000) &&
 				in.SeatsOffered == 3
 		})).Return(mockCreatedTrip, nil)
 
@@ -171,6 +172,27 @@ func TestTripHandler_CreateTrip(t *testing.T) {
 		assert.Equal(t, "DRIVER_NOT_ACTIVE", resp["code"])
 	})
 
+	t.Run("rechaza con 422 Unprocessable Entity si el conductor no posee teléfono registrado", func(t *testing.T) {
+		mockSvc := new(MockTripService)
+		mockSvc.On("CreateTrip", mock.Anything, mock.Anything).Return(nil, domain.ErrDriverPhoneRequired)
+
+		router := setupTripTestRouter(mockSvc, "driver-auth-1")
+
+		body, _ := json.Marshal(payload)
+		req, _ := http.NewRequest(http.MethodPost, "/api/v1/trips", bytes.NewBuffer(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer valid-token")
+
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+
+		var resp map[string]any
+		_ = json.Unmarshal(w.Body.Bytes(), &resp)
+		assert.Equal(t, "DRIVER_PHONE_REQUIRED", resp["code"])
+	})
+
 	t.Run("rechaza con 422 Unprocessable Entity si el precio supera el Cap Price", func(t *testing.T) {
 		mockSvc := new(MockTripService)
 		mockSvc.On("CreateTrip", mock.Anything, mock.Anything).Return(nil, domain.ErrPriceExceedsCapPrice)
@@ -178,7 +200,7 @@ func TestTripHandler_CreateTrip(t *testing.T) {
 		router := setupTripTestRouter(mockSvc, "driver-auth-1")
 
 		invalidPayload := payload
-		invalidPayload.PricePerSeat = 25000.0 // Supera el Cap Price
+		invalidPayload.PricePerSeat = domain.Money(2500000) // Supera el Cap Price
 
 		body, _ := json.Marshal(invalidPayload)
 		req, _ := http.NewRequest(http.MethodPost, "/api/v1/trips", bytes.NewBuffer(body))
@@ -229,6 +251,31 @@ func TestTripHandler_CreateTrip(t *testing.T) {
 
 		assert.Equal(t, http.StatusUnauthorized, w.Code)
 	})
+
+	t.Run("acepta price_per_seat como cadena decimal exacta y rechaza float JSON", func(t *testing.T) {
+		mockSvc := new(MockTripService)
+		mockSvc.On("CreateTrip", mock.Anything, mock.MatchedBy(func(in ports.CreateTripInput) bool {
+			return in.PricePerSeat == domain.Money(1100050)
+		})).Return(mockCreatedTrip, nil)
+
+		router := setupTripTestRouter(mockSvc, "driver-auth-1")
+
+		strJSON := fmt.Sprintf(`{"vehicle_id":"vehicle-1","origin_title":"Buenos Aires","origin_lat":-34.6037,"origin_lon":-58.3816,"destination_title":"Rosario","destination_lat":-32.9468,"destination_lon":-60.6393,"departure_time":%q,"seats_offered":3,"price_per_seat":"11000.50"}`, departure.Format(time.RFC3339))
+		reqStr, _ := http.NewRequest(http.MethodPost, "/api/v1/trips", bytes.NewBufferString(strJSON))
+		reqStr.Header.Set("Content-Type", "application/json")
+		reqStr.Header.Set("Authorization", "Bearer valid-driver-token")
+		wStr := httptest.NewRecorder()
+		router.ServeHTTP(wStr, reqStr)
+		assert.Equal(t, http.StatusCreated, wStr.Code)
+
+		floatJSON := fmt.Sprintf(`{"vehicle_id":"vehicle-1","origin_title":"Buenos Aires","origin_lat":-34.6037,"origin_lon":-58.3816,"destination_title":"Rosario","destination_lat":-32.9468,"destination_lon":-60.6393,"departure_time":%q,"seats_offered":3,"price_per_seat":11000.55}`, departure.Format(time.RFC3339))
+		reqFloat, _ := http.NewRequest(http.MethodPost, "/api/v1/trips", bytes.NewBufferString(floatJSON))
+		reqFloat.Header.Set("Content-Type", "application/json")
+		reqFloat.Header.Set("Authorization", "Bearer valid-driver-token")
+		wFloat := httptest.NewRecorder()
+		router.ServeHTTP(wFloat, reqFloat)
+		assert.Equal(t, http.StatusBadRequest, wFloat.Code)
+	})
 }
 
 func TestTripHandler_SearchTrips(t *testing.T) {
@@ -246,8 +293,8 @@ func TestTripHandler_SearchTrips(t *testing.T) {
 				OriginTitle:          "Buenos Aires",
 				DestinationTitle:     "Rosario",
 				AvailableSeats:       2,
-				PricePerSeat:         10500.0,
-				CapPricePerSeat:      11385.0,
+				PricePerSeat:         domain.Money(1050000),
+				CapPricePerSeat:      domain.Money(1138500),
 				PickupWalkDistanceM:  320.0,
 				DropoffWalkDistanceM: 540.0,
 				Status:               domain.TripStatusPublished,
@@ -297,12 +344,12 @@ func TestTripHandler_GetTripByID(t *testing.T) {
 			Trip: &domain.Trip{
 				ID:           "trip-detail-1",
 				OriginTitle:  "Buenos Aires",
-				PricePerSeat: 10000.0,
+				PricePerSeat: domain.Money(1000000),
 			},
 			CostMatrix: domain.CostMatrix{
-				TotalTripCost:   31050.0,
-				CostPerSeatBase: 10350.0,
-				CapPricePerSeat: 11385.0,
+				TotalSharedCost: domain.Money(3105000),
+				CostPerSeat:     domain.Money(1035000),
+				CapPricePerSeat: domain.Money(1138500),
 			},
 		}
 

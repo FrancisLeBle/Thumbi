@@ -4,10 +4,12 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/thumbi/auth-kyc-service/internal/adapters/handlers/http/middleware"
 	"github.com/thumbi/auth-kyc-service/internal/core/domain"
+	"github.com/thumbi/auth-kyc-service/internal/core/ports"
 )
 
 type RouterConfig struct {
@@ -21,6 +23,7 @@ type RouterConfig struct {
 	HealthHandler         *HealthHandler
 	AuthMiddleware        gin.HandlerFunc
 	WebhookAuthMiddleware gin.HandlerFunc
+	RateLimiter           ports.RateLimiter
 	WebhookSecret         string
 	AllowedOrigins        []string
 }
@@ -31,6 +34,7 @@ func SetupRouter(cfg RouterConfig) *gin.Engine {
 
 	// Middlewares estándar
 	r.Use(gin.Recovery())
+	r.Use(middleware.RequestIDMiddleware())
 	r.Use(gin.Logger())
 	r.Use(corsMiddleware(cfg.AllowedOrigins...))
 
@@ -68,11 +72,11 @@ func SetupRouter(cfg RouterConfig) *gin.Engine {
 	}
 
 	registerV1Routes := func(group *gin.RouterGroup) {
-		// Rutas públicas de Autenticación
+		// Rutas públicas de Autenticación protegidas con limitación de tasa por IP
 		auth := group.Group("/auth")
 		{
-			auth.POST("/social-login", cfg.AuthHandler.SocialLogin)
-			auth.POST("/refresh", cfg.AuthHandler.Refresh)
+			auth.POST("/social-login", middleware.RateLimitByIP(cfg.RateLimiter, 10, time.Minute, "login"), cfg.AuthHandler.SocialLogin)
+			auth.POST("/refresh", middleware.RateLimitByIP(cfg.RateLimiter, 20, time.Minute, "refresh"), cfg.AuthHandler.Refresh)
 			auth.POST("/logout", cfg.AuthHandler.Logout)
 
 			// Rutas protegidas por JWT (20 min TTL)
@@ -107,8 +111,8 @@ func SetupRouter(cfg RouterConfig) *gin.Engine {
 		if cfg.TripHandler != nil {
 			trips := group.Group("/trips")
 			{
-				// Búsqueda geoespacial y detalle (públicas)
-				trips.GET("/search", cfg.TripHandler.SearchTrips)
+				// Búsqueda geoespacial y detalle (públicas; búsqueda protegida por rate limit por IP: 30 req/min)
+				trips.GET("/search", middleware.RateLimitByIP(cfg.RateLimiter, 30, time.Minute, "search"), cfg.TripHandler.SearchTrips)
 				trips.GET("/:id", cfg.TripHandler.GetTripByID)
 
 				// Publicación, finalización y cancelación de viajes (requieren JWT de conductor autenticado)
@@ -131,7 +135,8 @@ func SetupRouter(cfg RouterConfig) *gin.Engine {
 			bookings := group.Group("/bookings")
 			bookings.Use(cfg.AuthMiddleware)
 			{
-				bookings.POST("", cfg.BookingHandler.CreateBooking)
+				// Creación de reserva protegida por limitación por usuario (5 req/min) para evitar ataques de DoS y bloqueo masivo de cupos
+				bookings.POST("", middleware.RateLimitByUser(cfg.RateLimiter, 5, time.Minute, "create_booking"), cfg.BookingHandler.CreateBooking)
 				bookings.POST("/:id/confirm-payment", cfg.BookingHandler.ConfirmPayment)
 				bookings.POST("/:id/cancel", cfg.BookingHandler.CancelBooking)
 				bookings.GET("/my-bookings", cfg.BookingHandler.MyBookings)

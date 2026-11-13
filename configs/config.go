@@ -4,12 +4,17 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/caarlos0/env/v10"
 )
+
+// DefaultOSRMBaseURL utiliza HTTPS por defecto para proteger las coordenadas de los usuarios en tránsito
+const DefaultOSRMBaseURL = "https://router.project-osrm.org"
 
 // Config almacena toda la configuración de la aplicación cargada desde variables de entorno
 type Config struct {
@@ -22,6 +27,10 @@ type Config struct {
 	DatabaseURL string `env:"DATABASE_URL"`
 	DBMaxConns  int32  `env:"DB_MAX_CONNS" envDefault:"20"`
 	DBMinConns  int32  `env:"DB_MIN_CONNS" envDefault:"5"`
+
+	// Redis para Rate Limiting y Caché Distribuido
+	RedisAddr string `env:"REDIS_ADDR" envDefault:"localhost:6379"`
+	RedisURL  string `env:"REDIS_URL" envDefault:"redis://localhost:6379"`
 
 	// Seguridad y JWT (Sin secretos predeterminados inseguros en código)
 	JWTSecret  string        `env:"JWT_SECRET"`
@@ -38,8 +47,8 @@ type Config struct {
 	// Webhooks de Revisión y Verificación de Vehículos (HMAC Signature)
 	WebhookSecret string `env:"WEBHOOK_SECRET"`
 
-	// Ruteo y Cartografía (OSRM)
-	OSRMBaseURL string `env:"OSRM_BASE_URL" envDefault:"http://router.project-osrm.org"`
+	// Ruteo y Cartografía (OSRM): usar HTTPS o una instancia propia en red privada
+	OSRMBaseURL string `env:"OSRM_BASE_URL" envDefault:"https://router.project-osrm.org"`
 
 	// Orígenes autorizados para CORS (Web Domains y Móvil)
 	AllowedOrigins string `env:"ALLOWED_ORIGINS"`
@@ -77,7 +86,8 @@ func LoadConfigWithEnvFile(envFilePath string) (*Config, error) {
 
 // Validate verifica que los secretos críticos cumplan con los estándares criptográficos.
 // En entornos diferentes a "development", la aplicación fallará si faltan secretos o si JWT_SECRET
-// tiene una longitud inferior a 32 bytes.
+// tiene una longitud inferior a 32 bytes. También valida que OSRMBaseURL utilice HTTPS o una
+// instancia privada autohospedada para evitar enviar coordenadas de usuarios en texto plano.
 func (c *Config) Validate() error {
 	isDev := strings.EqualFold(c.Environment, "development")
 
@@ -108,7 +118,66 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	if strings.TrimSpace(c.OSRMBaseURL) == "" {
+		if !isDev {
+			return errors.New("OSRM_BASE_URL es obligatorio en entornos distintos a 'development'")
+		}
+		c.OSRMBaseURL = DefaultOSRMBaseURL
+	}
+
+	if err := validateOSRMURL(c.OSRMBaseURL, isDev); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+// validateOSRMURL impide llamadas en texto plano (http://) hacia servidores públicos por Internet.
+// Exige HTTPS para endpoints externos y solo permite HTTP si apunta a un host interno/privado autohospedado.
+func validateOSRMURL(rawURL string, isDev bool) error {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || parsed.Host == "" {
+		return fmt.Errorf("OSRM_BASE_URL inválida: %q", rawURL)
+	}
+
+	scheme := strings.ToLower(parsed.Scheme)
+	host := strings.ToLower(parsed.Hostname())
+
+	if scheme == "https" {
+		return nil
+	}
+
+	if scheme != "http" {
+		return fmt.Errorf("OSRM_BASE_URL debe usar esquema https (o http únicamente para una instancia interna autohospedada): esquema %q no soportado", parsed.Scheme)
+	}
+
+	// Nunca permitir HTTP plano hacia el servidor público demo de OSRM
+	if host == "router.project-osrm.org" {
+		return errors.New("OSRM_BASE_URL no puede usar http:// con el servidor público router.project-osrm.org; use https:// o una instancia propia de OSRM")
+	}
+
+	// En entornos productivos/staging, HTTP plano solo es aceptable para servicios internos en red privada
+	if !isDev && !isInternalHost(host) {
+		return fmt.Errorf("OSRM_BASE_URL (%q) debe usar https:// en entornos no-development para evitar exponer coordenadas de pasajeros en texto plano", rawURL)
+	}
+
+	if isDev && !isInternalHost(host) {
+		return fmt.Errorf("OSRM_BASE_URL (%q) debe usar https:// cuando apunta a un host público externo", rawURL)
+	}
+
+	return nil
+}
+
+// isInternalHost determina si el hostname corresponde a localhost, una IP privada/loopback o un servicio interno sin dominio público (ej. "osrm").
+func isInternalHost(host string) bool {
+	if host == "localhost" || strings.HasSuffix(host, ".local") || strings.HasSuffix(host, ".internal") || strings.HasSuffix(host, ".svc.cluster.local") {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback() || ip.IsPrivate()
+	}
+	// Nombre de servicio Docker/Kubernetes de una sola etiqueta (ej. "osrm", "osrm-routing")
+	return !strings.Contains(host, ".")
 }
 
 // loadDotEnv parsea pares clave=valor de un archivo .env y los exporta mediante os.Setenv
