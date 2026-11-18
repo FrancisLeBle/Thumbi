@@ -1,0 +1,54 @@
+# Production runtime secret-injection overlay for Docker Compose / Swarm.
+# Usage (once mock adapters are replaced with real production providers):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Secrets are mounted read-only under /run/secrets/* at container runtime
+# and never baked into Dockerfile layers or passed via build ARGs.
+
+services:
+  api:
+    environment:
+      - ENV=production
+      - DATABASE_URL_FILE=/run/secrets/database_url
+      - WEBHOOK_SECRET_FILE=/run/secrets/webhook_secret
+      - GOOGLE_CLIENT_ID_FILE=/run/secrets/google_client_id
+      - APPLE_CLIENT_ID_FILE=/run/secrets/apple_client_id
+      - REDIS_ADDR=redis:6379
+      - REDIS_URL=redis://redis:6379
+      - OSRM_BASE_URL=${OSRM_BASE_URL:?Set OSRM_BASE_URL for production}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:?Set ALLOWED_ORIGINS for production}
+      - APP_URL=${APP_URL:?Set APP_URL for production}
+    secrets:
+      - database_url
+      - webhook_secret
+      - google_client_id
+      - apple_client_id
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  postgres:
+    # Do not expose PostgreSQL directly on host interfaces in production
+    ports: []
+    environment:
+      - POSTGRES_PASSWORD_FILE=/run/secrets/postgres_password
+    secrets:
+      - postgres_password
+
+  redis:
+    # Do not expose Redis directly on host interfaces in production
+    ports: []
+
+secrets:
+  database_url:
+    file: ./secrets/database_url.txt
+  postgres_password:
+    file: ./secrets/postgres_password.txt
+  webhook_secret:
+    file: ./secrets/webhook_secret.txt
+  google_client_id:
+    file: ./secrets/google_client_id.txt
+  apple_client_id:
+    file: ./secrets/apple_client_id.txt

@@ -1,11 +1,37 @@
+# Dependencies
 node_modules/
+
+# Compiled web & Capacitor assets (re-generated via `npm run build` / `npx cap sync`)
 build/
 dist/
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+android/app/src/main/assets/capacitor.plugins.json
+android/app/src/main/res/xml/config.xml
+android/capacitor-cordova-android-plugins/
+
+# Keystores, certificates & mobile service configs
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
+google-services.json
+GoogleService-Info.plist
+
+# Coverage, logs & OS artifacts
 coverage/
+coverage.out
 .DS_Store
 *.log
-.env*
+
+# Environment & local secrets
+.env
+.env.*
 !.env.example
+secrets/
 
 # Compiled Go binaries
 /main
+/bin/
+/thumbi-api

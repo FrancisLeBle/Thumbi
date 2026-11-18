@@ -10,9 +10,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/thumbi/auth-kyc-service/internal/adapters/external/routing"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
+	"github.com/thumbi/backend/internal/adapters/external/routing"
+	"github.com/thumbi/backend/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/ports"
 )
 
 func TestOSRMProvider_CalculateRoute(t *testing.T) {
@@ -59,12 +59,13 @@ func TestOSRMProvider_CalculateRoute(t *testing.T) {
 		assert.InDelta(t, 300.45, details.DistanceKm, 0.1)
 		assert.Equal(t, 240, details.DurationMinutes)
 		assert.Equal(t, 2, details.TollsCount) // ~300km / 130km = 2
-		assert.Equal(t, domain.Money(300000), details.EstimatedTollCost)
-		assert.Greater(t, details.EstimatedFuelCost, domain.Money(0))
+		assert.Equal(t, domain.MoneyFromCents(300000, domain.CurrencyARS), details.EstimatedTollCost)
+		assert.Greater(t, details.EstimatedFuelCost.Amount, int64(0))
+		assert.Equal(t, domain.CurrencyARS, details.EstimatedFuelCost.Currency)
 		assert.Len(t, details.RoutePath.Coordinates, 3)
 	})
 
-	t.Run("conmuta a fallback determinístico si OSRM no responde o da 500", func(t *testing.T) {
+	t.Run("conmuta a fallback de polilínea si OSRM no responde o da 500 delegando distancia a PostGIS", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
 		}))
@@ -75,8 +76,8 @@ func TestOSRMProvider_CalculateRoute(t *testing.T) {
 
 		require.NoError(t, err)
 		assert.NotNil(t, details)
-		assert.Greater(t, details.DistanceKm, 250.0)
-		assert.Greater(t, details.DurationMinutes, 120)
+		assert.Zero(t, details.DistanceKm)
+		assert.Zero(t, details.DurationMinutes)
 		assert.Greater(t, len(details.RoutePath.Coordinates), 2)
 	})
 

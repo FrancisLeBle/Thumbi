@@ -2,27 +2,33 @@ package services
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
+	"github.com/thumbi/backend/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/ports"
 )
 
-// TokenProvider interfaz para el generador de tokens
-type TokenProvider interface {
-	GenerateToken(user *domain.User) (string, error)
-	ValidateToken(tokenString string) (*domain.UserClaims, error)
+const opaqueTokenBytes = 32 // 256 bits de entropía criptográfica para tokens opacos de sesión
+
+func generateOpaqueToken() (string, error) {
+	buf := make([]byte, opaqueTokenBytes)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("error generando entropía para token de sesión: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
-// authService implementa ports.AuthService
-type authService struct {
+// AuthService implementa los casos de uso de autenticación usando tokens opacos aleatorios respaldados por el almacén de sesiones.
+type AuthService struct {
 	userRepo       ports.UserRepository
 	sessionRepo    ports.SessionRepository
 	oauthProviders map[domain.AuthProvider]ports.OAuthProvider
-	tokenProvider  TokenProvider
 	identityRepo   ports.IdentityRepository
 }
 
@@ -32,9 +38,8 @@ func NewAuthService(
 	userRepo ports.UserRepository,
 	sessionRepo ports.SessionRepository,
 	providers []ports.OAuthProvider,
-	tokenProvider TokenProvider,
 	identityRepos ...ports.IdentityRepository,
-) ports.AuthService {
+) *AuthService {
 	providerMap := make(map[domain.AuthProvider]ports.OAuthProvider)
 	for _, p := range providers {
 		providerMap[p.GetProviderName()] = p
@@ -47,11 +52,10 @@ func NewAuthService(
 		identityRepo = ir
 	}
 
-	return &authService{
+	return &AuthService{
 		userRepo:       userRepo,
 		sessionRepo:    sessionRepo,
 		oauthProviders: providerMap,
-		tokenProvider:  tokenProvider,
 		identityRepo:   identityRepo,
 	}
 }
@@ -59,7 +63,10 @@ func NewAuthService(
 // LoginWithSocial maneja la autenticación social (RF-01, RF-02, RF-03, RF-04)
 // con vinculación segura de cuentas (Account Linking) basada en identidades explícitas
 // y validación estricta de email_verified=true para prevenir secuestro de cuentas (Account Takeover).
-func (s *authService) LoginWithSocial(ctx context.Context, input ports.SocialAuthInput) (*ports.AuthResult, error) {
+func (s *AuthService) LoginWithSocial(ctx context.Context, input ports.SocialAuthInput) (*ports.AuthResult, error) {
+	if !input.Provider.IsValid() {
+		return nil, fmt.Errorf("%w: proveedor de autenticación no soportado: %s", domain.ErrInvalidStatus, input.Provider)
+	}
 	provider, ok := s.oauthProviders[input.Provider]
 	if !ok {
 		return nil, fmt.Errorf("proveedor de autenticación no soportado: %s", input.Provider)
@@ -103,7 +110,7 @@ func (s *authService) LoginWithSocial(ctx context.Context, input ports.SocialAut
 		if user != nil && s.identityRepo != nil {
 			// Registrar la identidad en la tabla separada para trazabilidad y migraciones transparentes
 			linkedIdent := domain.NewUserIdentity(
-				uuid.New().String(),
+				domain.NewUUIDv7(),
 				user.ID,
 				socialProfile.Provider,
 				socialProfile.ProviderID,
@@ -143,7 +150,7 @@ func (s *authService) LoginWithSocial(ctx context.Context, input ports.SocialAut
 			user = existingUser
 			if s.identityRepo != nil {
 				newIdentity := domain.NewUserIdentity(
-					uuid.New().String(),
+					domain.NewUUIDv7(),
 					existingUser.ID,
 					socialProfile.Provider,
 					socialProfile.ProviderID,
@@ -162,7 +169,7 @@ func (s *authService) LoginWithSocial(ctx context.Context, input ports.SocialAut
 			}
 
 			isNewUser = true
-			userID := uuid.New().String()
+			userID := domain.NewUUIDv7()
 			user = domain.NewUser(
 				userID,
 				socialProfile.Email,
@@ -180,7 +187,7 @@ func (s *authService) LoginWithSocial(ctx context.Context, input ports.SocialAut
 			// Guardar la identidad externa en la tabla dedicada
 			if s.identityRepo != nil {
 				newIdentity := domain.NewUserIdentity(
-					uuid.New().String(),
+					domain.NewUUIDv7(),
 					userID,
 					socialProfile.Provider,
 					socialProfile.ProviderID,
@@ -201,66 +208,79 @@ func (s *authService) LoginWithSocial(ctx context.Context, input ports.SocialAut
 		}
 	}
 
-	// 5. RF-04: Generar JWT con TTL de exactamente 20 minutos
-	accessToken, err := s.tokenProvider.GenerateToken(user)
+	// 5. RF-04: Generar token opaco aleatorio (256 bits) asociado a una sesión con TTL de exactamente 20 minutos
+	accessToken, err := generateOpaqueToken()
 	if err != nil {
 		return nil, fmt.Errorf("error al generar token de acceso: %w", err)
 	}
 
-	// 6. Guardar sesión activa con expiración de 20 minutos
-	sessionID := uuid.New().String()
+	// 6. Guardar sesión activa con expiración de 20 minutos (el repositorio almacena su hash SHA-256)
+	sessionID := domain.NewUUIDv7()
 	session := domain.NewSession(sessionID, user.ID, accessToken, input.UserAgent, input.ClientIP)
 	if err := s.sessionRepo.Save(ctx, session, domain.SessionTTL); err != nil {
 		return nil, fmt.Errorf("error al registrar sesión activa: %w", err)
 	}
 
 	return &ports.AuthResult{
-		User:        user,
-		Session:     session,
+		User:        toUserDTO(user),
+		SessionID:   session.ID,
 		AccessToken: accessToken,
 		ExpiresIn:   int64(domain.SessionTTL.Seconds()), // 1200 segundos (20 min)
 		IsNewUser:   isNewUser,
 	}, nil
 }
 
-// RefreshSession extiende o emite una nueva sesión si la actual es válida (RF-05)
-func (s *authService) RefreshSession(ctx context.Context, currentToken string, userAgent, clientIP string) (*ports.AuthResult, error) {
-	// 1. Validar token actual
-	claims, err := s.tokenProvider.ValidateToken(currentToken)
-	if err != nil {
-		return nil, err
+// RefreshSession rota el token opaco y extiende la sesión si la actual sigue activa (RF-05)
+func (s *AuthService) RefreshSession(ctx context.Context, currentToken string, userAgent, clientIP string) (*ports.AuthResult, error) {
+	trimmedToken := strings.TrimSpace(currentToken)
+	if trimmedToken == "" {
+		return nil, domain.ErrInvalidToken
 	}
 
-	// 2. Verificar que la sesión aún exista en el repositorio (no invalidada previamente)
-	session, err := s.sessionRepo.GetByToken(ctx, currentToken)
-	if err != nil || session == nil || session.IsExpired() {
+	// 1. Verificar que la sesión exista en el repositorio y no haya expirado ni sido cerrada
+	session, err := s.sessionRepo.GetByToken(ctx, trimmedToken)
+	if err != nil {
+		if errors.Is(err, domain.ErrSessionExpired) {
+			return nil, domain.ErrSessionExpired
+		}
+		return nil, fmt.Errorf("error al consultar sesión activa: %w", err)
+	}
+	if session == nil || session.IsExpired() {
 		return nil, domain.ErrSessionExpired
 	}
-
-	// 3. Obtener el usuario actualizado
-	user, err := s.userRepo.GetByID(ctx, claims.UserID)
-	if err != nil {
-		return nil, domain.ErrUserNotFound
+	if session.UserID == uuid.Nil {
+		return nil, domain.ErrInvalidToken
 	}
 
-	// 4. Invalidar la sesión anterior
-	_ = s.sessionRepo.Delete(ctx, session.ID)
+	// 2. Obtener el usuario actualizado desde base de datos
+	user, err := s.userRepo.GetByID(ctx, session.UserID)
+	if err != nil {
+		if errors.Is(err, domain.ErrUserNotFound) {
+			return nil, domain.ErrUserNotFound
+		}
+		return nil, fmt.Errorf("error al consultar usuario de la sesión: %w", err)
+	}
 
-	// 5. Emitir nuevo token con 20 minutos de TTL
-	newToken, err := s.tokenProvider.GenerateToken(user)
+	// 3. Invalidar inmediatamente la sesión anterior (rotación de token)
+	if err := s.sessionRepo.Delete(ctx, session.ID); err != nil {
+		return nil, fmt.Errorf("error al invalidar sesión anterior: %w", err)
+	}
+
+	// 4. Emitir nuevo token opaco aleatorio con 20 minutos de TTL
+	newToken, err := generateOpaqueToken()
 	if err != nil {
 		return nil, fmt.Errorf("error al emitir nuevo token: %w", err)
 	}
 
-	newSessionID := uuid.New().String()
+	newSessionID := domain.NewUUIDv7()
 	newSession := domain.NewSession(newSessionID, user.ID, newToken, userAgent, clientIP)
 	if err := s.sessionRepo.Save(ctx, newSession, domain.SessionTTL); err != nil {
 		return nil, fmt.Errorf("error al almacenar nueva sesión: %w", err)
 	}
 
 	return &ports.AuthResult{
-		User:        user,
-		Session:     newSession,
+		User:        toUserDTO(user),
+		SessionID:   newSession.ID,
 		AccessToken: newToken,
 		ExpiresIn:   int64(domain.SessionTTL.Seconds()),
 		IsNewUser:   false,
@@ -268,22 +288,128 @@ func (s *authService) RefreshSession(ctx context.Context, currentToken string, u
 }
 
 // InvalidateSession destruye la sesión activa para cerrar sesión o por expulsión (RF-06)
-func (s *authService) InvalidateSession(ctx context.Context, sessionID string) error {
+func (s *AuthService) InvalidateSession(ctx context.Context, sessionID uuid.UUID) error {
 	return s.sessionRepo.Delete(ctx, sessionID)
 }
 
-// ValidateToken decodifica y verifica los claims del token
-func (s *authService) ValidateToken(ctx context.Context, token string) (*domain.UserClaims, error) {
-	claims, err := s.tokenProvider.ValidateToken(token)
+// InvalidateSessionByToken destruye de inmediato la sesión asociada a un token opaco durante el logout (RF-06).
+func (s *AuthService) InvalidateSessionByToken(ctx context.Context, token string) error {
+	trimmed := strings.TrimSpace(token)
+	if trimmed == "" {
+		return nil
+	}
+
+	session, err := s.sessionRepo.GetByToken(ctx, trimmed)
+	if err != nil {
+		if errors.Is(err, domain.ErrSessionExpired) {
+			return nil
+		}
+		return fmt.Errorf("error al localizar sesión por token: %w", err)
+	}
+	if session == nil {
+		return nil
+	}
+
+	return s.sessionRepo.Delete(ctx, session.ID)
+}
+
+// ValidateToken valida el token opaco contra el almacén de sesiones y resuelve Role/KYCStatus frescos desde base de datos.
+func (s *AuthService) ValidateToken(ctx context.Context, token string) (*domain.UserClaims, error) {
+	trimmed := strings.TrimSpace(token)
+	if trimmed == "" {
+		return nil, domain.ErrInvalidToken
+	}
+
+	// 1. Consulta única de la sesión activa en el almacén de sesiones (indexada por hash SHA-256)
+	session, err := s.sessionRepo.GetByToken(ctx, trimmed)
+	if err != nil {
+		if errors.Is(err, domain.ErrSessionExpired) {
+			return nil, domain.ErrSessionExpired
+		}
+		return nil, fmt.Errorf("error al consultar sesión activa: %w", err)
+	}
+	if session == nil || session.IsExpired() {
+		return nil, domain.ErrSessionExpired
+	}
+	if session.UserID == uuid.Nil {
+		return nil, domain.ErrInvalidToken
+	}
+
+	// 2. Resolver Role y KYCStatus vigentes desde la base de datos en cada solicitud
+	user, err := s.userRepo.GetByID(ctx, session.UserID)
+	if err != nil {
+		if errors.Is(err, domain.ErrUserNotFound) {
+			return nil, domain.ErrUnauthorized
+		}
+		return nil, fmt.Errorf("error al consultar estado vigente del usuario: %w", err)
+	}
+	if !user.Role.IsValid() || !user.KYCStatus.IsValid() {
+		return nil, domain.ErrInvalidStatus
+	}
+
+	return &domain.UserClaims{
+		UserID:    user.ID,
+		SessionID: session.ID,
+		Email:     user.Email,
+		Role:      user.Role,
+		KYCStatus: user.KYCStatus,
+		IssuedAt:  session.CreatedAt.Unix(),
+		ExpiresAt: session.ExpiresAt.Unix(),
+	}, nil
+}
+
+// GetCurrentUser recupera el perfil vigente del usuario autenticado como DTO a través de la capa de servicio
+func (s *AuthService) GetCurrentUser(ctx context.Context, userID uuid.UUID) (*ports.UserDTO, error) {
+	if userID == uuid.Nil {
+		return nil, domain.ErrUnauthorized
+	}
+
+	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
-
-	// Validar que la sesión no haya sido destruida
-	session, err := s.sessionRepo.GetByToken(ctx, token)
-	if err != nil || session == nil || session.IsExpired() {
-		return nil, domain.ErrSessionExpired
+	if user == nil {
+		return nil, domain.ErrUserNotFound
 	}
 
-	return claims, nil
+	return toUserDTO(user), nil
+}
+
+func formatTimeRFC3339(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
+func formatOptionalTimeRFC3339(t *time.Time) *string {
+	if t == nil || t.IsZero() {
+		return nil
+	}
+	formatted := t.UTC().Format(time.RFC3339)
+	return &formatted
+}
+
+func toUserDTO(u *domain.User) *ports.UserDTO {
+	if u == nil {
+		return nil
+	}
+	return &ports.UserDTO{
+		ID:              u.ID,
+		Email:           u.Email,
+		FirstName:       u.FirstName,
+		LastName:        u.LastName,
+		Phone:           u.Phone,
+		AvatarURL:       u.AvatarURL,
+		Provider:        u.Provider,
+		Role:            u.Role,
+		KYCStatus:       u.KYCStatus,
+		IsDriverActive:  u.IsDriverActive,
+		RatingAvg:       u.RatingAvg,
+		RatingCount:     u.RatingCount,
+		CanBookRides:    u.CanBookRides(),
+		CanPublishRides: u.CanPublishRides(),
+		CreatedAt:       formatTimeRFC3339(u.CreatedAt),
+		UpdatedAt:       formatTimeRFC3339(u.UpdatedAt),
+	}
 }

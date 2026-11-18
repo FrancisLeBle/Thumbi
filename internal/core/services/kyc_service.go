@@ -7,12 +7,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
+	"github.com/thumbi/backend/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/ports"
 )
 
-// kycService implementa ports.KYCService
-type kycService struct {
+// KYCService implementa los casos de uso para verificación de identidad y prueba de vida.
+type KYCService struct {
 	userRepo           ports.UserRepository
 	kycRepo            ports.KYCRepository
 	biometricsProvider ports.BiometricsProvider
@@ -25,8 +25,8 @@ func NewKYCService(
 	kycRepo ports.KYCRepository,
 	biometricsProvider ports.BiometricsProvider,
 	notifier ports.Notifier,
-) ports.KYCService {
-	return &kycService{
+) *KYCService {
+	return &KYCService{
 		userRepo:           userRepo,
 		kycRepo:            kycRepo,
 		biometricsProvider: biometricsProvider,
@@ -35,7 +35,7 @@ func NewKYCService(
 }
 
 // SubmitVerification procesa la validación biométrica y documental de identidad (RF-07, RF-08, RF-09)
-func (s *kycService) SubmitVerification(ctx context.Context, input ports.KYCSubmissionInput) (*domain.KYCVerification, error) {
+func (s *KYCService) SubmitVerification(ctx context.Context, input ports.KYCSubmissionInput) (*ports.KYCDTO, error) {
 	// 1. Verificar que el usuario exista
 	user, err := s.userRepo.GetByID(ctx, input.UserID)
 	if err != nil {
@@ -58,15 +58,15 @@ func (s *kycService) SubmitVerification(ctx context.Context, input ports.KYCSubm
 	}
 
 	if kyc == nil {
-		kycID := uuid.New().String()
+		kycID := domain.NewUUIDv7()
 		kyc = domain.NewKYCVerification(
 			kycID,
 			input.UserID,
 			input.DocumentType,
 			input.DocumentNumber,
-			"https://storage.thumbi.app/kyc/front_"+kycID+".jpg",
-			"https://storage.thumbi.app/kyc/back_"+kycID+".jpg",
-			"https://storage.thumbi.app/kyc/selfie_"+kycID+".mp4",
+			"https://storage.thumbi.app/kyc/front_"+kycID.String()+".jpg",
+			"https://storage.thumbi.app/kyc/back_"+kycID.String()+".jpg",
+			"https://storage.thumbi.app/kyc/selfie_"+kycID.String()+".mp4",
 		)
 		if err := s.kycRepo.Create(ctx, kyc); err != nil {
 			return nil, fmt.Errorf("error al inicializar registro KYC: %w", err)
@@ -75,9 +75,9 @@ func (s *kycService) SubmitVerification(ctx context.Context, input ports.KYCSubm
 		// Verificar si ya agotó los reintentos
 		if !kyc.CanRetry() {
 			if kyc.Status == domain.KYCStatusPendingManualReview {
-				return kyc, domain.ErrKYCInManualReview
+				return toKYCDTO(kyc), domain.ErrKYCInManualReview
 			}
-			return kyc, domain.ErrMaxRetriesExceeded
+			return toKYCDTO(kyc), domain.ErrMaxRetriesExceeded
 		}
 	}
 
@@ -120,7 +120,7 @@ func (s *kycService) SubmitVerification(ctx context.Context, input ports.KYCSubm
 			})
 		}
 
-		return kyc, nil
+		return toKYCDTO(kyc), nil
 	}
 
 	// 5. Fallo: Registrar fallo e incrementar contador de reintentos (RF-08, RF-09)
@@ -149,14 +149,14 @@ func (s *kycService) SubmitVerification(ctx context.Context, input ports.KYCSubm
 	_ = s.userRepo.Update(ctx, user)
 
 	if failErr != nil {
-		return kyc, failErr
+		return toKYCDTO(kyc), failErr
 	}
 
-	return kyc, domain.ErrLivenessCheckFailed
+	return toKYCDTO(kyc), domain.ErrLivenessCheckFailed
 }
 
 // GetStatus retorna el estado de la verificación KYC de un usuario
-func (s *kycService) GetStatus(ctx context.Context, userID string) (*domain.KYCVerification, error) {
+func (s *KYCService) GetStatus(ctx context.Context, userID uuid.UUID) (*ports.KYCDTO, error) {
 	kyc, err := s.kycRepo.GetLatestByUserID(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -164,53 +164,29 @@ func (s *kycService) GetStatus(ctx context.Context, userID string) (*domain.KYCV
 	if kyc == nil {
 		return nil, domain.ErrUserNotFound
 	}
-	return kyc, nil
+	return toKYCDTO(kyc), nil
 }
 
-// ReviewManually permite a un operador de mesa de control aprobar o rechazar manualmente una solicitud bloqueada
-func (s *kycService) ReviewManually(ctx context.Context, kycID string, approved bool, reason string) error {
-	kyc, err := s.kycRepo.GetByID(ctx, kycID)
-	if err != nil {
-		return err
+func toKYCDTO(k *domain.KYCVerification) *ports.KYCDTO {
+	if k == nil {
+		return nil
 	}
-
-	user, err := s.userRepo.GetByID(ctx, kyc.UserID)
-	if err != nil {
-		return domain.ErrUserNotFound
+	remaining := domain.MaxKYCRetries - k.RetryCount
+	if remaining < 0 {
+		remaining = 0
 	}
-
-	if approved {
-		kyc.Approve(1.0)
-		user.KYCStatus = domain.KYCStatusApproved
-	} else {
-		kyc.Status = domain.KYCStatusRejected
-		kyc.RejectionReason = reason
-		kyc.UpdatedAt = time.Now().UTC()
-		user.KYCStatus = domain.KYCStatusRejected
+	return &ports.KYCDTO{
+		ID:               k.ID,
+		UserID:           k.UserID,
+		DocumentType:     k.DocumentType,
+		DocumentNumber:   k.DocumentNumber,
+		LivenessScore:    k.LivenessScore,
+		RetryCount:       k.RetryCount,
+		RemainingRetries: remaining,
+		CanRetry:         k.CanRetry(),
+		Status:           k.Status,
+		RejectionReason:  k.RejectionReason,
+		CreatedAt:        formatTimeRFC3339(k.CreatedAt),
+		UpdatedAt:        formatTimeRFC3339(k.UpdatedAt),
 	}
-	user.UpdatedAt = time.Now().UTC()
-
-	if err := s.kycRepo.Update(ctx, kyc); err != nil {
-		return err
-	}
-	if err := s.userRepo.Update(ctx, user); err != nil {
-		return err
-	}
-
-	if s.notifier != nil {
-		title := "Resolución de Verificación Manual"
-		msg := "Tu trámite ha sido aprobado."
-		if !approved {
-			msg = fmt.Sprintf("Tu trámite fue rechazado: %s", reason)
-		}
-		_ = s.notifier.SendResolutionNotification(ctx, ports.NotificationPayload{
-			UserID:  user.ID,
-			Email:   user.Email,
-			Title:   title,
-			Message: msg,
-			Type:    "KYC_MANUAL_REVIEW_RESOLVED",
-		})
-	}
-
-	return nil
 }

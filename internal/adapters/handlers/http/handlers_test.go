@@ -9,17 +9,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
-	"github.com/thumbi/auth-kyc-service/internal/adapters/external/biometrics"
-	"github.com/thumbi/auth-kyc-service/internal/adapters/external/notifier"
-	"github.com/thumbi/auth-kyc-service/internal/adapters/external/oauth"
-	adapterHttp "github.com/thumbi/auth-kyc-service/internal/adapters/handlers/http"
-	"github.com/thumbi/auth-kyc-service/internal/adapters/handlers/http/middleware"
-	"github.com/thumbi/auth-kyc-service/internal/adapters/repositories/postgres"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
-	"github.com/thumbi/auth-kyc-service/internal/core/services"
-	"github.com/thumbi/auth-kyc-service/pkg/jwt"
+	"github.com/thumbi/backend/internal/adapters/external/biometrics"
+	"github.com/thumbi/backend/internal/adapters/external/notifier"
+	"github.com/thumbi/backend/internal/adapters/external/oauth"
+	adapterHttp "github.com/thumbi/backend/internal/adapters/handlers/http"
+	"github.com/thumbi/backend/internal/adapters/handlers/http/middleware"
+	"github.com/thumbi/backend/internal/adapters/repositories/memory"
+	"github.com/thumbi/backend/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/ports"
+	"github.com/thumbi/backend/internal/core/services"
 )
 
 // In-memory mock DB for testing the HTTP layer end-to-end
@@ -27,29 +27,28 @@ type testEnv struct {
 	userRepo       *inMemoryUserRepo
 	kycRepo        *inMemoryKYCRepo
 	vehicleRepo    *inMemoryVehicleRepo
-	sessionRepo    *postgres.MemorySessionRepository
-	tokenManager   *jwt.TokenManager
-	authService    ports.AuthService
-	kycService     ports.KYCService
-	vehicleService ports.VehicleService
+	sessionRepo    *memory.SessionRepository
+	authService    adapterHttp.AuthService
+	kycService     adapterHttp.KYCService
+	vehicleService adapterHttp.VehicleService
 	biometrics     *biometrics.MockBiometricsProvider
 	notifier       *notifier.PushNotifier
 	router         http.Handler
 }
 
 type inMemoryUserRepo struct {
-	users map[string]*domain.User
+	users map[uuid.UUID]*domain.User
 }
 
 func newInMemoryUserRepo() *inMemoryUserRepo {
-	return &inMemoryUserRepo{users: make(map[string]*domain.User)}
+	return &inMemoryUserRepo{users: make(map[uuid.UUID]*domain.User)}
 }
 
 func (r *inMemoryUserRepo) Create(ctx context.Context, u *domain.User) error {
 	r.users[u.ID] = u
 	return nil
 }
-func (r *inMemoryUserRepo) GetByID(ctx context.Context, id string) (*domain.User, error) {
+func (r *inMemoryUserRepo) GetByID(ctx context.Context, id uuid.UUID) (*domain.User, error) {
 	u, ok := r.users[id]
 	if !ok {
 		return nil, domain.ErrUserNotFound
@@ -78,11 +77,11 @@ func (r *inMemoryUserRepo) Update(ctx context.Context, u *domain.User) error {
 }
 
 type inMemoryIdentityRepo struct {
-	identities map[string]*domain.UserIdentity
+	identities map[uuid.UUID]*domain.UserIdentity
 }
 
 func newInMemoryIdentityRepo() *inMemoryIdentityRepo {
-	return &inMemoryIdentityRepo{identities: make(map[string]*domain.UserIdentity)}
+	return &inMemoryIdentityRepo{identities: make(map[uuid.UUID]*domain.UserIdentity)}
 }
 
 func (r *inMemoryIdentityRepo) Create(ctx context.Context, ident *domain.UserIdentity) error {
@@ -90,7 +89,7 @@ func (r *inMemoryIdentityRepo) Create(ctx context.Context, ident *domain.UserIde
 	return nil
 }
 
-func (r *inMemoryIdentityRepo) GetByID(ctx context.Context, id string) (*domain.UserIdentity, error) {
+func (r *inMemoryIdentityRepo) GetByID(ctx context.Context, id uuid.UUID) (*domain.UserIdentity, error) {
 	ident, ok := r.identities[id]
 	if !ok {
 		return nil, domain.ErrIdentityNotFound
@@ -107,7 +106,7 @@ func (r *inMemoryIdentityRepo) GetByProviderAndID(ctx context.Context, provider 
 	return nil, domain.ErrIdentityNotFound
 }
 
-func (r *inMemoryIdentityRepo) ListByUserID(ctx context.Context, userID string) ([]*domain.UserIdentity, error) {
+func (r *inMemoryIdentityRepo) ListByUserID(ctx context.Context, userID uuid.UUID) ([]*domain.UserIdentity, error) {
 	var res []*domain.UserIdentity
 	for _, ident := range r.identities {
 		if ident.UserID == userID {
@@ -117,7 +116,7 @@ func (r *inMemoryIdentityRepo) ListByUserID(ctx context.Context, userID string) 
 	return res, nil
 }
 
-func (r *inMemoryIdentityRepo) Delete(ctx context.Context, id string) error {
+func (r *inMemoryIdentityRepo) Delete(ctx context.Context, id uuid.UUID) error {
 	if _, ok := r.identities[id]; !ok {
 		return domain.ErrIdentityNotFound
 	}
@@ -126,25 +125,25 @@ func (r *inMemoryIdentityRepo) Delete(ctx context.Context, id string) error {
 }
 
 type inMemoryKYCRepo struct {
-	kycs map[string]*domain.KYCVerification
+	kycs map[uuid.UUID]*domain.KYCVerification
 }
 
 func newInMemoryKYCRepo() *inMemoryKYCRepo {
-	return &inMemoryKYCRepo{kycs: make(map[string]*domain.KYCVerification)}
+	return &inMemoryKYCRepo{kycs: make(map[uuid.UUID]*domain.KYCVerification)}
 }
 
 func (r *inMemoryKYCRepo) Create(ctx context.Context, k *domain.KYCVerification) error {
 	r.kycs[k.ID] = k
 	return nil
 }
-func (r *inMemoryKYCRepo) GetByID(ctx context.Context, id string) (*domain.KYCVerification, error) {
+func (r *inMemoryKYCRepo) GetByID(ctx context.Context, id uuid.UUID) (*domain.KYCVerification, error) {
 	k, ok := r.kycs[id]
 	if !ok {
 		return nil, domain.ErrUserNotFound
 	}
 	return k, nil
 }
-func (r *inMemoryKYCRepo) GetLatestByUserID(ctx context.Context, userID string) (*domain.KYCVerification, error) {
+func (r *inMemoryKYCRepo) GetLatestByUserID(ctx context.Context, userID uuid.UUID) (*domain.KYCVerification, error) {
 	for _, k := range r.kycs {
 		if k.UserID == userID {
 			return k, nil
@@ -158,25 +157,25 @@ func (r *inMemoryKYCRepo) Update(ctx context.Context, k *domain.KYCVerification)
 }
 
 type inMemoryVehicleRepo struct {
-	vehicles map[string]*domain.Vehicle
+	vehicles map[uuid.UUID]*domain.Vehicle
 }
 
 func newInMemoryVehicleRepo() *inMemoryVehicleRepo {
-	return &inMemoryVehicleRepo{vehicles: make(map[string]*domain.Vehicle)}
+	return &inMemoryVehicleRepo{vehicles: make(map[uuid.UUID]*domain.Vehicle)}
 }
 
 func (r *inMemoryVehicleRepo) Create(ctx context.Context, v *domain.Vehicle) error {
 	r.vehicles[v.ID] = v
 	return nil
 }
-func (r *inMemoryVehicleRepo) GetByID(ctx context.Context, id string) (*domain.Vehicle, error) {
+func (r *inMemoryVehicleRepo) GetByID(ctx context.Context, id uuid.UUID) (*domain.Vehicle, error) {
 	v, ok := r.vehicles[id]
 	if !ok {
 		return nil, domain.ErrVehicleNotFound
 	}
 	return v, nil
 }
-func (r *inMemoryVehicleRepo) GetByUserID(ctx context.Context, userID string) (*domain.Vehicle, error) {
+func (r *inMemoryVehicleRepo) GetByUserID(ctx context.Context, userID uuid.UUID) (*domain.Vehicle, error) {
 	for _, v := range r.vehicles {
 		if v.UserID == userID {
 			return v, nil
@@ -196,24 +195,14 @@ func (r *inMemoryVehicleRepo) Update(ctx context.Context, v *domain.Vehicle) err
 	r.vehicles[v.ID] = v
 	return nil
 }
-func (r *inMemoryVehicleRepo) ListPendingVerification(ctx context.Context, limit, offset int) ([]*domain.Vehicle, error) {
-	var list []*domain.Vehicle
-	for _, v := range r.vehicles {
-		if v.Status == domain.VehicleStatusPendingVerification {
-			list = append(list, v)
-		}
-	}
-	return list, nil
-}
 
 func setupTestApp() *testEnv {
 	userRepo := newInMemoryUserRepo()
 	kycRepo := newInMemoryKYCRepo()
 	vehicleRepo := newInMemoryVehicleRepo()
-	sessionRepo := postgres.NewMemorySessionRepository(0)
+	sessionRepo := memory.NewSessionRepository(0)
 	identityRepo := newInMemoryIdentityRepo()
 
-	tokenManager := jwt.NewTokenManager("super-secret-key-for-test-purposes-only", "thumbi-test")
 	googleProvider := oauth.NewGoogleOAuthProvider("google-client-id")
 	appleProvider := oauth.NewAppleOAuthProvider("apple-client-id")
 
@@ -221,7 +210,6 @@ func setupTestApp() *testEnv {
 		userRepo,
 		sessionRepo,
 		[]ports.OAuthProvider{googleProvider, appleProvider},
-		tokenManager,
 		identityRepo,
 	)
 
@@ -231,24 +219,24 @@ func setupTestApp() *testEnv {
 	kycService := services.NewKYCService(userRepo, kycRepo, bioProvider, notifierService)
 	vehicleService := services.NewVehicleService(userRepo, vehicleRepo, notifierService)
 
-	authHandler := adapterHttp.NewAuthHandler(authService, userRepo)
+	authHandler := adapterHttp.NewAuthHandler(authService)
 	kycHandler := adapterHttp.NewKYCHandler(kycService)
 	vehicleHandler := adapterHttp.NewVehicleHandler(vehicleService)
 	authMiddleware := middleware.AuthMiddleware(authService)
 
-	router := adapterHttp.SetupRouter(adapterHttp.RouterConfig{
-		AuthHandler:    authHandler,
-		KYCHandler:     kycHandler,
-		VehicleHandler: vehicleHandler,
-		AuthMiddleware: authMiddleware,
-	})
+	cfg := baseTestRouterConfig()
+	cfg.AuthHandler = authHandler
+	cfg.KYCHandler = kycHandler
+	cfg.VehicleHandler = vehicleHandler
+	cfg.AuthMiddleware = authMiddleware
+
+	router := mustSetupTestRouter(cfg)
 
 	return &testEnv{
 		userRepo:       userRepo,
 		kycRepo:        kycRepo,
 		vehicleRepo:    vehicleRepo,
 		sessionRepo:    sessionRepo,
-		tokenManager:   tokenManager,
 		authService:    authService,
 		kycService:     kycService,
 		vehicleService: vehicleService,
@@ -287,13 +275,33 @@ func TestHTTP_SocialLogin_And_TTL20Minutes(t *testing.T) {
 	userMap := res["user"].(map[string]interface{})
 	assert.Equal(t, "PASSENGER", userMap["role"], "RF-02: Perfil unificado base de Pasajero")
 
-	// 2. Acceso a ruta protegida con JWT
+	// 2. Acceso a ruta protegida con token opaco de sesión
 	reqMe := httptest.NewRequest(http.MethodGet, "/v1/auth/me", nil)
 	reqMe.Header.Set("Authorization", "Bearer "+token)
 	wMe := httptest.NewRecorder()
 	env.router.ServeHTTP(wMe, reqMe)
 
 	assert.Equal(t, http.StatusOK, wMe.Code)
+	var meRes adapterHttp.AuthMeResponse
+	_ = json.Unmarshal(wMe.Body.Bytes(), &meRes)
+	if assert.NotNil(t, meRes.User) {
+		assert.Equal(t, domain.RolePassenger, meRes.User.Role)
+		assert.True(t, meRes.Capabilities.CanBookRides)
+		assert.False(t, meRes.Capabilities.CanPublishRides)
+	}
+
+	// 3. Logout destruye la sesión inmediatamente -> /v1/auth/me debe responder 401
+	reqLogout := httptest.NewRequest(http.MethodPost, "/v1/auth/logout", nil)
+	reqLogout.Header.Set("Authorization", "Bearer "+token)
+	wLogout := httptest.NewRecorder()
+	env.router.ServeHTTP(wLogout, reqLogout)
+	assert.Equal(t, http.StatusOK, wLogout.Code)
+
+	reqMeAfterLogout := httptest.NewRequest(http.MethodGet, "/v1/auth/me", nil)
+	reqMeAfterLogout.Header.Set("Authorization", "Bearer "+token)
+	wMeAfterLogout := httptest.NewRecorder()
+	env.router.ServeHTTP(wMeAfterLogout, reqMeAfterLogout)
+	assert.Equal(t, http.StatusUnauthorized, wMeAfterLogout.Code)
 }
 
 func TestHTTP_KYC_Max3Retries_Flow(t *testing.T) {
@@ -429,14 +437,14 @@ func TestHTTP_VehicleRegistration_And_Rejection_RetainsPassenger(t *testing.T) {
 
 	// 5.2 Llamada con firma HMAC válida del proveedor de revisión -> 200 OK
 	reqRes := httptest.NewRequest(http.MethodPost, "/v1/vehicles/"+vehID+"/resolution", bytes.NewReader(resolPayload))
-	sig := middleware.ComputeWebhookSignature(resolPayload, middleware.DefaultWebhookSecret)
+	sig := middleware.ComputeWebhookSignature(resolPayload, testWebhookSecret)
 	reqRes.Header.Set(middleware.HeaderWebhookSignature, "sha256="+sig)
 	wRes := httptest.NewRecorder()
 	env.router.ServeHTTP(wRes, reqRes)
 	assert.Equal(t, http.StatusOK, wRes.Code)
 
 	// 6. Validar que el usuario retiene 100% capacidad como pasajero (RF-13)
-	user, err := env.userRepo.GetByID(context.Background(), userID)
+	user, err := env.userRepo.GetByID(context.Background(), uuid.MustParse(userID))
 	assert.NoError(t, err)
 	assert.Equal(t, domain.RolePassenger, user.Role)
 	assert.False(t, user.IsDriverActive)

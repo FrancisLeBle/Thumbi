@@ -15,13 +15,10 @@ import (
 )
 
 const (
-	// DefaultWebhookSecret se utiliza como fallback seguro si no se especifica explícitamente en el entorno
-	DefaultWebhookSecret = "thumbi-vehicle-review-webhook-secret-key-32-chars"
-
 	// Encabezados estándar de webhook admitidos
 	HeaderWebhookSignature = "X-Webhook-Signature"
 	HeaderSignatureSHA256  = "X-Signature-SHA256"
-	HeaderWebhookSecret     = "X-Webhook-Secret"
+	HeaderWebhookSecret    = "X-Webhook-Secret"
 )
 
 // WebhookAuthOptions opciones avanzadas de configuración para WebhookAuthMiddleware
@@ -38,9 +35,10 @@ type WebhookAuthOptions struct {
 // 3. Restricción opcional por lista blanca de IPs internas / redes confiables.
 //
 // Evita ataques de temporización utilizando comparaciones en tiempo constante (subtle.ConstantTimeCompare).
+// Falla inmediatamente al arrancar si el secreto está vacío (sin secretos de respaldo hardcodeados).
 func WebhookAuthMiddleware(secret string, allowedIPs ...string) gin.HandlerFunc {
 	if strings.TrimSpace(secret) == "" {
-		secret = DefaultWebhookSecret
+		panic("error de seguridad crítico: WebhookAuthMiddleware requiere un WEBHOOK_SECRET no vacío")
 	}
 
 	return func(c *gin.Context) {

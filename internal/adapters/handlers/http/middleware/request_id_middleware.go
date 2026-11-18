@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
+	"github.com/thumbi/backend/internal/core/domain"
 )
 
 const (
@@ -14,13 +14,13 @@ const (
 	CtxRequestIDKey = "request_id"
 )
 
-// RequestIDMiddleware extrae el ID de solicitud de los encabezados HTTP o genera uno nuevo basado en UUID v4.
+// RequestIDMiddleware extrae el ID de solicitud de los encabezados HTTP o genera uno nuevo basado en UUID v7.
 // Además de inyectarlo en el contexto de Gin, lo refleja en la cabecera X-Request-ID de la respuesta.
 func RequestIDMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		reqID := strings.TrimSpace(c.GetHeader(RequestIDHeader))
 		if reqID == "" {
-			reqID = uuid.New().String()
+			reqID = domain.NewUUIDv7().String()
 		}
 
 		c.Set(CtxRequestIDKey, reqID)
@@ -32,7 +32,7 @@ func RequestIDMiddleware() gin.HandlerFunc {
 // GetRequestID recupera el ID de solicitud del contexto Gin, generando un fallback seguro si no existe.
 func GetRequestID(c *gin.Context) string {
 	if c == nil {
-		return uuid.New().String()
+		return domain.NewUUIDv7().String()
 	}
 	if val, exists := c.Get(CtxRequestIDKey); exists {
 		if id, ok := val.(string); ok && id != "" {
@@ -42,7 +42,7 @@ func GetRequestID(c *gin.Context) string {
 	// Fallback si no fue procesado por el middleware
 	reqID := strings.TrimSpace(c.GetHeader(RequestIDHeader))
 	if reqID == "" {
-		reqID = uuid.New().String()
+		reqID = domain.NewUUIDv7().String()
 		c.Set(CtxRequestIDKey, reqID)
 		c.Writer.Header().Set(RequestIDHeader, reqID)
 	}

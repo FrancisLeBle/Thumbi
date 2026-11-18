@@ -1,22 +1,46 @@
 package domain
 
 import (
+	"fmt"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // BookingStatus enumera los estados posibles en el ciclo de vida de una reserva
 type BookingStatus string
 
 const (
-	BookingStatusPendingPayment        BookingStatus = "PENDING_PAYMENT"
-	BookingStatusConfirmed             BookingStatus = "CONFIRMED"
-	BookingStatusRejected              BookingStatus = "REJECTED"
-	BookingStatusCancelledByPassenger  BookingStatus = "CANCELLED_BY_PASSENGER"
-	BookingStatusCancelledByDriver     BookingStatus = "CANCELLED_BY_DRIVER"
-	BookingStatusExpired               BookingStatus = "EXPIRED"
-	BookingStatusCompleted             BookingStatus = "COMPLETED"
+	BookingStatusPendingPayment       BookingStatus = "PENDING_PAYMENT"
+	BookingStatusConfirmed            BookingStatus = "CONFIRMED"
+	BookingStatusRejected             BookingStatus = "REJECTED"
+	BookingStatusCancelledByPassenger BookingStatus = "CANCELLED_BY_PASSENGER"
+	BookingStatusCancelledByDriver    BookingStatus = "CANCELLED_BY_DRIVER"
+	BookingStatusExpired              BookingStatus = "EXPIRED"
+	BookingStatusCompleted            BookingStatus = "COMPLETED"
 )
+
+// IsValid verifica que el estado de la reserva pertenezca a los valores permitidos del dominio.
+func (s BookingStatus) IsValid() bool {
+	switch s {
+	case BookingStatusPendingPayment,
+		BookingStatusConfirmed,
+		BookingStatusRejected,
+		BookingStatusCancelledByPassenger,
+		BookingStatusCancelledByDriver,
+		BookingStatusExpired,
+		BookingStatusCompleted:
+		return true
+	default:
+		return false
+	}
+}
+
+// String retorna la representación textual del estado de la reserva.
+func (s BookingStatus) String() string {
+	return string(s)
+}
 
 // DefaultBookingTTL tiempo límite de retención de asientos sin pago confirmado (15 minutos)
 const DefaultBookingTTL = 15 * time.Minute
@@ -26,29 +50,31 @@ const MaxPendingBookingsPerPassenger = 3
 
 // BookingParams DTO para la instanciación de una nueva reserva en el dominio
 type BookingParams struct {
-	ID              string
-	TripID          string
-	PassengerID     string
-	DriverID        string
+	ID              uuid.UUID
+	TripID          uuid.UUID
+	PassengerID     uuid.UUID
+	DriverID        uuid.UUID
 	SeatsBooked     int
+	Currency        Currency
 	UnitPrice       Money
-	PickupStopID    *string
-	DropoffStopID   *string
+	PickupStopID    *uuid.UUID
+	DropoffStopID   *uuid.UUID
 	PaymentIntentID *string
 	TTL             time.Duration
 }
 
 // Booking representa la reserva de asientos en un viaje publicado
 type Booking struct {
-	ID                 string        `json:"id"`
-	TripID             string        `json:"trip_id"`
-	PassengerID        string        `json:"passenger_id"`
+	ID                 uuid.UUID     `json:"id"`
+	TripID             uuid.UUID     `json:"trip_id"`
+	PassengerID        uuid.UUID     `json:"passenger_id"`
 	SeatsBooked        int           `json:"seats_booked"`
+	Currency           Currency      `json:"currency"`
 	UnitPrice          Money         `json:"unit_price"`
 	TotalPrice         Money         `json:"total_price"`
 	Status             BookingStatus `json:"status"`
-	PickupStopID       *string       `json:"pickup_stop_id,omitempty"`
-	DropoffStopID      *string       `json:"dropoff_stop_id,omitempty"`
+	PickupStopID       *uuid.UUID    `json:"pickup_stop_id,omitempty"`
+	DropoffStopID      *uuid.UUID    `json:"dropoff_stop_id,omitempty"`
 	PaymentIntentID    *string       `json:"payment_intent_id,omitempty"`
 	ExpiresAt          time.Time     `json:"expires_at"`
 	ConfirmedAt        *time.Time    `json:"confirmed_at,omitempty"`
@@ -60,7 +86,7 @@ type Booking struct {
 
 // NewBooking crea y valida una nueva reserva de asientos verificando las invariantes de negocio
 func NewBooking(params BookingParams) (*Booking, error) {
-	if strings.TrimSpace(params.ID) == "" || strings.TrimSpace(params.TripID) == "" || strings.TrimSpace(params.PassengerID) == "" {
+	if params.ID == uuid.Nil || params.TripID == uuid.Nil || params.PassengerID == uuid.Nil {
 		return nil, ErrBookingNotFound
 	}
 
@@ -75,9 +101,30 @@ func NewBooking(params BookingParams) (*Booking, error) {
 	}
 
 	// Invariante: Precio unitario no puede ser negativo
-	if params.UnitPrice < 0 {
+	if params.UnitPrice.Amount < 0 {
 		return nil, ErrPriceExceedsCapPrice
 	}
+
+	bookingCurrency := params.Currency
+	if strings.TrimSpace(string(bookingCurrency)) == "" {
+		bookingCurrency = params.UnitPrice.EffectiveCurrency()
+	}
+	parsedCurrency, err := ParseCurrency(string(bookingCurrency))
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(string(params.UnitPrice.Currency)) != "" {
+		unitCur, err := ParseCurrency(string(params.UnitPrice.Currency))
+		if err != nil {
+			return nil, err
+		}
+		if unitCur != parsedCurrency {
+			return nil, fmt.Errorf("%w: precio unitario en %s incompatible con reserva en %s", ErrCurrencyMismatch, unitCur, parsedCurrency)
+		}
+	}
+
+	unitPrice := MoneyFromCents(params.UnitPrice.Amount, parsedCurrency)
+	totalPrice := unitPrice.Mul(int64(params.SeatsBooked))
 
 	ttl := params.TTL
 	if ttl <= 0 {
@@ -85,14 +132,14 @@ func NewBooking(params BookingParams) (*Booking, error) {
 	}
 
 	nowUTC := time.Now().UTC()
-	totalPrice := params.UnitPrice * Money(params.SeatsBooked)
 
 	return &Booking{
 		ID:              params.ID,
 		TripID:          params.TripID,
 		PassengerID:     params.PassengerID,
 		SeatsBooked:     params.SeatsBooked,
-		UnitPrice:       params.UnitPrice,
+		Currency:        parsedCurrency,
+		UnitPrice:       unitPrice,
 		TotalPrice:      totalPrice,
 		Status:          BookingStatusPendingPayment,
 		PickupStopID:    params.PickupStopID,
@@ -139,6 +186,11 @@ func (b *Booking) Confirm(now time.Time) error {
 	return nil
 }
 
+// CanExpire indica si una reserva pendiente venció su TTL en el instante now.
+func (b *Booking) CanExpire(now time.Time) bool {
+	return b.Status == BookingStatusPendingPayment && !now.UTC().Before(b.ExpiresAt)
+}
+
 // Expire transiciona la reserva a EXPIRED para liberar los asientos retenidos
 func (b *Booking) Expire(now time.Time) error {
 	if b.Status != BookingStatusPendingPayment {
@@ -149,6 +201,14 @@ func (b *Booking) Expire(now time.Time) error {
 	b.Status = BookingStatusExpired
 	b.UpdatedAt = nowUTC
 	return nil
+}
+
+// ExpireIfOverdue valida que la reserva esté pendiente y con TTL vencido antes de transicionarla a EXPIRED.
+func (b *Booking) ExpireIfOverdue(now time.Time) error {
+	if !b.CanExpire(now) {
+		return ErrInvalidBookingStatus
+	}
+	return b.Expire(now)
 }
 
 // CancelByPassenger procesa la cancelación solicitada por el pasajero

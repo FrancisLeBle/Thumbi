@@ -4,11 +4,12 @@ import (
 	"context"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
-	"github.com/thumbi/auth-kyc-service/internal/core/services"
+	"github.com/thumbi/backend/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/ports"
+	"github.com/thumbi/backend/internal/core/services"
 )
 
 func TestKYCService_SuccessOnFirstAttempt(t *testing.T) {
@@ -20,9 +21,10 @@ func TestKYCService_SuccessOnFirstAttempt(t *testing.T) {
 
 	service := services.NewKYCService(userRepo, kycRepo, bioProvider, notifier)
 
-	user := domain.NewUser("usr-123", "carlos@example.com", "Carlos", "Gomez", "", domain.ProviderGoogle, "g-1")
-	userRepo.On("GetByID", ctx, "usr-123").Return(user, nil)
-	kycRepo.On("GetLatestByUserID", ctx, "usr-123").Return(nil, domain.ErrUserNotFound)
+	userID := uuid.MustParse("01960000-0000-7000-8000-000000000123")
+	user := domain.NewUser(userID, "carlos@example.com", "Carlos", "Gomez", "", domain.ProviderGoogle, "g-1")
+	userRepo.On("GetByID", ctx, userID).Return(user, nil)
+	kycRepo.On("GetLatestByUserID", ctx, userID).Return(nil, domain.ErrUserNotFound)
 	kycRepo.On("Create", ctx, mock.Anything).Return(nil)
 
 	// Simular biometría aprobada
@@ -43,7 +45,7 @@ func TestKYCService_SuccessOnFirstAttempt(t *testing.T) {
 	notifier.On("SendResolutionNotification", ctx, mock.Anything).Return(nil)
 
 	res, err := service.SubmitVerification(ctx, ports.KYCSubmissionInput{
-		UserID:           "usr-123",
+		UserID:           userID,
 		DocumentType:     "DNI",
 		DocumentNumber:   "35999888",
 		FrontImageBase64: "front",
@@ -66,12 +68,14 @@ func TestKYCService_Max3Retries_DerivesToManualReview(t *testing.T) {
 
 	service := services.NewKYCService(userRepo, kycRepo, bioProvider, notifier)
 
-	user := domain.NewUser("usr-123", "carlos@example.com", "Carlos", "Gomez", "", domain.ProviderGoogle, "g-1")
-	existingKYC := domain.NewKYCVerification("kyc-1", "usr-123", "DNI", "35999888", "f.jpg", "b.jpg", "s.mp4")
+	userID := uuid.MustParse("01960000-0000-7000-8000-000000000123")
+	kycID := uuid.MustParse("01960000-0000-7000-8000-000000000456")
+	user := domain.NewUser(userID, "carlos@example.com", "Carlos", "Gomez", "", domain.ProviderGoogle, "g-1")
+	existingKYC := domain.NewKYCVerification(kycID, userID, "DNI", "35999888", "f.jpg", "b.jpg", "s.mp4")
 	existingKYC.RetryCount = 2 // Ya tiene 2 fallos anteriores
 
-	userRepo.On("GetByID", ctx, "usr-123").Return(user, nil)
-	kycRepo.On("GetLatestByUserID", ctx, "usr-123").Return(existingKYC, nil)
+	userRepo.On("GetByID", ctx, userID).Return(user, nil)
+	kycRepo.On("GetLatestByUserID", ctx, userID).Return(existingKYC, nil)
 
 	// Simular 3er fallo de prueba de vida
 	bioResult := &ports.BiometricEvaluationResult{
@@ -89,7 +93,7 @@ func TestKYCService_Max3Retries_DerivesToManualReview(t *testing.T) {
 	})).Return(nil)
 
 	res, err := service.SubmitVerification(ctx, ports.KYCSubmissionInput{
-		UserID:           "usr-123",
+		UserID:           userID,
 		DocumentType:     "DNI",
 		DocumentNumber:   "35999888",
 		FrontImageBase64: "front",

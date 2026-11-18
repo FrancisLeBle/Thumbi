@@ -13,29 +13,32 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/thumbi/auth-kyc-service/configs"
-	"github.com/thumbi/auth-kyc-service/internal/adapters/external/biometrics"
-	"github.com/thumbi/auth-kyc-service/internal/adapters/external/notifier"
-	"github.com/thumbi/auth-kyc-service/internal/adapters/external/oauth"
-	"github.com/thumbi/auth-kyc-service/internal/adapters/external/payment"
-	"github.com/thumbi/auth-kyc-service/internal/adapters/external/redis"
-	"github.com/thumbi/auth-kyc-service/internal/adapters/external/routing"
-	adapterHttp "github.com/thumbi/auth-kyc-service/internal/adapters/handlers/http"
-	"github.com/thumbi/auth-kyc-service/internal/adapters/handlers/http/middleware"
-	"github.com/thumbi/auth-kyc-service/internal/adapters/repositories/postgres"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
-	"github.com/thumbi/auth-kyc-service/internal/core/services"
-	"github.com/thumbi/auth-kyc-service/internal/worker"
-	"github.com/thumbi/auth-kyc-service/pkg/jwt"
+	"github.com/thumbi/backend/configs"
+	"github.com/thumbi/backend/internal/adapters/external/biometrics"
+	"github.com/thumbi/backend/internal/adapters/external/notifier"
+	"github.com/thumbi/backend/internal/adapters/external/oauth"
+	"github.com/thumbi/backend/internal/adapters/external/payment"
+	"github.com/thumbi/backend/internal/adapters/external/redis"
+	"github.com/thumbi/backend/internal/adapters/external/routing"
+	adapterHttp "github.com/thumbi/backend/internal/adapters/handlers/http"
+	"github.com/thumbi/backend/internal/adapters/handlers/http/middleware"
+	"github.com/thumbi/backend/internal/adapters/repositories/postgres"
+	"github.com/thumbi/backend/internal/core/ports"
+	"github.com/thumbi/backend/internal/core/services"
+	"github.com/thumbi/backend/internal/worker"
 )
 
 func main() {
-	log.Println("[INFO] Iniciando Thumbi Auth & KYC Service (Módulo 1)...")
+	log.Println("[INFO] Iniciando Thumbi Backend API...")
 
-	// 1. Cargar Configuración desde Variables de Entorno
+	// 1. Cargar Configuración desde Variables de Entorno (.env en local/dev o env/secret files en despliegue)
 	cfg, err := configs.LoadConfig()
 	if err != nil {
-		log.Fatalf("[FATAL] Error cargando configuración: %v", err)
+		log.Fatalf("[FATAL] Error cargando configuración (fail-fast): %v", err)
+	}
+
+	if cfg.IsProduction() {
+		log.Fatalf("[FATAL] Arranque bloqueado en ENV=production: los adaptadores de pagos, biometría y notificaciones siguen usando implementaciones simuladas (MockPaymentGateway, MockBiometricsProvider, PushNotifier). Reemplácelos por proveedores productivos con credenciales reales antes de habilitar producción.")
 	}
 
 	log.Printf("[INFO] Entorno: %s | Puerto: %s | TTL Sesión: %v", cfg.Environment, cfg.Port, cfg.SessionTTL)
@@ -61,30 +64,31 @@ func main() {
 	defer dbPool.Close()
 
 	if err := dbPool.Ping(ctx); err != nil {
-		log.Printf("[WARN] No se pudo conectar a la base de datos (se continuará para arranque local): %v", err)
+		if !cfg.IsLocalOrDev() {
+			log.Fatalf("[FATAL] No se pudo verificar conexión a PostgreSQL en entorno %s: %v", cfg.Environment, err)
+		}
+		log.Printf("[WARN] No se pudo conectar a la base de datos (se continuará solo en entorno local/development): %v", err)
 	} else {
 		log.Println("[INFO] Conexión a PostgreSQL establecida con éxito.")
 	}
 
 	// 3. Inicialización e Inyección de Dependencias (Wiring)
-	// 3.1 Repositorios
+	// 3.1 Unidad de Trabajo y Repositorios
+	unitOfWork := postgres.NewUnitOfWork(dbPool)
 	userRepo := postgres.NewUserRepository(dbPool)
 	kycRepo := postgres.NewKYCRepository(dbPool)
 	vehicleRepo := postgres.NewVehicleRepository(dbPool)
-	tripRepo := postgres.NewTripRepository(dbPool)
-	bookingRepo := postgres.NewBookingRepository(dbPool)
+	tripRepo := postgres.NewTripRepository(dbPool, unitOfWork)
+	bookingRepo := postgres.NewBookingRepository(dbPool, unitOfWork)
 	escrowRepo := postgres.NewEscrowRepository(dbPool)
 	reviewRepo := postgres.NewReviewRepository(dbPool)
 	disputeRepo := postgres.NewDisputeRepository(dbPool)
 	identityRepo := postgres.NewIdentityRepository(dbPool)
 	sessionRepo := postgres.NewSessionRepository(dbPool)
 
-	// 3.2 Seguridad y Tokens JWT (TTL de exactamente 20 minutos según RF-04)
-	tokenManager := jwt.NewTokenManager(cfg.JWTSecret, cfg.JWTIssuer)
-
-	// 3.3 Proveedores Externos (OAuth, Biometría, Notificaciones, Ruteo OSRM, Pasarela de Pagos)
-	googleProvider := oauth.NewGoogleOAuthProvider(cfg.GoogleClientID)
-	appleProvider := oauth.NewAppleOAuthProvider(cfg.AppleClientID)
+	// 3.2 Proveedores Externos (OAuth, Biometría, Notificaciones, Ruteo OSRM, Pasarela de Pagos)
+	googleProvider := oauth.NewGoogleOAuthProviderWithEnv(cfg.GoogleClientID, cfg.Environment)
+	appleProvider := oauth.NewAppleOAuthProviderWithEnv(cfg.AppleClientID, cfg.Environment)
 	socialProviders := []ports.OAuthProvider{googleProvider, appleProvider}
 
 	biometricsProvider := biometrics.NewMockBiometricsProvider()
@@ -92,12 +96,11 @@ func main() {
 	routingProvider := routing.NewOSRMProvider(cfg.OSRMBaseURL, routing.NewSecureHTTPClient(6*time.Second))
 	paymentGateway := payment.NewMockPaymentGateway()
 
-	// 3.4 Casos de Uso / Servicios del Dominio
+	// 3.3 Casos de Uso / Servicios del Dominio (sesiones con tokens opacos aleatorios de 20 min TTL según RF-04)
 	authService := services.NewAuthService(
 		userRepo,
 		sessionRepo,
 		socialProviders,
-		tokenManager,
 		identityRepo,
 	)
 	kycService := services.NewKYCService(
@@ -121,16 +124,29 @@ func main() {
 		bookingRepo,
 		escrowRepo,
 	)
-	txManager := postgres.NewTransactionManager(dbPool)
+	settlementService := services.NewSettlementService(
+		escrowRepo,
+		paymentGateway,
+		unitOfWork,
+	)
 	bookingService := services.NewBookingService(
 		bookingRepo,
-		escrowRepo,
 		tripRepo,
 		userRepo,
 		vehicleRepo,
-		paymentGateway,
+		settlementService,
 		notifierService,
-		txManager,
+		unitOfWork,
+	)
+	contactLinkService := services.NewContactLinkService(
+		bookingRepo,
+		tripRepo,
+		userRepo,
+	)
+	bookingExpirationService := services.NewBookingExpirationService(
+		bookingRepo,
+		tripRepo,
+		unitOfWork,
 	)
 	reputationService := services.NewReputationService(
 		reviewRepo,
@@ -140,19 +156,18 @@ func main() {
 	)
 	disputeService := services.NewDisputeService(
 		disputeRepo,
-		escrowRepo,
 		bookingRepo,
 		tripRepo,
-		paymentGateway,
-		txManager,
+		settlementService,
+		unitOfWork,
 	)
 
 	// 3.5 Handlers y Middleware HTTP
-	authHandler := adapterHttp.NewAuthHandler(authService, userRepo)
+	authHandler := adapterHttp.NewAuthHandler(authService)
 	kycHandler := adapterHttp.NewKYCHandler(kycService)
 	vehicleHandler := adapterHttp.NewVehicleHandler(vehicleService)
 	tripHandler := adapterHttp.NewTripHandler(tripService)
-	bookingHandler := adapterHttp.NewBookingHandler(bookingService)
+	bookingHandler := adapterHttp.NewBookingHandler(bookingService, contactLinkService)
 	reviewHandler := adapterHttp.NewReviewHandler(reputationService)
 	disputeHandler := adapterHttp.NewDisputeHandler(disputeService)
 	healthHandler := adapterHttp.NewHealthHandler(dbPool)
@@ -174,7 +189,7 @@ func main() {
 		}
 	}
 
-	router := adapterHttp.SetupRouter(adapterHttp.RouterConfig{
+	router, err := adapterHttp.SetupRouter(adapterHttp.RouterConfig{
 		AuthHandler:    authHandler,
 		KYCHandler:     kycHandler,
 		VehicleHandler: vehicleHandler,
@@ -188,12 +203,15 @@ func main() {
 		WebhookSecret:  cfg.WebhookSecret,
 		AllowedOrigins: allowedOrigins,
 	})
+	if err != nil {
+		log.Fatalf("[FATAL] Error inicializando router HTTP: %v", err)
+	}
 
 	// 3.7 Workers en segundo plano: expiración de reservas (15 min TTL) y limpieza de sesiones expiradas
 	workerCtx, cancelWorker := context.WithCancel(context.Background())
 	defer cancelWorker()
 
-	expirationWorker := worker.NewExpirationWorker(bookingService, 1*time.Minute)
+	expirationWorker := worker.NewExpirationWorker(bookingExpirationService, 1*time.Minute)
 	go expirationWorker.Start(workerCtx)
 	go sessionRepo.StartCleanup(workerCtx, 5*time.Minute)
 

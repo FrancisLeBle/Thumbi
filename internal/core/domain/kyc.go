@@ -2,6 +2,8 @@ package domain
 
 import (
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // MaxKYCRetries establece el límite estricto de reintentos automatizados permitidos (RF-08)
@@ -12,23 +14,23 @@ const LivenessScoreThreshold = 0.85
 
 // KYCVerification representa el proceso de validación biométrica y documental de identidad (RF-07, RF-08, RF-09)
 type KYCVerification struct {
-	ID             string    `json:"id"`
-	UserID         string    `json:"user_id"`
-	DocumentType   string    `json:"document_type"` // DNI, Pasaporte, Cédula
-	DocumentNumber string    `json:"document_number"`
-	FrontImageURL  string    `json:"front_image_url"`
-	BackImageURL   string    `json:"back_image_url"`
-	Selfie3DURL    string    `json:"selfie_3d_url"`
-	LivenessScore  float64   `json:"liveness_score"`
-	RetryCount     int       `json:"retry_count"`
-	Status         KYCStatus `json:"status"`
-	RejectionReason string   `json:"rejection_reason,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID              uuid.UUID `json:"id"`
+	UserID          uuid.UUID `json:"user_id"`
+	DocumentType    string    `json:"document_type"` // DNI, Pasaporte, Cédula
+	DocumentNumber  string    `json:"document_number"`
+	FrontImageURL   string    `json:"front_image_url"`
+	BackImageURL    string    `json:"back_image_url"`
+	Selfie3DURL     string    `json:"selfie_3d_url"`
+	LivenessScore   float64   `json:"liveness_score"`
+	RetryCount      int       `json:"retry_count"`
+	Status          KYCStatus `json:"status"`
+	RejectionReason string    `json:"rejection_reason,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 // NewKYCVerification inicia una nueva solicitud de verificación
-func NewKYCVerification(id, userID, docType, docNumber, frontURL, backURL, selfieURL string) *KYCVerification {
+func NewKYCVerification(id, userID uuid.UUID, docType, docNumber, frontURL, backURL, selfieURL string) *KYCVerification {
 	now := time.Now().UTC()
 	return &KYCVerification{
 		ID:             id,

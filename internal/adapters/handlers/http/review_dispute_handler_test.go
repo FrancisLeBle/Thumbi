@@ -6,30 +6,30 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	adapterHttp "github.com/thumbi/auth-kyc-service/internal/adapters/handlers/http"
-	"github.com/thumbi/auth-kyc-service/internal/adapters/handlers/http/middleware"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
+	adapterHttp "github.com/thumbi/backend/internal/adapters/handlers/http"
+	"github.com/thumbi/backend/internal/adapters/handlers/http/middleware"
+	"github.com/thumbi/backend/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/ports"
 )
 
-// MockTripServiceForHandlers mock de ports.TripService para handlers
+// MockTripServiceForHandlers mock de adapterHttp.TripService para handlers
 type MockTripServiceForHandlers struct {
 	mock.Mock
 }
 
-func (m *MockTripServiceForHandlers) CreateTrip(ctx context.Context, input ports.CreateTripInput) (*domain.Trip, error) {
+func (m *MockTripServiceForHandlers) CreateTrip(ctx context.Context, input ports.CreateTripInput) (*ports.TripDTO, error) {
 	args := m.Called(ctx, input)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*domain.Trip), args.Error(1)
+	return args.Get(0).(*ports.TripDTO), args.Error(1)
 }
 
 func (m *MockTripServiceForHandlers) SearchTrips(ctx context.Context, query ports.SearchTripsQuery) ([]ports.TripSearchResult, error) {
@@ -40,7 +40,7 @@ func (m *MockTripServiceForHandlers) SearchTrips(ctx context.Context, query port
 	return args.Get(0).([]ports.TripSearchResult), args.Error(1)
 }
 
-func (m *MockTripServiceForHandlers) GetTripByID(ctx context.Context, tripID string) (*ports.TripDetailDTO, error) {
+func (m *MockTripServiceForHandlers) GetTripByID(ctx context.Context, tripID uuid.UUID) (*ports.TripDetailDTO, error) {
 	args := m.Called(ctx, tripID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -48,17 +48,20 @@ func (m *MockTripServiceForHandlers) GetTripByID(ctx context.Context, tripID str
 	return args.Get(0).(*ports.TripDetailDTO), args.Error(1)
 }
 
-func (m *MockTripServiceForHandlers) CancelTrip(ctx context.Context, tripID, driverID string) error {
+func (m *MockTripServiceForHandlers) CancelTrip(ctx context.Context, tripID, driverID uuid.UUID) error {
 	args := m.Called(ctx, tripID, driverID)
 	return args.Error(0)
 }
 
-func (m *MockTripServiceForHandlers) CompleteTrip(ctx context.Context, tripID, driverID string) error {
+func (m *MockTripServiceForHandlers) CompleteTrip(ctx context.Context, tripID, driverID uuid.UUID) (*ports.TripDTO, error) {
 	args := m.Called(ctx, tripID, driverID)
-	return args.Error(0)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*ports.TripDTO), args.Error(1)
 }
 
-// MockReputationServiceForHandlers mock de ports.ReputationService
+// MockReputationServiceForHandlers mock de adapterHttp.ReputationService
 type MockReputationServiceForHandlers struct {
 	mock.Mock
 }
@@ -71,7 +74,7 @@ func (m *MockReputationServiceForHandlers) CreateReview(ctx context.Context, inp
 	return args.Get(0).(*ports.ReviewDTO), args.Error(1)
 }
 
-func (m *MockReputationServiceForHandlers) GetUserReviews(ctx context.Context, userID string, limit, offset int) (*ports.UserReputationDTO, error) {
+func (m *MockReputationServiceForHandlers) GetUserReviews(ctx context.Context, userID uuid.UUID, limit, offset int) (*ports.UserReputationDTO, error) {
 	args := m.Called(ctx, userID, limit, offset)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -79,7 +82,7 @@ func (m *MockReputationServiceForHandlers) GetUserReviews(ctx context.Context, u
 	return args.Get(0).(*ports.UserReputationDTO), args.Error(1)
 }
 
-// MockDisputeServiceForHandlers mock de ports.DisputeService
+// MockDisputeServiceForHandlers mock de adapterHttp.DisputeService
 type MockDisputeServiceForHandlers struct {
 	mock.Mock
 }
@@ -100,7 +103,7 @@ func (m *MockDisputeServiceForHandlers) ResolveDispute(ctx context.Context, inpu
 	return args.Get(0).(*ports.DisputeDTO), args.Error(1)
 }
 
-func (m *MockDisputeServiceForHandlers) GetDisputeByID(ctx context.Context, disputeID string) (*ports.DisputeDTO, error) {
+func (m *MockDisputeServiceForHandlers) GetDisputeByID(ctx context.Context, disputeID uuid.UUID) (*ports.DisputeDTO, error) {
 	args := m.Called(ctx, disputeID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -120,20 +123,19 @@ func setupModule4Router(
 	mockTrip *MockTripServiceForHandlers,
 	mockRep *MockReputationServiceForHandlers,
 	mockDisp *MockDisputeServiceForHandlers,
-	authUserID string,
+	authUserID uuid.UUID,
+	authRole domain.UserRole,
 ) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 
 	mockAuthMiddleware := func(c *gin.Context) {
-		if authUserID != "" {
+		if authUserID != uuid.Nil {
 			c.Set(middleware.UserIDKey, authUserID)
 			c.Set(middleware.CtxUserIDKey, authUserID)
 
-			role := domain.RolePassenger
-			if authUserID == "admin-user" || strings.HasPrefix(authUserID, "admin") {
-				role = domain.RoleAdmin
-			} else if strings.HasPrefix(authUserID, "driver") {
-				role = domain.RoleDriver
+			role := authRole
+			if role == "" {
+				role = domain.RolePassenger
 			}
 			if customRole := c.GetHeader("X-Test-Role"); customRole != "" {
 				role = domain.UserRole(customRole)
@@ -148,27 +150,20 @@ func setupModule4Router(
 		}
 	}
 
-	var tripHandler *adapterHttp.TripHandler
+	cfg := baseTestRouterConfig()
+	cfg.AuthMiddleware = mockAuthMiddleware
+
 	if mockTrip != nil {
-		tripHandler = adapterHttp.NewTripHandler(mockTrip)
+		cfg.TripHandler = adapterHttp.NewTripHandler(mockTrip)
 	}
-
-	var reviewHandler *adapterHttp.ReviewHandler
 	if mockRep != nil {
-		reviewHandler = adapterHttp.NewReviewHandler(mockRep)
+		cfg.ReviewHandler = adapterHttp.NewReviewHandler(mockRep)
 	}
-
-	var disputeHandler *adapterHttp.DisputeHandler
 	if mockDisp != nil {
-		disputeHandler = adapterHttp.NewDisputeHandler(mockDisp)
+		cfg.DisputeHandler = adapterHttp.NewDisputeHandler(mockDisp)
 	}
 
-	return adapterHttp.SetupRouter(adapterHttp.RouterConfig{
-		TripHandler:    tripHandler,
-		ReviewHandler:  reviewHandler,
-		DisputeHandler: disputeHandler,
-		AuthMiddleware: mockAuthMiddleware,
-	})
+	return mustSetupTestRouter(cfg)
 }
 
 // ---------------------------------------------------------------------------
@@ -176,14 +171,24 @@ func setupModule4Router(
 // ---------------------------------------------------------------------------
 
 func TestTripHandler_CompleteTrip(t *testing.T) {
+	driverID := uuid.MustParse("01960000-0000-7000-8000-000000000201")
+	otherUserID := uuid.MustParse("01960000-0000-7000-8000-000000000202")
+	tripID100 := uuid.MustParse("01960000-0000-7000-8000-000000000100")
+	nonExistentTripID := uuid.MustParse("01960000-0000-7000-8000-000000000199")
+
 	t.Run("concluye viaje exitosamente (200 OK)", func(t *testing.T) {
 		mockTrip := new(MockTripServiceForHandlers)
-		router := setupModule4Router(mockTrip, nil, nil, "driver-1")
+		router := setupModule4Router(mockTrip, nil, nil, driverID, domain.RoleDriver)
 
-		mockTrip.On("CompleteTrip", mock.Anything, "trip-100", "driver-1").Return(nil)
+		completedTrip := &ports.TripDTO{
+			ID:       tripID100,
+			DriverID: driverID,
+			Status:   domain.TripStatusCompleted,
+		}
+		mockTrip.On("CompleteTrip", mock.Anything, tripID100, driverID).Return(completedTrip, nil)
 
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodPost, "/api/v1/trips/trip-100/complete", nil)
+		req, _ := http.NewRequest(http.MethodPost, "/v1/trips/"+tripID100.String()+"/complete", nil)
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
@@ -193,12 +198,12 @@ func TestTripHandler_CompleteTrip(t *testing.T) {
 
 	t.Run("retorna 403 Forbidden si no es el conductor titular", func(t *testing.T) {
 		mockTrip := new(MockTripServiceForHandlers)
-		router := setupModule4Router(mockTrip, nil, nil, "other-user")
+		router := setupModule4Router(mockTrip, nil, nil, otherUserID, domain.RolePassenger)
 
-		mockTrip.On("CompleteTrip", mock.Anything, "trip-100", "other-user").Return(domain.ErrUnauthorized)
+		mockTrip.On("CompleteTrip", mock.Anything, tripID100, otherUserID).Return(nil, domain.ErrUnauthorized)
 
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodPost, "/api/v1/trips/trip-100/complete", nil)
+		req, _ := http.NewRequest(http.MethodPost, "/v1/trips/"+tripID100.String()+"/complete", nil)
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusForbidden, w.Code)
@@ -207,12 +212,12 @@ func TestTripHandler_CompleteTrip(t *testing.T) {
 
 	t.Run("retorna 404 Not Found si el viaje no existe", func(t *testing.T) {
 		mockTrip := new(MockTripServiceForHandlers)
-		router := setupModule4Router(mockTrip, nil, nil, "driver-1")
+		router := setupModule4Router(mockTrip, nil, nil, driverID, domain.RoleDriver)
 
-		mockTrip.On("CompleteTrip", mock.Anything, "non-existent", "driver-1").Return(domain.ErrTripNotFound)
+		mockTrip.On("CompleteTrip", mock.Anything, nonExistentTripID, driverID).Return(nil, domain.ErrTripNotFound)
 
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodPost, "/api/v1/trips/non-existent/complete", nil)
+		req, _ := http.NewRequest(http.MethodPost, "/v1/trips/"+nonExistentTripID.String()+"/complete", nil)
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusNotFound, w.Code)
@@ -225,62 +230,109 @@ func TestTripHandler_CompleteTrip(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestReviewHandler_CreateReview(t *testing.T) {
+	passengerID := uuid.MustParse("01960000-0000-7000-8000-000000000202")
+	driverID := uuid.MustParse("01960000-0000-7000-8000-000000000201")
+	userID1 := uuid.MustParse("01960000-0000-7000-8000-000000000203")
+	revID := uuid.MustParse("01960000-0000-7000-8000-000000000801")
+	tripID := uuid.MustParse("01960000-0000-7000-8000-000000000101")
+	bookingID := uuid.MustParse("01960000-0000-7000-8000-000000000901")
+
 	t.Run("crea calificación exitosamente (201 Created)", func(t *testing.T) {
 		mockRep := new(MockReputationServiceForHandlers)
-		router := setupModule4Router(nil, mockRep, nil, "passenger-1")
+		router := setupModule4Router(nil, mockRep, nil, passengerID, domain.RolePassenger)
 
 		expectedDTO := &ports.ReviewDTO{
-			ID:         "rev-1",
-			TripID:     "trip-1",
-			BookingID:  "booking-1",
-			ReviewerID: "passenger-1",
-			RevieweeID: "driver-1",
+			ID:         revID,
+			TripID:     tripID,
+			BookingID:  bookingID,
+			ReviewerID: passengerID,
+			RevieweeID: driverID,
 			Rating:     5,
 			Comment:    "Excelente servicio",
 			CreatedAt:  "2026-09-07T12:00:00Z",
 		}
 
 		mockRep.On("CreateReview", mock.Anything, ports.CreateReviewInput{
-			BookingID:  "booking-1",
-			ReviewerID: "passenger-1",
+			BookingID:  bookingID,
+			ReviewerID: passengerID,
 			Rating:     5,
 			Comment:    "Excelente servicio",
 		}).Return(expectedDTO, nil)
 
 		payload := map[string]any{
-			"booking_id": "booking-1",
+			"booking_id": bookingID.String(),
 			"rating":     5,
 			"comment":    "Excelente servicio",
 		}
 		body, _ := json.Marshal(payload)
 
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodPost, "/api/v1/reviews", bytes.NewBuffer(body))
+		req, _ := http.NewRequest(http.MethodPost, "/v1/reviews", bytes.NewBuffer(body))
 		req.Header.Set("Content-Type", "application/json")
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusCreated, w.Code)
-		var res ports.ReviewDTO
+		var res adapterHttp.ReviewResponse
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &res))
-		assert.Equal(t, "rev-1", res.ID)
+		assert.Equal(t, revID, res.ID)
 		assert.Equal(t, 5, res.Rating)
+		mockRep.AssertExpectations(t)
+	})
+
+	t.Run("ignora reviewer_id enviado en el cuerpo JSON y utiliza el del token autenticado", func(t *testing.T) {
+		mockRep := new(MockReputationServiceForHandlers)
+		router := setupModule4Router(nil, mockRep, nil, passengerID, domain.RolePassenger)
+		spoofedReviewerID := uuid.MustParse("01960000-0000-7000-8000-000000000992")
+
+		expectedDTO := &ports.ReviewDTO{
+			ID:         revID,
+			TripID:     tripID,
+			BookingID:  bookingID,
+			ReviewerID: passengerID,
+			RevieweeID: driverID,
+			Rating:     5,
+			Comment:    "Excelente",
+			CreatedAt:  "2026-09-07T12:00:00Z",
+		}
+
+		mockRep.On("CreateReview", mock.Anything, ports.CreateReviewInput{
+			BookingID:  bookingID,
+			ReviewerID: passengerID,
+			Rating:     5,
+			Comment:    "Excelente",
+		}).Return(expectedDTO, nil)
+
+		payload := map[string]any{
+			"booking_id":  bookingID.String(),
+			"reviewer_id": spoofedReviewerID.String(),
+			"rating":      5,
+			"comment":     "Excelente",
+		}
+		body, _ := json.Marshal(payload)
+
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodPost, "/v1/reviews", bytes.NewBuffer(body))
+		req.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusCreated, w.Code)
 		mockRep.AssertExpectations(t)
 	})
 
 	t.Run("retorna 400 Bad Request si el viaje no está completado (RF-06)", func(t *testing.T) {
 		mockRep := new(MockReputationServiceForHandlers)
-		router := setupModule4Router(nil, mockRep, nil, "passenger-1")
+		router := setupModule4Router(nil, mockRep, nil, passengerID, domain.RolePassenger)
 
 		mockRep.On("CreateReview", mock.Anything, mock.Anything).Return(nil, domain.ErrTripNotCompletedForReview)
 
 		payload := map[string]any{
-			"booking_id": "booking-1",
+			"booking_id": bookingID.String(),
 			"rating":     4,
 		}
 		body, _ := json.Marshal(payload)
 
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodPost, "/api/v1/reviews", bytes.NewBuffer(body))
+		req, _ := http.NewRequest(http.MethodPost, "/v1/reviews", bytes.NewBuffer(body))
 		req.Header.Set("Content-Type", "application/json")
 		router.ServeHTTP(w, req)
 
@@ -290,18 +342,18 @@ func TestReviewHandler_CreateReview(t *testing.T) {
 
 	t.Run("retorna 409 Conflict si ya existe reseña previa (RF-09)", func(t *testing.T) {
 		mockRep := new(MockReputationServiceForHandlers)
-		router := setupModule4Router(nil, mockRep, nil, "passenger-1")
+		router := setupModule4Router(nil, mockRep, nil, passengerID, domain.RolePassenger)
 
 		mockRep.On("CreateReview", mock.Anything, mock.Anything).Return(nil, domain.ErrDuplicateReview)
 
 		payload := map[string]any{
-			"booking_id": "booking-1",
+			"booking_id": bookingID.String(),
 			"rating":     5,
 		}
 		body, _ := json.Marshal(payload)
 
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodPost, "/api/v1/reviews", bytes.NewBuffer(body))
+		req, _ := http.NewRequest(http.MethodPost, "/v1/reviews", bytes.NewBuffer(body))
 		req.Header.Set("Content-Type", "application/json")
 		router.ServeHTTP(w, req)
 
@@ -311,18 +363,18 @@ func TestReviewHandler_CreateReview(t *testing.T) {
 
 	t.Run("retorna 422 Unprocessable Entity si intenta autocalificarse (RF-10)", func(t *testing.T) {
 		mockRep := new(MockReputationServiceForHandlers)
-		router := setupModule4Router(nil, mockRep, nil, "user-1")
+		router := setupModule4Router(nil, mockRep, nil, userID1, domain.RolePassenger)
 
 		mockRep.On("CreateReview", mock.Anything, mock.Anything).Return(nil, domain.ErrReviewSelfNotAllowed)
 
 		payload := map[string]any{
-			"booking_id": "booking-1",
+			"booking_id": bookingID.String(),
 			"rating":     5,
 		}
 		body, _ := json.Marshal(payload)
 
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodPost, "/api/v1/reviews", bytes.NewBuffer(body))
+		req, _ := http.NewRequest(http.MethodPost, "/v1/reviews", bytes.NewBuffer(body))
 		req.Header.Set("Content-Type", "application/json")
 		router.ServeHTTP(w, req)
 
@@ -332,21 +384,27 @@ func TestReviewHandler_CreateReview(t *testing.T) {
 }
 
 func TestReviewHandler_GetUserReviews(t *testing.T) {
+	driverID := uuid.MustParse("01960000-0000-7000-8000-000000000201")
+	passengerID := uuid.MustParse("01960000-0000-7000-8000-000000000202")
+	revID := uuid.MustParse("01960000-0000-7000-8000-000000000801")
+	tripID := uuid.MustParse("01960000-0000-7000-8000-000000000101")
+	bookingID := uuid.MustParse("01960000-0000-7000-8000-000000000901")
+
 	t.Run("obtiene perfil reputacional del usuario", func(t *testing.T) {
 		mockRep := new(MockReputationServiceForHandlers)
-		router := setupModule4Router(nil, mockRep, nil, "")
+		router := setupModule4Router(nil, mockRep, nil, uuid.Nil, "")
 
 		repDTO := &ports.UserReputationDTO{
-			UserID:      "driver-1",
+			UserID:      driverID,
 			RatingAvg:   4.90,
 			RatingCount: 20,
 			Reviews: []*ports.ReviewDTO{
 				{
-					ID:         "rev-1",
-					TripID:     "t-1",
-					BookingID:  "b-1",
-					ReviewerID: "p-1",
-					RevieweeID: "driver-1",
+					ID:         revID,
+					TripID:     tripID,
+					BookingID:  bookingID,
+					ReviewerID: passengerID,
+					RevieweeID: driverID,
 					Rating:     5,
 					Comment:    "Genial",
 					CreatedAt:  "2026-09-07T10:00:00Z",
@@ -354,16 +412,16 @@ func TestReviewHandler_GetUserReviews(t *testing.T) {
 			},
 		}
 
-		mockRep.On("GetUserReviews", mock.Anything, "driver-1", 10, 0).Return(repDTO, nil)
+		mockRep.On("GetUserReviews", mock.Anything, driverID, 10, 0).Return(repDTO, nil)
 
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodGet, "/api/v1/users/driver-1/reviews?limit=10&offset=0", nil)
+		req, _ := http.NewRequest(http.MethodGet, "/v1/users/"+driverID.String()+"/reviews?limit=10&offset=0", nil)
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		var res ports.UserReputationDTO
+		var res adapterHttp.UserReputationResponse
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &res))
-		assert.Equal(t, "driver-1", res.UserID)
+		assert.Equal(t, driverID, res.UserID)
 		assert.Equal(t, 4.90, res.RatingAvg)
 		assert.Equal(t, 20, res.RatingCount)
 		assert.Len(t, res.Reviews, 1)
@@ -376,17 +434,24 @@ func TestReviewHandler_GetUserReviews(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestDisputeHandler_OpenDispute(t *testing.T) {
+	passengerID := uuid.MustParse("01960000-0000-7000-8000-000000000202")
+	driverID := uuid.MustParse("01960000-0000-7000-8000-000000000201")
+	dispID := uuid.MustParse("01960000-0000-7000-8000-000000000701")
+	escrowID := uuid.MustParse("01960000-0000-7000-8000-000000000600")
+	bookingID := uuid.MustParse("01960000-0000-7000-8000-000000000900")
+	tripID := uuid.MustParse("01960000-0000-7000-8000-000000000100")
+
 	t.Run("abre disputa formal exitosamente (201 Created)", func(t *testing.T) {
 		mockDisp := new(MockDisputeServiceForHandlers)
-		router := setupModule4Router(nil, nil, mockDisp, "passenger-1")
+		router := setupModule4Router(nil, nil, mockDisp, passengerID, domain.RolePassenger)
 
 		expectedDTO := &ports.DisputeDTO{
-			ID:                  "disp-1",
-			EscrowTransactionID: "escrow-100",
-			BookingID:           "booking-100",
-			TripID:              "trip-100",
-			ReporterID:          "passenger-1",
-			DefendantID:         "driver-1",
+			ID:                  dispID,
+			EscrowTransactionID: escrowID,
+			BookingID:           bookingID,
+			TripID:              tripID,
+			ReporterID:          passengerID,
+			DefendantID:         driverID,
 			Reason:              domain.DisputeReasonNoShow,
 			Description:         "El conductor no llegó",
 			Status:              domain.DisputeStatusOpened,
@@ -395,15 +460,15 @@ func TestDisputeHandler_OpenDispute(t *testing.T) {
 		}
 
 		mockDisp.On("OpenDispute", mock.Anything, ports.OpenDisputeInput{
-			BookingID:    "booking-100",
-			ReporterID:   "passenger-1",
+			BookingID:    bookingID,
+			ReporterID:   passengerID,
 			Reason:       domain.DisputeReasonNoShow,
 			Description:  "El conductor no llegó",
 			EvidenceURLs: []string{"https://img.com/1.png"},
 		}).Return(expectedDTO, nil)
 
 		payload := map[string]any{
-			"booking_id":    "booking-100",
+			"booking_id":    bookingID.String(),
 			"reason":        "NO_SHOW",
 			"description":   "El conductor no llegó",
 			"evidence_urls": []string{"https://img.com/1.png"},
@@ -411,33 +476,33 @@ func TestDisputeHandler_OpenDispute(t *testing.T) {
 		body, _ := json.Marshal(payload)
 
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodPost, "/api/v1/disputes", bytes.NewBuffer(body))
+		req, _ := http.NewRequest(http.MethodPost, "/v1/disputes", bytes.NewBuffer(body))
 		req.Header.Set("Content-Type", "application/json")
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusCreated, w.Code)
-		var res ports.DisputeDTO
+		var res adapterHttp.DisputeResponse
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &res))
-		assert.Equal(t, "disp-1", res.ID)
+		assert.Equal(t, dispID, res.ID)
 		assert.Equal(t, domain.DisputeStatusOpened, res.Status)
 		mockDisp.AssertExpectations(t)
 	})
 
 	t.Run("retorna 409 Conflict si ya existe disputa previa (RF-17)", func(t *testing.T) {
 		mockDisp := new(MockDisputeServiceForHandlers)
-		router := setupModule4Router(nil, nil, mockDisp, "passenger-1")
+		router := setupModule4Router(nil, nil, mockDisp, passengerID, domain.RolePassenger)
 
 		mockDisp.On("OpenDispute", mock.Anything, mock.Anything).Return(nil, domain.ErrDisputeAlreadyExists)
 
 		payload := map[string]any{
-			"booking_id":  "booking-100",
+			"booking_id":  bookingID.String(),
 			"reason":      "NO_SHOW",
 			"description": "Reclamo",
 		}
 		body, _ := json.Marshal(payload)
 
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodPost, "/api/v1/disputes", bytes.NewBuffer(body))
+		req, _ := http.NewRequest(http.MethodPost, "/v1/disputes", bytes.NewBuffer(body))
 		req.Header.Set("Content-Type", "application/json")
 		router.ServeHTTP(w, req)
 
@@ -447,19 +512,19 @@ func TestDisputeHandler_OpenDispute(t *testing.T) {
 
 	t.Run("retorna 400 Bad Request si el escrow ya fue liquidado (RF-17)", func(t *testing.T) {
 		mockDisp := new(MockDisputeServiceForHandlers)
-		router := setupModule4Router(nil, nil, mockDisp, "passenger-1")
+		router := setupModule4Router(nil, nil, mockDisp, passengerID, domain.RolePassenger)
 
 		mockDisp.On("OpenDispute", mock.Anything, mock.Anything).Return(nil, domain.ErrEscrowAlreadySettled)
 
 		payload := map[string]any{
-			"booking_id":  "booking-100",
+			"booking_id":  bookingID.String(),
 			"reason":      "NO_SHOW",
 			"description": "Reclamo",
 		}
 		body, _ := json.Marshal(payload)
 
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodPost, "/api/v1/disputes", bytes.NewBuffer(body))
+		req, _ := http.NewRequest(http.MethodPost, "/v1/disputes", bytes.NewBuffer(body))
 		req.Header.Set("Content-Type", "application/json")
 		router.ServeHTTP(w, req)
 
@@ -469,18 +534,22 @@ func TestDisputeHandler_OpenDispute(t *testing.T) {
 }
 
 func TestDisputeHandler_ResolveDispute(t *testing.T) {
+	adminID := uuid.MustParse("01960000-0000-7000-8000-000000000299")
+	passengerID := uuid.MustParse("01960000-0000-7000-8000-000000000202")
+	dispID := uuid.MustParse("01960000-0000-7000-8000-000000000701")
+
 	t.Run("resuelve disputa a favor del pasajero si es administrador (200 OK)", func(t *testing.T) {
 		mockDisp := new(MockDisputeServiceForHandlers)
-		router := setupModule4Router(nil, nil, mockDisp, "admin-user")
+		router := setupModule4Router(nil, nil, mockDisp, adminID, domain.RoleAdmin)
 
 		resolvedDTO := &ports.DisputeDTO{
-			ID:     "disp-1",
+			ID:     dispID,
 			Status: domain.DisputeStatusResolvedPassengerRefund,
 		}
 
 		mockDisp.On("ResolveDispute", mock.Anything, ports.ResolveDisputeInput{
-			DisputeID:  "disp-1",
-			AdminID:    "admin-user",
+			DisputeID:  dispID,
+			AdminID:    adminID,
 			Resolution: domain.DisputeStatusResolvedPassengerRefund,
 			AdminNotes: "Aprobado reembolso completo",
 		}).Return(resolvedDTO, nil)
@@ -492,7 +561,7 @@ func TestDisputeHandler_ResolveDispute(t *testing.T) {
 		body, _ := json.Marshal(payload)
 
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodPost, "/api/v1/disputes/disp-1/resolve", bytes.NewBuffer(body))
+		req, _ := http.NewRequest(http.MethodPost, "/v1/disputes/"+dispID.String()+"/resolve", bytes.NewBuffer(body))
 		req.Header.Set("Content-Type", "application/json")
 		router.ServeHTTP(w, req)
 
@@ -502,7 +571,7 @@ func TestDisputeHandler_ResolveDispute(t *testing.T) {
 
 	t.Run("retorna 403 Forbidden si un usuario no administrador intenta resolver la disputa", func(t *testing.T) {
 		mockDisp := new(MockDisputeServiceForHandlers)
-		router := setupModule4Router(nil, nil, mockDisp, "passenger-1") // Rol PASSENGER por defecto
+		router := setupModule4Router(nil, nil, mockDisp, passengerID, domain.RolePassenger)
 
 		payload := map[string]any{
 			"resolution":  "RESOLVED_PASSENGER_REFUND",
@@ -511,7 +580,7 @@ func TestDisputeHandler_ResolveDispute(t *testing.T) {
 		body, _ := json.Marshal(payload)
 
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodPost, "/api/v1/disputes/disp-1/resolve", bytes.NewBuffer(body))
+		req, _ := http.NewRequest(http.MethodPost, "/v1/disputes/"+dispID.String()+"/resolve", bytes.NewBuffer(body))
 		req.Header.Set("Content-Type", "application/json")
 		router.ServeHTTP(w, req)
 
@@ -521,7 +590,7 @@ func TestDisputeHandler_ResolveDispute(t *testing.T) {
 
 	t.Run("retorna 400 Bad Request si el dictamen de resolución no pertenece al enum del dominio", func(t *testing.T) {
 		mockDisp := new(MockDisputeServiceForHandlers)
-		router := setupModule4Router(nil, nil, mockDisp, "admin-user")
+		router := setupModule4Router(nil, nil, mockDisp, adminID, domain.RoleAdmin)
 
 		payload := map[string]any{
 			"resolution":  "RESOLVED",
@@ -530,7 +599,7 @@ func TestDisputeHandler_ResolveDispute(t *testing.T) {
 		body, _ := json.Marshal(payload)
 
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodPost, "/api/v1/disputes/disp-1/resolve", bytes.NewBuffer(body))
+		req, _ := http.NewRequest(http.MethodPost, "/v1/disputes/"+dispID.String()+"/resolve", bytes.NewBuffer(body))
 		req.Header.Set("Content-Type", "application/json")
 		router.ServeHTTP(w, req)
 
@@ -541,21 +610,28 @@ func TestDisputeHandler_ResolveDispute(t *testing.T) {
 }
 
 func TestDisputeHandler_GetDisputeByID(t *testing.T) {
+	passengerID := uuid.MustParse("01960000-0000-7000-8000-000000000202")
+	driverID := uuid.MustParse("01960000-0000-7000-8000-000000000201")
+	adminID := uuid.MustParse("01960000-0000-7000-8000-000000000299")
+	intruderID := uuid.MustParse("01960000-0000-7000-8000-000000000209")
+	dispID500 := uuid.MustParse("01960000-0000-7000-8000-000000000750")
+	nonExistentDispID := uuid.MustParse("01960000-0000-7000-8000-000000000799")
+
 	t.Run("consulta detalle si el usuario es el denunciante (200 OK)", func(t *testing.T) {
 		mockDisp := new(MockDisputeServiceForHandlers)
-		router := setupModule4Router(nil, nil, mockDisp, "passenger-1")
+		router := setupModule4Router(nil, nil, mockDisp, passengerID, domain.RolePassenger)
 
 		disputeDTO := &ports.DisputeDTO{
-			ID:          "disp-500",
-			ReporterID:  "passenger-1",
-			DefendantID: "driver-1",
+			ID:          dispID500,
+			ReporterID:  passengerID,
+			DefendantID: driverID,
 			Status:      domain.DisputeStatusInReview,
 		}
 
-		mockDisp.On("GetDisputeByID", mock.Anything, "disp-500").Return(disputeDTO, nil)
+		mockDisp.On("GetDisputeByID", mock.Anything, dispID500).Return(disputeDTO, nil)
 
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodGet, "/api/v1/disputes/disp-500", nil)
+		req, _ := http.NewRequest(http.MethodGet, "/v1/disputes/"+dispID500.String(), nil)
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
@@ -564,19 +640,19 @@ func TestDisputeHandler_GetDisputeByID(t *testing.T) {
 
 	t.Run("consulta detalle si el usuario es el denunciado (200 OK)", func(t *testing.T) {
 		mockDisp := new(MockDisputeServiceForHandlers)
-		router := setupModule4Router(nil, nil, mockDisp, "driver-1")
+		router := setupModule4Router(nil, nil, mockDisp, driverID, domain.RoleDriver)
 
 		disputeDTO := &ports.DisputeDTO{
-			ID:          "disp-500",
-			ReporterID:  "passenger-1",
-			DefendantID: "driver-1",
+			ID:          dispID500,
+			ReporterID:  passengerID,
+			DefendantID: driverID,
 			Status:      domain.DisputeStatusInReview,
 		}
 
-		mockDisp.On("GetDisputeByID", mock.Anything, "disp-500").Return(disputeDTO, nil)
+		mockDisp.On("GetDisputeByID", mock.Anything, dispID500).Return(disputeDTO, nil)
 
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodGet, "/api/v1/disputes/disp-500", nil)
+		req, _ := http.NewRequest(http.MethodGet, "/v1/disputes/"+dispID500.String(), nil)
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
@@ -585,19 +661,19 @@ func TestDisputeHandler_GetDisputeByID(t *testing.T) {
 
 	t.Run("consulta detalle si el usuario es administrador aunque no sea participante (200 OK)", func(t *testing.T) {
 		mockDisp := new(MockDisputeServiceForHandlers)
-		router := setupModule4Router(nil, nil, mockDisp, "admin-user")
+		router := setupModule4Router(nil, nil, mockDisp, adminID, domain.RoleAdmin)
 
 		disputeDTO := &ports.DisputeDTO{
-			ID:          "disp-500",
-			ReporterID:  "passenger-1",
-			DefendantID: "driver-1",
+			ID:          dispID500,
+			ReporterID:  passengerID,
+			DefendantID: driverID,
 			Status:      domain.DisputeStatusInReview,
 		}
 
-		mockDisp.On("GetDisputeByID", mock.Anything, "disp-500").Return(disputeDTO, nil)
+		mockDisp.On("GetDisputeByID", mock.Anything, dispID500).Return(disputeDTO, nil)
 
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodGet, "/api/v1/disputes/disp-500", nil)
+		req, _ := http.NewRequest(http.MethodGet, "/v1/disputes/"+dispID500.String(), nil)
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
@@ -606,19 +682,19 @@ func TestDisputeHandler_GetDisputeByID(t *testing.T) {
 
 	t.Run("retorna 403 Forbidden si un usuario ajeno a la disputa intenta consultarla", func(t *testing.T) {
 		mockDisp := new(MockDisputeServiceForHandlers)
-		router := setupModule4Router(nil, nil, mockDisp, "intruder-user")
+		router := setupModule4Router(nil, nil, mockDisp, intruderID, domain.RolePassenger)
 
 		disputeDTO := &ports.DisputeDTO{
-			ID:          "disp-500",
-			ReporterID:  "passenger-1",
-			DefendantID: "driver-1",
+			ID:          dispID500,
+			ReporterID:  passengerID,
+			DefendantID: driverID,
 			Status:      domain.DisputeStatusInReview,
 		}
 
-		mockDisp.On("GetDisputeByID", mock.Anything, "disp-500").Return(disputeDTO, nil)
+		mockDisp.On("GetDisputeByID", mock.Anything, dispID500).Return(disputeDTO, nil)
 
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodGet, "/api/v1/disputes/disp-500", nil)
+		req, _ := http.NewRequest(http.MethodGet, "/v1/disputes/"+dispID500.String(), nil)
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusForbidden, w.Code)
@@ -627,12 +703,12 @@ func TestDisputeHandler_GetDisputeByID(t *testing.T) {
 
 	t.Run("retorna 404 Not Found si la disputa no existe", func(t *testing.T) {
 		mockDisp := new(MockDisputeServiceForHandlers)
-		router := setupModule4Router(nil, nil, mockDisp, "passenger-1")
+		router := setupModule4Router(nil, nil, mockDisp, passengerID, domain.RolePassenger)
 
-		mockDisp.On("GetDisputeByID", mock.Anything, "non-existent").Return(nil, domain.ErrDisputeNotFound)
+		mockDisp.On("GetDisputeByID", mock.Anything, nonExistentDispID).Return(nil, domain.ErrDisputeNotFound)
 
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodGet, "/api/v1/disputes/non-existent", nil)
+		req, _ := http.NewRequest(http.MethodGet, "/v1/disputes/"+nonExistentDispID.String(), nil)
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusNotFound, w.Code)
@@ -641,35 +717,39 @@ func TestDisputeHandler_GetDisputeByID(t *testing.T) {
 }
 
 func TestDisputeHandler_ListDisputes(t *testing.T) {
+	adminID := uuid.MustParse("01960000-0000-7000-8000-000000000299")
+	passengerID := uuid.MustParse("01960000-0000-7000-8000-000000000202")
+	dispID1 := uuid.MustParse("01960000-0000-7000-8000-000000000701")
+
 	t.Run("lista disputas pasando limit y offset al servicio (200 OK)", func(t *testing.T) {
 		mockDisp := new(MockDisputeServiceForHandlers)
-		router := setupModule4Router(nil, nil, mockDisp, "admin-user")
+		router := setupModule4Router(nil, nil, mockDisp, adminID, domain.RoleAdmin)
 
 		expected := []*ports.DisputeDTO{
-			{ID: "disp-1", Status: domain.DisputeStatusOpened},
+			{ID: dispID1, Status: domain.DisputeStatusOpened},
 		}
 		mockDisp.On("ListDisputes", mock.Anything, 15, 30).Return(expected, nil)
 
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodGet, "/api/v1/disputes?limit=15&offset=30", nil)
+		req, _ := http.NewRequest(http.MethodGet, "/v1/disputes?limit=15&offset=30", nil)
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		var res []*ports.DisputeDTO
+		var res []*adapterHttp.DisputeResponse
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &res))
 		assert.Len(t, res, 1)
-		assert.Equal(t, "disp-1", res[0].ID)
+		assert.Equal(t, dispID1, res[0].ID)
 		mockDisp.AssertExpectations(t)
 	})
 
 	t.Run("convierte parámetro page a offset cuando offset no se envía", func(t *testing.T) {
 		mockDisp := new(MockDisputeServiceForHandlers)
-		router := setupModule4Router(nil, nil, mockDisp, "admin-user")
+		router := setupModule4Router(nil, nil, mockDisp, adminID, domain.RoleAdmin)
 
 		mockDisp.On("ListDisputes", mock.Anything, 10, 20).Return([]*ports.DisputeDTO{}, nil)
 
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodGet, "/api/v1/disputes?page=3&limit=10", nil)
+		req, _ := http.NewRequest(http.MethodGet, "/v1/disputes?page=3&limit=10", nil)
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
@@ -678,10 +758,10 @@ func TestDisputeHandler_ListDisputes(t *testing.T) {
 
 	t.Run("retorna 403 Forbidden para usuarios no administradores", func(t *testing.T) {
 		mockDisp := new(MockDisputeServiceForHandlers)
-		router := setupModule4Router(nil, nil, mockDisp, "passenger-1")
+		router := setupModule4Router(nil, nil, mockDisp, passengerID, domain.RolePassenger)
 
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest(http.MethodGet, "/api/v1/disputes", nil)
+		req, _ := http.NewRequest(http.MethodGet, "/v1/disputes", nil)
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusForbidden, w.Code)

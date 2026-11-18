@@ -6,9 +6,12 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
+	"github.com/thumbi/backend/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/ports"
 )
+
+// MockFailGatewayBookingID es un UUID centinela utilizado en pruebas para simular un rechazo en pasarela.
+var MockFailGatewayBookingID = uuid.MustParse("ffffffff-ffff-ffff-ffff-ffffffffffff")
 
 type mockPaymentGateway struct{}
 
@@ -17,31 +20,34 @@ func NewMockPaymentGateway() ports.PaymentGateway {
 	return &mockPaymentGateway{}
 }
 
-// CreatePaymentIntent genera una orden o intención de cobro simulada para la reserva
-func (g *mockPaymentGateway) CreatePaymentIntent(ctx context.Context, bookingID string, amount domain.Money, currency string) (*ports.PaymentIntentResult, error) {
-	if strings.TrimSpace(bookingID) == "" {
+// CreatePaymentIntent genera una orden o intención de cobro simulada para la reserva utilizando exactamente la moneda de Money.
+func (g *mockPaymentGateway) CreatePaymentIntent(ctx context.Context, bookingID uuid.UUID, amount domain.Money) (*ports.PaymentIntentResult, error) {
+	if bookingID == uuid.Nil {
 		return nil, domain.ErrBookingNotFound
 	}
-	if amount <= 0 {
+	if amount.Amount <= 0 {
 		return nil, domain.ErrPriceExceedsCapPrice
 	}
-	if strings.TrimSpace(currency) == "" {
-		currency = "USD"
+	cur, err := domain.ParseCurrency(string(amount.Currency))
+	if err != nil {
+		return nil, err
 	}
 
 	// Simulación de fallo intencional para tests de error
-	if strings.Contains(bookingID, "fail_gateway") {
+	if bookingID == MockFailGatewayBookingID {
 		return nil, domain.ErrPaymentFailed
 	}
 
-	intentID := fmt.Sprintf("pi_mock_%s", uuid.New().String()[:12])
-	clientSecret := fmt.Sprintf("%s_secret_%s", intentID, uuid.New().String()[:8])
+	intentID := fmt.Sprintf("pi_mock_%s", domain.NewUUIDv7().String()[:12])
+	clientSecret := fmt.Sprintf("%s_secret_%s", intentID, domain.NewUUIDv7().String()[:8])
+
+	normalizedAmount := domain.MoneyFromCents(amount.Amount, cur)
 
 	return &ports.PaymentIntentResult{
 		GatewayRef:   intentID,
 		ClientSecret: clientSecret,
-		Amount:       amount,
-		Currency:     strings.ToUpper(currency),
+		Amount:       normalizedAmount,
+		Currency:     cur,
 		Status:       "requires_payment_method",
 	}, nil
 }
@@ -65,19 +71,23 @@ func (g *mockPaymentGateway) ProcessRefund(ctx context.Context, gatewayRef strin
 	if strings.TrimSpace(gatewayRef) == "" {
 		return nil, domain.ErrPaymentFailed
 	}
-	if amount <= 0 {
+	if amount.Amount <= 0 {
 		return nil, domain.ErrInvalidRefundAmount
+	}
+	cur, err := domain.ParseCurrency(string(amount.Currency))
+	if err != nil {
+		return nil, err
 	}
 
 	if strings.Contains(gatewayRef, "refund_error") {
 		return nil, domain.ErrPaymentFailed
 	}
 
-	refundID := fmt.Sprintf("re_mock_%s", uuid.New().String()[:12])
+	refundID := fmt.Sprintf("re_mock_%s", domain.NewUUIDv7().String()[:12])
 
 	return &ports.RefundResult{
 		GatewayRefundRef: refundID,
-		Amount:           amount,
+		Amount:           domain.MoneyFromCents(amount.Amount, cur),
 		Status:           "succeeded",
 	}, nil
 }

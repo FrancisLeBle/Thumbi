@@ -2,6 +2,8 @@ package domain
 
 import (
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // UserRole define los roles disponibles en la plataforma Thumbi
@@ -40,38 +42,62 @@ const (
 	ProviderApple  AuthProvider = "APPLE"
 )
 
+// IsValid verifica que el proveedor social pertenezca al conjunto admitido.
+func (p AuthProvider) IsValid() bool {
+	return p == ProviderGoogle || p == ProviderApple
+}
+
+// String retorna la representación textual del proveedor social.
+func (p AuthProvider) String() string {
+	return string(p)
+}
+
 // KYCStatus define el estado general de verificación de identidad del usuario
 type KYCStatus string
 
 const (
-	KYCStatusNotStarted         KYCStatus = "NOT_STARTED"
-	KYCStatusPending            KYCStatus = "PENDING_VERIFICATION"
-	KYCStatusApproved           KYCStatus = "APPROVED"
-	KYCStatusRejected           KYCStatus = "REJECTED"
+	KYCStatusNotStarted          KYCStatus = "NOT_STARTED"
+	KYCStatusPending             KYCStatus = "PENDING_VERIFICATION"
+	KYCStatusApproved            KYCStatus = "APPROVED"
+	KYCStatusRejected            KYCStatus = "REJECTED"
 	KYCStatusPendingManualReview KYCStatus = "PENDING_MANUAL_REVIEW"
 )
 
+// IsValid verifica que el estado KYC pertenezca a los valores válidos del dominio.
+func (k KYCStatus) IsValid() bool {
+	return k == KYCStatusNotStarted ||
+		k == KYCStatusPending ||
+		k == KYCStatusApproved ||
+		k == KYCStatusRejected ||
+		k == KYCStatusPendingManualReview
+}
+
+// String retorna la representación textual del estado KYC.
+func (k KYCStatus) String() string {
+	return string(k)
+}
+
 // User representa la entidad de usuario unificada con rol base de Pasajero (RF-01, RF-02, RF-03)
 type User struct {
-	ID           string       `json:"id"`
-	Email        string       `json:"email"`
-	FirstName    string       `json:"first_name"`
-	LastName     string       `json:"last_name"`
-	Phone        string       `json:"phone,omitempty"`
-	AvatarURL    string       `json:"avatar_url,omitempty"`
-	Provider     AuthProvider `json:"provider"`
-	ProviderID   string       `json:"provider_id"`
-	Role         UserRole     `json:"role"`
-	KYCStatus    KYCStatus    `json:"kyc_status"`
-	IsDriverActive bool       `json:"is_driver_active"`
-	RatingAvg    float64      `json:"rating_avg"`
-	RatingCount  int          `json:"rating_count"`
-	CreatedAt    time.Time    `json:"created_at"`
-	UpdatedAt    time.Time    `json:"updated_at"`
+	ID             uuid.UUID    `json:"id"`
+	Email          string       `json:"email"`
+	FirstName      string       `json:"first_name"`
+	LastName       string       `json:"last_name"`
+	Phone          string       `json:"phone,omitempty"`
+	AvatarURL      string       `json:"avatar_url,omitempty"`
+	Provider       AuthProvider `json:"provider"`
+	ProviderID     string       `json:"provider_id"`
+	Role           UserRole     `json:"role"`
+	KYCStatus      KYCStatus    `json:"kyc_status"`
+	IsDriverActive bool         `json:"is_driver_active"`
+	RatingAvg      float64      `json:"rating_avg"`
+	RatingCount    int          `json:"rating_count"`
+	CreatedAt      time.Time    `json:"created_at"`
+	UpdatedAt      time.Time    `json:"updated_at"`
 }
 
 // NewUser crea una nueva instancia de User garantizando los valores por defecto del dominio
-func NewUser(id, email, firstName, lastName, avatarURL string, provider AuthProvider, providerID string) *User {
+func NewUser(id uuid.UUID, email, firstName, lastName, avatarURL string, provider AuthProvider, providerID string) *User {
 	now := time.Now().UTC()
 	return &User{
 		ID:             id,

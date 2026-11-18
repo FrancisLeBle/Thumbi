@@ -7,13 +7,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
-	"github.com/thumbi/auth-kyc-service/pkg/whatsapp"
+	"github.com/thumbi/backend/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/ports"
+	"github.com/thumbi/backend/pkg/whatsapp"
 )
 
-// tripService implementa ports.TripService bajo Clean Architecture
-type tripService struct {
+// TripService implementa los casos de uso de publicación, cálculo de Cap Pricing, búsqueda y cancelación de viajes.
+type TripService struct {
 	tripRepo          ports.TripRepository
 	userRepo          ports.UserRepository
 	vehicleRepo       ports.VehicleRepository
@@ -32,11 +32,11 @@ func NewTripService(
 	routingProvider ports.RoutingProvider,
 	pricingCalculator PricingCalculator,
 	optionalRepos ...any,
-) ports.TripService {
+) *TripService {
 	if pricingCalculator == nil {
 		pricingCalculator = NewPricingCalculator()
 	}
-	svc := &tripService{
+	svc := &TripService{
 		tripRepo:          tripRepo,
 		userRepo:          userRepo,
 		vehicleRepo:       vehicleRepo,
@@ -58,7 +58,7 @@ func NewTripService(
 }
 
 // CreateTrip publica un nuevo viaje en ruta verificando el rol de conductor y el tope de Cap Pricing
-func (s *tripService) CreateTrip(ctx context.Context, input ports.CreateTripInput) (*domain.Trip, error) {
+func (s *TripService) CreateTrip(ctx context.Context, input ports.CreateTripInput) (*ports.TripDTO, error) {
 	now := s.clock().UTC()
 
 	// 1. Validar que el usuario exista y tenga el rol de conductor activo y verificado (RF-01)
@@ -134,7 +134,10 @@ func (s *tripService) CreateTrip(ctx context.Context, input ports.CreateTripInpu
 
 	distanceKm := routeDetails.DistanceKm
 	if distanceKm <= 0 {
-		distanceKm = routePath.TotalApproximatedDistanceKm()
+		distanceKm, err = s.tripRepo.CalculateRouteDistanceKm(ctx, routePath)
+		if err != nil {
+			return nil, fmt.Errorf("error al calcular distancia geodésica en PostGIS: %w", err)
+		}
 	}
 
 	durationMinutes := routeDetails.DurationMinutes
@@ -148,15 +151,44 @@ func (s *tripService) CreateTrip(ctx context.Context, input ports.CreateTripInpu
 
 	estimatedArrival := departureTime.Add(time.Duration(durationMinutes) * time.Minute)
 
-	// 7. Calcular matriz de costos compartidos y Cap Price (RF-05, RF-06)
+	// 7. Validar consistencia de moneda y calcular matriz de costos compartidos (RF-05, RF-06)
+	tripCurrency := domain.DefaultCurrency
+	if strings.TrimSpace(string(input.Currency)) != "" {
+		parsedCur, err := domain.ParseCurrency(string(input.Currency))
+		if err != nil {
+			return nil, err
+		}
+		tripCurrency = parsedCur
+	} else if strings.TrimSpace(string(input.PricePerSeat.Currency)) != "" {
+		parsedCur, err := domain.ParseCurrency(string(input.PricePerSeat.Currency))
+		if err != nil {
+			return nil, err
+		}
+		tripCurrency = parsedCur
+	}
+
+	if strings.TrimSpace(string(input.PricePerSeat.Currency)) != "" {
+		priceCur, err := domain.ParseCurrency(string(input.PricePerSeat.Currency))
+		if err != nil {
+			return nil, err
+		}
+		if priceCur != tripCurrency {
+			return nil, fmt.Errorf("%w: precio por asiento en %s no coincide con la moneda del viaje %s", domain.ErrCurrencyMismatch, priceCur, tripCurrency)
+		}
+	}
+	pricePerSeat := domain.MoneyFromCents(input.PricePerSeat.Amount, tripCurrency)
+
 	costMatrix := s.pricingCalculator.CalculatePricing(distanceKm, routeDetails.EstimatedTollCost, input.SeatsOffered)
+	if costMatrix.Currency != tripCurrency {
+		return nil, fmt.Errorf("%w: moneda del viaje %s incompatible con tarifa de referencia %s", domain.ErrCurrencyMismatch, tripCurrency, costMatrix.Currency)
+	}
 
 	// Invariante de negocio: No superar el Cap Price (RF-07)
-	if !costMatrix.IsPricePermitted(input.PricePerSeat) {
+	if !costMatrix.IsPricePermitted(pricePerSeat) {
 		return nil, domain.ErrPriceExceedsCapPrice
 	}
 
-	tripID := uuid.New().String()
+	tripID := domain.NewUUIDv7()
 
 	// 8. Construir paradas intermedias
 	var domainStops []domain.TripStop
@@ -171,7 +203,7 @@ func (s *tripService) CreateTrip(ctx context.Context, input ports.CreateTripInpu
 		if order <= 0 {
 			order = i + 1
 		}
-		stopObj, errStop := domain.NewTripStop(uuid.New().String(), tripID, order, stopInput.LocationTitle, stopInput.Coords, stopETA)
+		stopObj, errStop := domain.NewTripStop(domain.NewUUIDv7(), tripID, order, stopInput.LocationTitle, stopInput.Coords, stopETA)
 		if errStop != nil {
 			return nil, errStop
 		}
@@ -194,7 +226,8 @@ func (s *tripService) CreateTrip(ctx context.Context, input ports.CreateTripInpu
 		TotalDurationMinutes: durationMinutes,
 		TotalSeatsOffered:    input.SeatsOffered,
 		MaxVehicleSeats:      vehicle.SeatCapacity,
-		PricePerSeat:         input.PricePerSeat,
+		Currency:             tripCurrency,
+		PricePerSeat:         pricePerSeat,
 		EstimatedFuelCost:    costMatrix.FuelCost,
 		EstimatedTollCost:    costMatrix.TollCost,
 		Stops:                domainStops,
@@ -210,11 +243,11 @@ func (s *tripService) CreateTrip(ctx context.Context, input ports.CreateTripInpu
 		return nil, fmt.Errorf("error al persistir el viaje: %w", err)
 	}
 
-	return trip, nil
+	return toTripDTO(trip), nil
 }
 
 // SearchTrips ejecuta la búsqueda geoespacial sobre polilíneas en PostGIS (RF-11 a RF-15)
-func (s *tripService) SearchTrips(ctx context.Context, query ports.SearchTripsQuery) ([]ports.TripSearchResult, error) {
+func (s *TripService) SearchTrips(ctx context.Context, query ports.SearchTripsQuery) ([]ports.TripSearchResult, error) {
 	// 1. Validar coordenadas de consulta
 	if !query.OriginCoords.IsValid() || !query.DestCoords.IsValid() {
 		return nil, domain.ErrInvalidRouteCoordinates
@@ -296,6 +329,7 @@ func (s *tripService) SearchTrips(ctx context.Context, query ports.SearchTripsQu
 			TotalDistanceKm:      r.Trip.TotalDistanceKm,
 			TotalDurationMinutes: r.Trip.TotalDurationMinutes,
 			AvailableSeats:       r.Trip.AvailableSeats,
+			Currency:             r.Trip.Currency,
 			PricePerSeat:         r.Trip.PricePerSeat,
 			CapPricePerSeat:      r.Trip.CapPricePerSeat,
 			PickupWalkDistanceM:  r.PickupWalkDistanceM,
@@ -309,7 +343,10 @@ func (s *tripService) SearchTrips(ctx context.Context, query ports.SearchTripsQu
 }
 
 // GetTripByID obtiene el detalle integral del viaje y el desglose de costos
-func (s *tripService) GetTripByID(ctx context.Context, tripID string) (*ports.TripDetailDTO, error) {
+func (s *TripService) GetTripByID(ctx context.Context, tripID uuid.UUID) (*ports.TripDetailDTO, error) {
+	if tripID == uuid.Nil {
+		return nil, domain.ErrTripNotFound
+	}
 	trip, err := s.tripRepo.FindByID(ctx, tripID)
 	if err != nil || trip == nil {
 		return nil, domain.ErrTripNotFound
@@ -321,15 +358,18 @@ func (s *tripService) GetTripByID(ctx context.Context, tripID string) (*ports.Tr
 	costMatrix := domain.CalculateCapPrice(trip.EstimatedFuelCost, trip.EstimatedTollCost, trip.TotalSeatsOffered)
 
 	return &ports.TripDetailDTO{
-		Trip:       trip,
-		Driver:     driver,
-		Vehicle:    vehicle,
+		Trip:       toTripDTO(trip),
+		Driver:     toUserDTO(driver),
+		Vehicle:    toVehicleDTO(vehicle),
 		CostMatrix: costMatrix,
 	}, nil
 }
 
 // CancelTrip cancela un viaje publicado si pertenece al conductor (RF-16)
-func (s *tripService) CancelTrip(ctx context.Context, tripID, driverID string) error {
+func (s *TripService) CancelTrip(ctx context.Context, tripID, driverID uuid.UUID) error {
+	if tripID == uuid.Nil {
+		return domain.ErrTripNotFound
+	}
 	trip, err := s.tripRepo.FindByID(ctx, tripID)
 	if err != nil || trip == nil {
 		return domain.ErrTripNotFound
@@ -351,7 +391,10 @@ func (s *tripService) CancelTrip(ctx context.Context, tripID, driverID string) e
 }
 
 // CompleteTrip finaliza un viaje activo, actualiza las reservas confirmadas a COMPLETED y libera los fondos en custodia hacia el conductor (Módulo 4: RF-01 a RF-05)
-func (s *tripService) CompleteTrip(ctx context.Context, tripID, driverID string) (*domain.Trip, error) {
+func (s *TripService) CompleteTrip(ctx context.Context, tripID, driverID uuid.UUID) (*ports.TripDTO, error) {
+	if tripID == uuid.Nil {
+		return nil, domain.ErrTripNotFound
+	}
 	now := s.clock().UTC()
 
 	// 1. Validar que el viaje exista
@@ -365,17 +408,12 @@ func (s *tripService) CompleteTrip(ctx context.Context, tripID, driverID string)
 		return nil, domain.ErrUnauthorized
 	}
 
-	// 3. Validar que el viaje esté en un estado finalizable (IN_PROGRESS, PUBLISHED o FULL)
-	if trip.Status != domain.TripStatusInProgress && trip.Status != domain.TripStatusPublished && trip.Status != domain.TripStatusFull {
-		return nil, domain.ErrInvalidTripStatusChange
-	}
-
-	// 4. Transicionar estado del viaje a COMPLETED
+	// 3. Delegar al dominio la validación y transición del estado del viaje a COMPLETED
 	if err := trip.TransitionStatus(domain.TripStatusCompleted); err != nil {
 		return nil, err
 	}
 
-	if err := s.tripRepo.UpdateStatus(ctx, tripID, domain.TripStatusCompleted); err != nil {
+	if err := s.tripRepo.UpdateStatus(ctx, tripID, trip.Status); err != nil {
 		return nil, fmt.Errorf("error al actualizar estado del viaje a finalizado: %w", err)
 	}
 
@@ -403,7 +441,54 @@ func (s *tripService) CompleteTrip(ctx context.Context, tripID, driverID string)
 		}
 	}
 
-	return trip, nil
+	return toTripDTO(trip), nil
+}
+
+func toTripDTO(t *domain.Trip) *ports.TripDTO {
+	if t == nil {
+		return nil
+	}
+	var stops []ports.TripStopDTO
+	if len(t.Stops) > 0 {
+		stops = make([]ports.TripStopDTO, 0, len(t.Stops))
+		for _, st := range t.Stops {
+			stops = append(stops, ports.TripStopDTO{
+				ID:                   st.ID,
+				TripID:               st.TripID,
+				StopOrder:            st.StopOrder,
+				LocationTitle:        st.LocationTitle,
+				Coords:               st.Coords,
+				EstimatedArrivalTime: formatTimeRFC3339(st.EstimatedArrivalTime),
+				CreatedAt:            formatTimeRFC3339(st.CreatedAt),
+			})
+		}
+	}
+	return &ports.TripDTO{
+		ID:                   t.ID,
+		DriverID:             t.DriverID,
+		VehicleID:            t.VehicleID,
+		OriginTitle:          t.OriginTitle,
+		OriginCoords:         t.OriginCoords,
+		DestinationTitle:     t.DestinationTitle,
+		DestinationCoords:    t.DestinationCoords,
+		RoutePath:            t.RoutePath,
+		RoutePreviewPolyline: t.RoutePreviewPolyline,
+		DepartureTime:        formatTimeRFC3339(t.DepartureTime),
+		EstimatedArrivalTime: formatTimeRFC3339(t.EstimatedArrivalTime),
+		TotalDistanceKm:      t.TotalDistanceKm,
+		TotalDurationMinutes: t.TotalDurationMinutes,
+		TotalSeatsOffered:    t.TotalSeatsOffered,
+		AvailableSeats:       t.AvailableSeats,
+		Currency:             t.Currency,
+		PricePerSeat:         t.PricePerSeat,
+		CapPricePerSeat:      t.CapPricePerSeat,
+		EstimatedFuelCost:    t.EstimatedFuelCost,
+		EstimatedTollCost:    t.EstimatedTollCost,
+		Status:               t.Status,
+		Stops:                stops,
+		CreatedAt:            formatTimeRFC3339(t.CreatedAt),
+		UpdatedAt:            formatTimeRFC3339(t.UpdatedAt),
+	}
 }
 
 // parseFlexibleTimestamp intenta parsear cadenas de tiempo en varios formatos usuales

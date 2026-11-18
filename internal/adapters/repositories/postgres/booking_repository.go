@@ -4,140 +4,141 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
+	"github.com/thumbi/backend/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/ports"
 )
 
 type bookingRepository struct {
-	db DBExecutor
+	db  DBExecutor
+	uow TxUnitOfWork
 }
 
 // NewBookingRepository crea una nueva instancia del repositorio PostgreSQL para reservas
-func NewBookingRepository(db DBExecutor) ports.BookingRepository {
-	return &bookingRepository{db: db}
+func NewBookingRepository(db DBExecutor, uow ...TxUnitOfWork) ports.BookingRepository {
+	return &bookingRepository{
+		db:  db,
+		uow: resolveTxUnitOfWork(db, uow...),
+	}
 }
 
-// CreateWithHold descuenta atómicamente los asientos y crea la reserva en estado PENDING_PAYMENT con bloqueo pesimista
-func (r *bookingRepository) CreateWithHold(ctx context.Context, booking *domain.Booking) error {
-	type transactor interface {
-		Begin(context.Context) (pgx.Tx, error)
+// CreateWithHold aplica atómicamente el descuento de plazas validado por el dominio mediante UPDATE con guarda
+// e inserta la reserva si la guarda se cumplió, reportando applied = true/false.
+func (r *bookingRepository) CreateWithHold(ctx context.Context, booking *domain.Booking, seatHold domain.SeatTransition) (bool, error) {
+	if booking == nil || booking.ID == uuid.Nil || booking.TripID == uuid.Nil {
+		return false, domain.ErrBookingNotFound
+	}
+	if !booking.Status.IsValid() {
+		return false, fmt.Errorf("%w: estado de reserva %s", domain.ErrInvalidStatus, booking.Status)
+	}
+	if seatHold.TripID == uuid.Nil {
+		return false, domain.ErrTripNotFound
+	}
+	if seatHold.SeatsDelta <= 0 {
+		return false, domain.ErrInvalidSeatCount
+	}
+	if !seatHold.ExpectedStatus.IsValid() || !seatHold.NewStatus.IsValid() {
+		return false, fmt.Errorf("%w: transición de estado de viaje %s -> %s", domain.ErrInvalidStatus, seatHold.ExpectedStatus, seatHold.NewStatus)
 	}
 
-	exec := r.db
-	var tx pgx.Tx
-	var err error
-
-	if existingTx := txFromContext(ctx); existingTx != nil {
-		exec = existingTx
-	} else if t, ok := r.db.(transactor); ok {
-		tx, err = t.Begin(ctx)
-		if err != nil {
-			return fmt.Errorf("error iniciando transacción para crear reserva con hold: %w", err)
-		}
-		defer func() {
-			if tx != nil {
-				_ = tx.Rollback(ctx)
-			}
-		}()
-		exec = tx
+	bookingCur := booking.Currency
+	if strings.TrimSpace(string(bookingCur)) == "" {
+		bookingCur = booking.UnitPrice.EffectiveCurrency()
 	}
-
-	// 1. Bloqueo pesimista de fila en trips (SELECT ... FOR UPDATE)
-	lockQuery := `
-		SELECT available_seats, status
-		FROM trips
-		WHERE id = $1
-		FOR UPDATE
-	`
-	var availableSeats int
-	var tripStatus string
-
-	err = exec.QueryRow(ctx, lockQuery, booking.TripID).Scan(&availableSeats, &tripStatus)
+	parsedCur, err := domain.ParseCurrency(string(bookingCur))
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return domain.ErrTripNotFound
-		}
-		return fmt.Errorf("error al obtener y bloquear viaje con id %s: %w", booking.TripID, err)
+		return false, err
 	}
 
-	// 2. Validaciones de estado e invariantes de asientos
-	if domain.TripStatus(tripStatus) != domain.TripStatusPublished {
-		return domain.ErrInvalidTripStatusChange
-	}
-
-	if availableSeats < booking.SeatsBooked {
-		return domain.ErrInsufficientSeats
-	}
-
-	// 3. Decrementar asientos disponibles y transicionar a FULL si llega a 0
-	newSeats := availableSeats - booking.SeatsBooked
-	updateTripQuery := `
-		UPDATE trips
-		SET available_seats = $1,
-		    status = CASE WHEN $1 = 0 THEN 'FULL'::trip_status_enum ELSE status END,
-		    updated_at = NOW()
-		WHERE id = $2
-	`
-	_, err = exec.Exec(ctx, updateTripQuery, newSeats, booking.TripID)
-	if err != nil {
-		return fmt.Errorf("error al actualizar asientos disponibles del viaje: %w", err)
-	}
-
-	// 4. Insertar la reserva en estado PENDING_PAYMENT con TTL
-	insertBookingQuery := `
-		INSERT INTO bookings (
-			id, trip_id, passenger_id, seats_booked, unit_price, total_price,
-			status, pickup_stop_id, dropoff_stop_id, payment_intent_id, expires_at, created_at, updated_at
-		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+	errHoldNotApplied := errors.New("seat hold guard not matched")
+	err = runInRepoTx(ctx, r.uow, func(tx pgx.Tx) error {
+		// 1. UPDATE atómico con guarda: el dominio decidió ExpectedStatus y NewStatus; el repositorio solo aplica si la guarda coincide.
+		updateTripQuery := `
+			UPDATE trips
+			SET available_seats = available_seats - $1,
+			    status = $2,
+			    updated_at = NOW()
+			WHERE id = $3
+			  AND status = $4
+			  AND available_seats = $5
+			  AND available_seats >= $1
+		`
+		cmdTag, err := tx.Exec(
+			ctx,
+			updateTripQuery,
+			seatHold.SeatsDelta,
+			seatHold.NewStatus.String(),
+			booking.TripID,
+			seatHold.ExpectedStatus.String(),
+			seatHold.ExpectedAvailableSeats,
 		)
-	`
-	_, err = exec.Exec(
-		ctx,
-		insertBookingQuery,
-		booking.ID,
-		booking.TripID,
-		booking.PassengerID,
-		booking.SeatsBooked,
-		moneyToPGNumeric(booking.UnitPrice),
-		moneyToPGNumeric(booking.TotalPrice),
-		string(booking.Status),
-		booking.PickupStopID,
-		booking.DropoffStopID,
-		booking.PaymentIntentID,
-		booking.ExpiresAt,
-		booking.CreatedAt,
-		booking.UpdatedAt,
-	)
+		if err != nil {
+			return fmt.Errorf("error al actualizar asientos disponibles del viaje: %w", err)
+		}
+		if cmdTag.RowsAffected() == 0 {
+			return errHoldNotApplied
+		}
+
+		// 2. Insertar la reserva en estado PENDING_PAYMENT con TTL
+		insertBookingQuery := `
+			INSERT INTO bookings (
+				id, trip_id, passenger_id, seats_booked, currency, unit_price, total_price,
+				status, pickup_stop_id, dropoff_stop_id, payment_intent_id, expires_at, created_at, updated_at
+			) VALUES (
+				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+			)
+		`
+		if _, err = tx.Exec(
+			ctx,
+			insertBookingQuery,
+			booking.ID,
+			booking.TripID,
+			booking.PassengerID,
+			booking.SeatsBooked,
+			parsedCur.String(),
+			moneyToPGNumeric(booking.UnitPrice),
+			moneyToPGNumeric(booking.TotalPrice),
+			booking.Status.String(),
+			booking.PickupStopID,
+			booking.DropoffStopID,
+			booking.PaymentIntentID,
+			booking.ExpiresAt,
+			booking.CreatedAt,
+			booking.UpdatedAt,
+		); err != nil {
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && pgErr.Code == "23P01" {
+				return domain.ErrOverlappingTripBooking
+			}
+			return fmt.Errorf("error al insertar la reserva: %w", err)
+		}
+
+		return nil
+	})
+	if errors.Is(err, errHoldNotApplied) {
+		return false, nil
+	}
 	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23P01" {
-			return domain.ErrOverlappingTripBooking
-		}
-		return fmt.Errorf("error al insertar la reserva: %w", err)
+		return false, err
 	}
 
-	// 5. Commit si se inició la transacción aquí
-	if tx != nil {
-		if err := tx.Commit(ctx); err != nil {
-			return fmt.Errorf("error al commitear transacción de reserva: %w", err)
-		}
-		tx = nil
-	}
-
-	return nil
+	return true, nil
 }
 
 // FindByID recupera una reserva por su identificador único
-func (r *bookingRepository) FindByID(ctx context.Context, id string) (*domain.Booking, error) {
+func (r *bookingRepository) FindByID(ctx context.Context, id uuid.UUID) (*domain.Booking, error) {
+	if id == uuid.Nil {
+		return nil, domain.ErrBookingNotFound
+	}
 	query := `
 		SELECT 
-			id, trip_id, passenger_id, seats_booked, unit_price, total_price,
+			id, trip_id, passenger_id, seats_booked, currency, unit_price, total_price,
 			status, pickup_stop_id, dropoff_stop_id, payment_intent_id, expires_at, confirmed_at, cancelled_at,
 			cancellation_reason, created_at, updated_at
 		FROM bookings
@@ -146,6 +147,7 @@ func (r *bookingRepository) FindByID(ctx context.Context, id string) (*domain.Bo
 
 	var (
 		b             domain.Booking
+		currencyStr   string
 		unitPriceNum  pgtype.Numeric
 		totalPriceNum pgtype.Numeric
 		statusStr     string
@@ -156,6 +158,7 @@ func (r *bookingRepository) FindByID(ctx context.Context, id string) (*domain.Bo
 		&b.TripID,
 		&b.PassengerID,
 		&b.SeatsBooked,
+		&currencyStr,
 		&unitPriceNum,
 		&totalPriceNum,
 		&statusStr,
@@ -177,14 +180,23 @@ func (r *bookingRepository) FindByID(ctx context.Context, id string) (*domain.Bo
 		return nil, fmt.Errorf("error consultando reserva con id %s: %w", id, err)
 	}
 
-	if b.UnitPrice, err = pgNumericToMoney(unitPriceNum); err != nil {
+	cur, err := domain.ParseCurrency(currencyStr)
+	if err != nil {
+		return nil, fmt.Errorf("error parseando currency de reserva: %w", err)
+	}
+	b.Currency = cur
+
+	if b.UnitPrice, err = pgNumericToMoney(unitPriceNum, cur); err != nil {
 		return nil, fmt.Errorf("error convirtiendo unit_price: %w", err)
 	}
-	if b.TotalPrice, err = pgNumericToMoney(totalPriceNum); err != nil {
+	if b.TotalPrice, err = pgNumericToMoney(totalPriceNum, cur); err != nil {
 		return nil, fmt.Errorf("error convirtiendo total_price: %w", err)
 	}
 
 	b.Status = domain.BookingStatus(statusStr)
+	if !b.Status.IsValid() {
+		return nil, fmt.Errorf("%w: estado de reserva inválido %s", domain.ErrInvalidStatus, statusStr)
+	}
 	return &b, nil
 }
 
@@ -192,7 +204,7 @@ func (r *bookingRepository) FindByID(ctx context.Context, id string) (*domain.Bo
 func (r *bookingRepository) FindByPaymentIntentID(ctx context.Context, intentID string) (*domain.Booking, error) {
 	query := `
 		SELECT 
-			id, trip_id, passenger_id, seats_booked, unit_price, total_price,
+			id, trip_id, passenger_id, seats_booked, currency, unit_price, total_price,
 			status, pickup_stop_id, dropoff_stop_id, payment_intent_id, expires_at, confirmed_at, cancelled_at,
 			cancellation_reason, created_at, updated_at
 		FROM bookings
@@ -201,6 +213,7 @@ func (r *bookingRepository) FindByPaymentIntentID(ctx context.Context, intentID 
 
 	var (
 		b             domain.Booking
+		currencyStr   string
 		unitPriceNum  pgtype.Numeric
 		totalPriceNum pgtype.Numeric
 		statusStr     string
@@ -211,6 +224,7 @@ func (r *bookingRepository) FindByPaymentIntentID(ctx context.Context, intentID 
 		&b.TripID,
 		&b.PassengerID,
 		&b.SeatsBooked,
+		&currencyStr,
 		&unitPriceNum,
 		&totalPriceNum,
 		&statusStr,
@@ -232,19 +246,31 @@ func (r *bookingRepository) FindByPaymentIntentID(ctx context.Context, intentID 
 		return nil, fmt.Errorf("error consultando reserva por payment_intent_id %s: %w", intentID, err)
 	}
 
-	if b.UnitPrice, err = pgNumericToMoney(unitPriceNum); err != nil {
+	cur, err := domain.ParseCurrency(currencyStr)
+	if err != nil {
+		return nil, fmt.Errorf("error parseando currency de reserva: %w", err)
+	}
+	b.Currency = cur
+
+	if b.UnitPrice, err = pgNumericToMoney(unitPriceNum, cur); err != nil {
 		return nil, fmt.Errorf("error convirtiendo unit_price: %w", err)
 	}
-	if b.TotalPrice, err = pgNumericToMoney(totalPriceNum); err != nil {
+	if b.TotalPrice, err = pgNumericToMoney(totalPriceNum, cur); err != nil {
 		return nil, fmt.Errorf("error convirtiendo total_price: %w", err)
 	}
 
 	b.Status = domain.BookingStatus(statusStr)
+	if !b.Status.IsValid() {
+		return nil, fmt.Errorf("%w: estado de reserva inválido %s", domain.ErrInvalidStatus, statusStr)
+	}
 	return &b, nil
 }
 
 // UpdatePaymentIntent actualiza o asocia el identificador de orden/intención de la pasarela
-func (r *bookingRepository) UpdatePaymentIntent(ctx context.Context, bookingID, intentID string) error {
+func (r *bookingRepository) UpdatePaymentIntent(ctx context.Context, bookingID uuid.UUID, intentID string) error {
+	if bookingID == uuid.Nil {
+		return domain.ErrBookingNotFound
+	}
 	query := `
 		UPDATE bookings
 		SET payment_intent_id = $1,
@@ -265,7 +291,13 @@ func (r *bookingRepository) UpdatePaymentIntent(ctx context.Context, bookingID, 
 }
 
 // UpdateStatus actualiza el estado de una reserva y valida condiciones atómicas en BD para prevenir carreras de confirmación o doble cancelación.
-func (r *bookingRepository) UpdateStatus(ctx context.Context, bookingID string, newStatus domain.BookingStatus, reason *string) error {
+func (r *bookingRepository) UpdateStatus(ctx context.Context, bookingID uuid.UUID, newStatus domain.BookingStatus, reason *string) error {
+	if bookingID == uuid.Nil {
+		return domain.ErrBookingNotFound
+	}
+	if !newStatus.IsValid() {
+		return fmt.Errorf("%w: estado de reserva %s", domain.ErrInvalidStatus, newStatus)
+	}
 	query := `
 		UPDATE bookings
 		SET status = $1,
@@ -281,7 +313,7 @@ func (r *bookingRepository) UpdateStatus(ctx context.Context, bookingID string, 
 		  )
 	`
 
-	cmd, err := executor(ctx, r.db).Exec(ctx, query, string(newStatus), reason, bookingID)
+	cmd, err := executor(ctx, r.db).Exec(ctx, query, newStatus.String(), reason, bookingID)
 	if err != nil {
 		return fmt.Errorf("error actualizando estado de reserva %s: %w", bookingID, err)
 	}
@@ -303,10 +335,10 @@ func (r *bookingRepository) UpdateStatus(ctx context.Context, bookingID string, 
 }
 
 // GetActiveBookingsByTrip recupera las reservas activas (PENDING_PAYMENT o CONFIRMED) asociadas a un viaje.
-func (r *bookingRepository) GetActiveBookingsByTrip(ctx context.Context, tripID string) ([]*domain.Booking, error) {
+func (r *bookingRepository) GetActiveBookingsByTrip(ctx context.Context, tripID uuid.UUID) ([]*domain.Booking, error) {
 	query := `
 		SELECT
-			id, trip_id, passenger_id, seats_booked, unit_price, total_price,
+			id, trip_id, passenger_id, seats_booked, currency, unit_price, total_price,
 			status, pickup_stop_id, dropoff_stop_id, expires_at, confirmed_at, cancelled_at,
 			cancellation_reason, created_at, updated_at
 		FROM bookings
@@ -325,6 +357,7 @@ func (r *bookingRepository) GetActiveBookingsByTrip(ctx context.Context, tripID 
 	for rows.Next() {
 		var (
 			b             domain.Booking
+			currencyStr   string
 			unitPriceNum  pgtype.Numeric
 			totalPriceNum pgtype.Numeric
 			statusStr     string
@@ -334,6 +367,7 @@ func (r *bookingRepository) GetActiveBookingsByTrip(ctx context.Context, tripID 
 			&b.TripID,
 			&b.PassengerID,
 			&b.SeatsBooked,
+			&currencyStr,
 			&unitPriceNum,
 			&totalPriceNum,
 			&statusStr,
@@ -348,13 +382,21 @@ func (r *bookingRepository) GetActiveBookingsByTrip(ctx context.Context, tripID 
 		); err != nil {
 			return nil, fmt.Errorf("error escaneando reserva activa del viaje %s: %w", tripID, err)
 		}
-		if b.UnitPrice, err = pgNumericToMoney(unitPriceNum); err != nil {
+		cur, err := domain.ParseCurrency(currencyStr)
+		if err != nil {
+			return nil, fmt.Errorf("error parseando currency de reserva activa: %w", err)
+		}
+		b.Currency = cur
+		if b.UnitPrice, err = pgNumericToMoney(unitPriceNum, cur); err != nil {
 			return nil, fmt.Errorf("error convirtiendo unit_price: %w", err)
 		}
-		if b.TotalPrice, err = pgNumericToMoney(totalPriceNum); err != nil {
+		if b.TotalPrice, err = pgNumericToMoney(totalPriceNum, cur); err != nil {
 			return nil, fmt.Errorf("error convirtiendo total_price: %w", err)
 		}
 		b.Status = domain.BookingStatus(statusStr)
+		if !b.Status.IsValid() {
+			return nil, fmt.Errorf("%w: estado de reserva inválido %s", domain.ErrInvalidStatus, statusStr)
+		}
 		bookings = append(bookings, &b)
 	}
 
@@ -366,10 +408,10 @@ func (r *bookingRepository) GetActiveBookingsByTrip(ctx context.Context, tripID 
 }
 
 // GetPassengerBookings devuelve el historial paginado de reservas de un pasajero.
-func (r *bookingRepository) GetPassengerBookings(ctx context.Context, passengerID string, limit, offset int) ([]*domain.Booking, error) {
+func (r *bookingRepository) GetPassengerBookings(ctx context.Context, passengerID uuid.UUID, limit, offset int) ([]*domain.Booking, error) {
 	query := `
 		SELECT
-			id, trip_id, passenger_id, seats_booked, unit_price, total_price,
+			id, trip_id, passenger_id, seats_booked, currency, unit_price, total_price,
 			status, pickup_stop_id, dropoff_stop_id, expires_at, confirmed_at, cancelled_at,
 			cancellation_reason, created_at, updated_at
 		FROM bookings
@@ -388,6 +430,7 @@ func (r *bookingRepository) GetPassengerBookings(ctx context.Context, passengerI
 	for rows.Next() {
 		var (
 			b             domain.Booking
+			currencyStr   string
 			unitPriceNum  pgtype.Numeric
 			totalPriceNum pgtype.Numeric
 			statusStr     string
@@ -397,6 +440,7 @@ func (r *bookingRepository) GetPassengerBookings(ctx context.Context, passengerI
 			&b.TripID,
 			&b.PassengerID,
 			&b.SeatsBooked,
+			&currencyStr,
 			&unitPriceNum,
 			&totalPriceNum,
 			&statusStr,
@@ -411,13 +455,21 @@ func (r *bookingRepository) GetPassengerBookings(ctx context.Context, passengerI
 		); err != nil {
 			return nil, fmt.Errorf("error escaneando reserva del pasajero %s: %w", passengerID, err)
 		}
-		if b.UnitPrice, err = pgNumericToMoney(unitPriceNum); err != nil {
+		cur, err := domain.ParseCurrency(currencyStr)
+		if err != nil {
+			return nil, fmt.Errorf("error parseando currency de reserva del pasajero: %w", err)
+		}
+		b.Currency = cur
+		if b.UnitPrice, err = pgNumericToMoney(unitPriceNum, cur); err != nil {
 			return nil, fmt.Errorf("error convirtiendo unit_price: %w", err)
 		}
-		if b.TotalPrice, err = pgNumericToMoney(totalPriceNum); err != nil {
+		if b.TotalPrice, err = pgNumericToMoney(totalPriceNum, cur); err != nil {
 			return nil, fmt.Errorf("error convirtiendo total_price: %w", err)
 		}
 		b.Status = domain.BookingStatus(statusStr)
+		if !b.Status.IsValid() {
+			return nil, fmt.Errorf("%w: estado de reserva inválido %s", domain.ErrInvalidStatus, statusStr)
+		}
 		bookings = append(bookings, &b)
 	}
 
@@ -432,7 +484,7 @@ func (r *bookingRepository) GetPassengerBookings(ctx context.Context, passengerI
 // el solapamiento horario mediante el operador tstzrange && y contabiliza las reservas PENDING_PAYMENT vigentes.
 func (r *bookingRepository) CheckPassengerBookingConstraints(
 	ctx context.Context,
-	passengerID, targetTripID string,
+	passengerID, targetTripID uuid.UUID,
 	departureTime, estimatedArrival, now time.Time,
 ) (bool, int, error) {
 	query := `
@@ -482,59 +534,128 @@ func (r *bookingRepository) CheckPassengerBookingConstraints(
 
 const defaultExpireBookingsBatchLimit = 500
 
-// ExpirePendingBookings transiciona en lotes de hasta 500 reservas pendientes vencidas a EXPIRED
-// utilizando FOR UPDATE SKIP LOCKED para evitar contención/duplicación entre réplicas concurrentes,
-// y restituye los asientos afectados mediante un único UPDATE trips ... FROM agrupado por viaje.
-func (r *bookingRepository) ExpirePendingBookings(ctx context.Context, now time.Time) (int, error) {
-	query := `
-		WITH locked_expired AS (
-			SELECT id, trip_id, seats_booked
-			FROM bookings
-			WHERE status = 'PENDING_PAYMENT'
-			  AND expires_at <= $1
-			ORDER BY expires_at ASC
-			FOR UPDATE SKIP LOCKED
-			LIMIT $2
-		),
-		expired_bookings AS (
-			UPDATE bookings b
-			SET status = 'EXPIRED',
-			    updated_at = NOW()
-			FROM locked_expired l
-			WHERE b.id = l.id
-			RETURNING b.id, b.trip_id, b.seats_booked
-		),
-		seat_restores AS (
-			SELECT trip_id, SUM(seats_booked)::INT AS seats_to_restore
-			FROM expired_bookings
-			GROUP BY trip_id
-			ORDER BY trip_id ASC
-		),
-		updated_trips AS (
-			UPDATE trips t
-			SET available_seats = t.available_seats + sr.seats_to_restore,
-			    status = CASE WHEN t.status = 'FULL' THEN 'PUBLISHED'::trip_status_enum ELSE t.status END,
-			    updated_at = NOW()
-			FROM seat_restores sr
-			WHERE t.id = sr.trip_id
-			RETURNING t.id
-		)
-		SELECT
-			(SELECT COUNT(*)::INT FROM expired_bookings) AS expired_count,
-			(SELECT COUNT(*)::INT FROM updated_trips) AS updated_trips_count
-	`
-
-	var expiredCount int
-	var updatedTripsCount int
-	err := executor(ctx, r.db).QueryRow(
-		ctx,
-		query,
-		now.UTC(),
-		defaultExpireBookingsBatchLimit,
-	).Scan(&expiredCount, &updatedTripsCount)
-	if err != nil {
-		return 0, fmt.Errorf("error ejecutando expiración en lote de reservas vencidas: %w", err)
+// LockExpiredPendingBookings reclama en lotes acotados (por defecto 500) reservas pendientes cuyo TTL expiró
+// usando FOR UPDATE SKIP LOCKED para ejecución segura en múltiples réplicas concurrentes.
+func (r *bookingRepository) LockExpiredPendingBookings(
+	ctx context.Context,
+	status domain.BookingStatus,
+	overdueAt time.Time,
+	limit int,
+) ([]*domain.Booking, error) {
+	if !status.IsValid() {
+		return nil, fmt.Errorf("%w: estado de reserva %s", domain.ErrInvalidStatus, status)
+	}
+	if limit <= 0 {
+		limit = defaultExpireBookingsBatchLimit
 	}
 
-	return expiredCount, nil
+	query := `
+		SELECT
+			id, trip_id, passenger_id, seats_booked, currency, unit_price, total_price,
+			status, pickup_stop_id, dropoff_stop_id, payment_intent_id, expires_at, confirmed_at, cancelled_at,
+			cancellation_reason, created_at, updated_at
+		FROM bookings
+		WHERE status = $1
+		  AND expires_at <= $2
+		ORDER BY expires_at ASC
+		FOR UPDATE SKIP LOCKED
+		LIMIT $3
+	`
+
+	rows, err := executor(ctx, r.db).Query(ctx, query, status.String(), overdueAt.UTC(), limit)
+	if err != nil {
+		return nil, fmt.Errorf("error bloqueando reservas pendientes vencidas: %w", err)
+	}
+	defer rows.Close()
+
+	var bookings []*domain.Booking
+	for rows.Next() {
+		var (
+			b             domain.Booking
+			currencyStr   string
+			unitPriceNum  pgtype.Numeric
+			totalPriceNum pgtype.Numeric
+			statusStr     string
+		)
+		if err := rows.Scan(
+			&b.ID,
+			&b.TripID,
+			&b.PassengerID,
+			&b.SeatsBooked,
+			&currencyStr,
+			&unitPriceNum,
+			&totalPriceNum,
+			&statusStr,
+			&b.PickupStopID,
+			&b.DropoffStopID,
+			&b.PaymentIntentID,
+			&b.ExpiresAt,
+			&b.ConfirmedAt,
+			&b.CancelledAt,
+			&b.CancellationReason,
+			&b.CreatedAt,
+			&b.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("error escaneando reserva pendiente vencida: %w", err)
+		}
+		cur, err := domain.ParseCurrency(currencyStr)
+		if err != nil {
+			return nil, fmt.Errorf("error parseando currency de reserva vencida: %w", err)
+		}
+		b.Currency = cur
+		if b.UnitPrice, err = pgNumericToMoney(unitPriceNum, cur); err != nil {
+			return nil, fmt.Errorf("error convirtiendo unit_price: %w", err)
+		}
+		if b.TotalPrice, err = pgNumericToMoney(totalPriceNum, cur); err != nil {
+			return nil, fmt.Errorf("error convirtiendo total_price: %w", err)
+		}
+		b.Status = domain.BookingStatus(statusStr)
+		if !b.Status.IsValid() {
+			return nil, fmt.Errorf("%w: estado de reserva inválido %s", domain.ErrInvalidStatus, statusStr)
+		}
+		bookings = append(bookings, &b)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterando reservas pendientes vencidas: %w", err)
+	}
+
+	return bookings, nil
+}
+
+// MarkBookingsExpiredBatch persiste en lote el cambio de estado decidido por el dominio sobre reservas reclamadas.
+func (r *bookingRepository) MarkBookingsExpiredBatch(
+	ctx context.Context,
+	bookingIDs []uuid.UUID,
+	expectedStatus, newStatus domain.BookingStatus,
+	updatedAt time.Time,
+) (int, error) {
+	if len(bookingIDs) == 0 {
+		return 0, nil
+	}
+	if !expectedStatus.IsValid() || !newStatus.IsValid() {
+		return 0, fmt.Errorf("%w: transición de estado de reserva %s -> %s", domain.ErrInvalidStatus, expectedStatus, newStatus)
+	}
+
+	query := `
+		UPDATE bookings
+		SET status = $1,
+		    updated_at = $2
+		WHERE id = ANY($3)
+		  AND status = $4
+	`
+
+	cmdTag, err := executor(ctx, r.db).Exec(
+		ctx,
+		query,
+		newStatus.String(),
+		updatedAt.UTC(),
+		bookingIDs,
+		expectedStatus.String(),
+	)
+	if err != nil {
+		return 0, fmt.Errorf("error ejecutando actualización en lote de reservas vencidas: %w", err)
+	}
+
+	return int(cmdTag.RowsAffected()), nil
 }

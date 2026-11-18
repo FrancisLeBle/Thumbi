@@ -16,8 +16,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
   onNavigateToRegister,
   onNavigateToWelcome,
 }) => {
-  const [email, setEmail] = useState<string>('sofia.f@email.com');
-  const [password, setPassword] = useState<string>('password123');
+  const [email, setEmail] = useState<string>('');
+  const [password, setPassword] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [toast, setToast] = useState<{
@@ -81,31 +81,10 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
 
   const handleSocialLogin = async (provider: 'Google' | 'Apple') => {
     if (isLoading) return;
-    setIsLoading(true);
-
-    try {
-      // Simula el flujo nativo de inicio de sesión social
-      const response = await authService.login({
-        email: provider === 'Google' ? 'sofia.google@gmail.com' : 'sofia.apple@icloud.com',
-        password: 'social-session-token',
-      });
-
-      setToast({
-        message: `Sesión iniciada con cuenta de ${provider}.`,
-        type: 'success',
-      });
-
-      if (onLoginSuccess) {
-        onLoginSuccess(response);
-      }
-    } catch {
-      setToast({
-        message: `No se pudo conectar con ${provider}. Inténtalo con tu correo.`,
-        type: 'error',
-      });
-    } finally {
-      setIsLoading(false);
-    }
+    setToast({
+      message: `Conecta el SDK nativo de ${provider} Sign-In para obtener el id_token OAuth.`,
+      type: 'error',
+    });
   };
 
   const handleForgotPassword = (e: React.MouseEvent) => {

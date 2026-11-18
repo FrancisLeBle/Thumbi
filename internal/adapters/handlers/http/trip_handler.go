@@ -1,23 +1,33 @@
 package http
 
 import (
-	"errors"
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/thumbi/auth-kyc-service/internal/adapters/handlers/http/middleware"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
+	"github.com/google/uuid"
+	"github.com/thumbi/backend/internal/adapters/handlers/http/middleware"
+	"github.com/thumbi/backend/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/ports"
 )
 
+// TripService define el contrato mínimo requerido por TripHandler (SOLID · ISP).
+type TripService interface {
+	CreateTrip(ctx context.Context, input ports.CreateTripInput) (*ports.TripDTO, error)
+	SearchTrips(ctx context.Context, query ports.SearchTripsQuery) ([]ports.TripSearchResult, error)
+	GetTripByID(ctx context.Context, tripID uuid.UUID) (*ports.TripDetailDTO, error)
+	CancelTrip(ctx context.Context, tripID, driverID uuid.UUID) error
+	CompleteTrip(ctx context.Context, tripID, driverID uuid.UUID) (*ports.TripDTO, error)
+}
+
 type TripHandler struct {
-	tripService ports.TripService
+	tripService TripService
 }
 
 // NewTripHandler crea un nuevo handler HTTP para gestión y búsqueda de viajes
-func NewTripHandler(tripService ports.TripService) *TripHandler {
+func NewTripHandler(tripService TripService) *TripHandler {
 	return &TripHandler{tripService: tripService}
 }
 
@@ -30,7 +40,7 @@ type CreateTripStopRequest struct {
 	EstimatedArrivalTime string  `json:"estimated_arrival_time"`
 }
 
-// CreateTripRequest payload para la publicación de un viaje
+// CreateTripRequest payload para la publicación de un viaje (driver_id se extrae exclusivamente del token autenticado)
 type CreateTripRequest struct {
 	VehicleID        string                  `json:"vehicle_id" binding:"required"`
 	OriginTitle      string                  `json:"origin_title" binding:"required"`
@@ -41,8 +51,195 @@ type CreateTripRequest struct {
 	DestinationLon   float64                 `json:"destination_lon" binding:"required"`
 	DepartureTime    string                  `json:"departure_time" binding:"required"`
 	SeatsOffered     int                     `json:"seats_offered" binding:"required,min=1,max=8"`
-	PricePerSeat     domain.Money            `json:"price_per_seat" binding:"required,gte=0"`
+	PricePerSeat     domain.Money            `json:"price_per_seat" binding:"required"`
+	Currency         domain.Currency         `json:"currency,omitempty"`
 	Stops            []CreateTripStopRequest `json:"stops"`
+}
+
+// TripSearchResultResponse DTO de respuesta HTTP para cada viaje coincidente en la búsqueda
+type TripSearchResultResponse struct {
+	ID                   uuid.UUID         `json:"id"`
+	DriverID             uuid.UUID         `json:"driver_id"`
+	DriverFullName       string            `json:"driver_full_name"`
+	DriverAvatarURL      string            `json:"driver_avatar_url"`
+	VehicleBrand         string            `json:"vehicle_brand"`
+	VehicleModel         string            `json:"vehicle_model"`
+	VehiclePlate         string            `json:"vehicle_plate"`
+	OriginTitle          string            `json:"origin_title"`
+	DestinationTitle     string            `json:"destination_title"`
+	DepartureTime        string            `json:"departure_time"`
+	EstimatedArrivalTime string            `json:"estimated_arrival_time"`
+	TotalDistanceKm      float64           `json:"total_distance_km"`
+	TotalDurationMinutes int               `json:"total_duration_minutes"`
+	AvailableSeats       int               `json:"available_seats"`
+	Currency             domain.Currency   `json:"currency"`
+	PricePerSeat         domain.Money      `json:"price_per_seat"`
+	CapPricePerSeat      domain.Money      `json:"cap_price_per_seat"`
+	PickupWalkDistanceM  float64           `json:"pickup_walk_distance_m"`
+	DropoffWalkDistanceM float64           `json:"dropoff_walk_distance_m"`
+	RoutePreviewPolyline string            `json:"route_preview_polyline,omitempty"`
+	Status               domain.TripStatus `json:"status"`
+}
+
+// SearchTripsResponse DTO de respuesta HTTP para la búsqueda de viajes
+type SearchTripsResponse struct {
+	Results []TripSearchResultResponse `json:"results"`
+	Count   int                        `json:"count"`
+}
+
+// TripStopResponse DTO de respuesta HTTP para una parada intermedia del viaje
+type TripStopResponse struct {
+	ID                   uuid.UUID          `json:"id"`
+	TripID               uuid.UUID          `json:"trip_id"`
+	StopOrder            int                `json:"stop_order"`
+	LocationTitle        string             `json:"location_title"`
+	Coords               domain.Coordinates `json:"coords"`
+	EstimatedArrivalTime string             `json:"estimated_arrival_time"`
+	CreatedAt            string             `json:"created_at"`
+}
+
+// TripResponse DTO de respuesta HTTP para la representación de un viaje
+type TripResponse struct {
+	ID                   uuid.UUID          `json:"id"`
+	DriverID             uuid.UUID          `json:"driver_id"`
+	VehicleID            uuid.UUID          `json:"vehicle_id"`
+	OriginTitle          string             `json:"origin_title"`
+	OriginCoords         domain.Coordinates `json:"origin_coords"`
+	DestinationTitle     string             `json:"destination_title"`
+	DestinationCoords    domain.Coordinates `json:"destination_coords"`
+	RoutePath            domain.LineString  `json:"route_path,omitempty"`
+	RoutePreviewPolyline string             `json:"route_preview_polyline,omitempty"`
+	DepartureTime        string             `json:"departure_time"`
+	EstimatedArrivalTime string             `json:"estimated_arrival_time"`
+	TotalDistanceKm      float64            `json:"total_distance_km"`
+	TotalDurationMinutes int                `json:"total_duration_minutes"`
+	TotalSeatsOffered    int                `json:"total_seats_offered"`
+	AvailableSeats       int                `json:"available_seats"`
+	Currency             domain.Currency    `json:"currency"`
+	PricePerSeat         domain.Money       `json:"price_per_seat"`
+	CapPricePerSeat      domain.Money       `json:"cap_price_per_seat"`
+	EstimatedFuelCost    domain.Money       `json:"estimated_fuel_cost"`
+	EstimatedTollCost    domain.Money       `json:"estimated_toll_cost"`
+	Status               domain.TripStatus  `json:"status"`
+	Stops                []TripStopResponse `json:"stops,omitempty"`
+	CreatedAt            string             `json:"created_at"`
+	UpdatedAt            string             `json:"updated_at"`
+}
+
+// TripDetailResponse DTO de respuesta HTTP con el detalle completo del viaje y matriz de Cap Pricing
+type TripDetailResponse struct {
+	Trip       *TripResponse     `json:"trip"`
+	Driver     *AuthUserResponse `json:"driver"`
+	Vehicle    *VehicleResponse  `json:"vehicle"`
+	CostMatrix domain.CostMatrix `json:"cost_matrix"`
+}
+
+// CreateTripResponse DTO de respuesta HTTP al publicar un viaje
+type CreateTripResponse struct {
+	Message string        `json:"message"`
+	Trip    *TripResponse `json:"trip"`
+}
+
+// CancelTripResponse DTO de respuesta HTTP al cancelar un viaje
+type CancelTripResponse struct {
+	Message string            `json:"message"`
+	Status  domain.TripStatus `json:"status"`
+}
+
+// CompleteTripResponse DTO de respuesta HTTP al finalizar un viaje
+type CompleteTripResponse struct {
+	Message string            `json:"message"`
+	Status  domain.TripStatus `json:"status"`
+	Trip    *TripResponse     `json:"trip"`
+}
+
+func toTripSearchResultResponseList(results []ports.TripSearchResult) []TripSearchResultResponse {
+	out := make([]TripSearchResultResponse, 0, len(results))
+	for _, r := range results {
+		out = append(out, TripSearchResultResponse{
+			ID:                   r.ID,
+			DriverID:             r.DriverID,
+			DriverFullName:       r.DriverFullName,
+			DriverAvatarURL:      r.DriverAvatarURL,
+			VehicleBrand:         r.VehicleBrand,
+			VehicleModel:         r.VehicleModel,
+			VehiclePlate:         r.VehiclePlate,
+			OriginTitle:          r.OriginTitle,
+			DestinationTitle:     r.DestinationTitle,
+			DepartureTime:        r.DepartureTime,
+			EstimatedArrivalTime: r.EstimatedArrivalTime,
+			TotalDistanceKm:      r.TotalDistanceKm,
+			TotalDurationMinutes: r.TotalDurationMinutes,
+			AvailableSeats:       r.AvailableSeats,
+			Currency:             r.Currency,
+			PricePerSeat:         r.PricePerSeat,
+			CapPricePerSeat:      r.CapPricePerSeat,
+			PickupWalkDistanceM:  r.PickupWalkDistanceM,
+			DropoffWalkDistanceM: r.DropoffWalkDistanceM,
+			RoutePreviewPolyline: r.RoutePreviewPolyline,
+			Status:               r.Status,
+		})
+	}
+	return out
+}
+
+func toTripResponse(t *ports.TripDTO) *TripResponse {
+	if t == nil {
+		return nil
+	}
+	var stops []TripStopResponse
+	if len(t.Stops) > 0 {
+		stops = make([]TripStopResponse, 0, len(t.Stops))
+		for _, st := range t.Stops {
+			stops = append(stops, TripStopResponse{
+				ID:                   st.ID,
+				TripID:               st.TripID,
+				StopOrder:            st.StopOrder,
+				LocationTitle:        st.LocationTitle,
+				Coords:               st.Coords,
+				EstimatedArrivalTime: st.EstimatedArrivalTime,
+				CreatedAt:            st.CreatedAt,
+			})
+		}
+	}
+	return &TripResponse{
+		ID:                   t.ID,
+		DriverID:             t.DriverID,
+		VehicleID:            t.VehicleID,
+		OriginTitle:          t.OriginTitle,
+		OriginCoords:         t.OriginCoords,
+		DestinationTitle:     t.DestinationTitle,
+		DestinationCoords:    t.DestinationCoords,
+		RoutePath:            t.RoutePath,
+		RoutePreviewPolyline: t.RoutePreviewPolyline,
+		DepartureTime:        t.DepartureTime,
+		EstimatedArrivalTime: t.EstimatedArrivalTime,
+		TotalDistanceKm:      t.TotalDistanceKm,
+		TotalDurationMinutes: t.TotalDurationMinutes,
+		TotalSeatsOffered:    t.TotalSeatsOffered,
+		AvailableSeats:       t.AvailableSeats,
+		Currency:             t.Currency,
+		PricePerSeat:         t.PricePerSeat,
+		CapPricePerSeat:      t.CapPricePerSeat,
+		EstimatedFuelCost:    t.EstimatedFuelCost,
+		EstimatedTollCost:    t.EstimatedTollCost,
+		Status:               t.Status,
+		Stops:                stops,
+		CreatedAt:            t.CreatedAt,
+		UpdatedAt:            t.UpdatedAt,
+	}
+}
+
+func toTripDetailResponse(detail *ports.TripDetailDTO) *TripDetailResponse {
+	if detail == nil {
+		return nil
+	}
+	return &TripDetailResponse{
+		Trip:       toTripResponse(detail.Trip),
+		Driver:     toAuthUserResponse(detail.Driver),
+		Vehicle:    toVehicleResponse(detail.Vehicle),
+		CostMatrix: detail.CostMatrix,
+	}
 }
 
 // CreateTrip publica un nuevo viaje en ruta verificando conductor activo y límite Cap Pricing
@@ -50,41 +247,53 @@ type CreateTripRequest struct {
 func (h *TripHandler) CreateTrip(c *gin.Context) {
 	driverID, exists := middleware.GetUserID(c)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error":      "usuario no autenticado",
-			"code":       "UNAUTHORIZED",
-			"request_id": middleware.GetRequestID(c),
-		})
+		RespondUnauthorized(c, "usuario no autenticado", "UNAUTHORIZED")
 		return
 	}
 
 	var req CreateTripRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":      "datos de publicación de viaje incompletos o inválidos",
-			"code":       "INVALID_REQUEST_PAYLOAD",
-			"request_id": middleware.GetRequestID(c),
-		})
+		RespondBadRequest(c, "datos de publicación de viaje incompletos o inválidos", "INVALID_REQUEST_PAYLOAD")
 		return
+	}
+
+	vehicleID, err := domain.ParseUUID(req.VehicleID)
+	if err != nil {
+		RespondBadRequest(c, "id de viaje o vehículo con formato UUID inválido", "INVALID_VEHICLE_ID")
+		return
+	}
+
+	if req.PricePerSeat.Amount < 0 {
+		RespondBadRequest(c, "el precio por asiento no puede ser negativo", "INVALID_PRICE")
+		return
+	}
+
+	tripCurrency := req.PricePerSeat.Currency
+	if strings.TrimSpace(string(req.Currency)) != "" {
+		parsedCur, errCur := domain.ParseCurrency(string(req.Currency))
+		if errCur != nil {
+			respondError(c, errCur)
+			return
+		}
+		if tripCurrency != "" && tripCurrency != parsedCur {
+			respondError(c, domain.ErrCurrencyMismatch)
+			return
+		}
+		tripCurrency = parsedCur
+	}
+	if tripCurrency != "" {
+		req.PricePerSeat.Currency = tripCurrency
 	}
 
 	origCoords, err := domain.NewCoordinates(req.OriginLat, req.OriginLon)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":      "coordenadas de origen inválidas",
-			"code":       "INVALID_COORDINATES",
-			"request_id": middleware.GetRequestID(c),
-		})
+		RespondBadRequest(c, "coordenadas de origen inválidas", "INVALID_COORDINATES")
 		return
 	}
 
 	destCoords, err := domain.NewCoordinates(req.DestinationLat, req.DestinationLon)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":      "coordenadas de destino inválidas",
-			"code":       "INVALID_COORDINATES",
-			"request_id": middleware.GetRequestID(c),
-		})
+		RespondBadRequest(c, "coordenadas de destino inválidas", "INVALID_COORDINATES")
 		return
 	}
 
@@ -92,11 +301,7 @@ func (h *TripHandler) CreateTrip(c *gin.Context) {
 	for _, s := range req.Stops {
 		stopCoords, errStop := domain.NewCoordinates(s.Lat, s.Lon)
 		if errStop != nil {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error":      "coordenadas de parada intermedia inválidas",
-				"code":       "INVALID_COORDINATES",
-				"request_id": middleware.GetRequestID(c),
-			})
+			RespondBadRequest(c, "coordenadas de parada intermedia inválidas", "INVALID_COORDINATES")
 			return
 		}
 		stops = append(stops, ports.CreateTripStopInput{
@@ -109,7 +314,7 @@ func (h *TripHandler) CreateTrip(c *gin.Context) {
 
 	input := ports.CreateTripInput{
 		DriverID:          driverID,
-		VehicleID:         req.VehicleID,
+		VehicleID:         vehicleID,
 		OriginTitle:       req.OriginTitle,
 		OriginCoords:      origCoords,
 		DestinationTitle:  req.DestinationTitle,
@@ -117,93 +322,19 @@ func (h *TripHandler) CreateTrip(c *gin.Context) {
 		DepartureTime:     req.DepartureTime,
 		SeatsOffered:      req.SeatsOffered,
 		PricePerSeat:      req.PricePerSeat,
+		Currency:          tripCurrency,
 		Stops:             stops,
 	}
 
 	trip, err := h.tripService.CreateTrip(c.Request.Context(), input)
 	if err != nil {
-		switch {
-		case errors.Is(err, domain.ErrDriverNotActive):
-			c.JSON(http.StatusForbidden, gin.H{
-				"error":      "El usuario no cuenta con rol de conductor activo o no ha completado la verificación KYC.",
-				"code":       "DRIVER_NOT_ACTIVE",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-
-		case errors.Is(err, domain.ErrDriverPhoneRequired):
-			c.JSON(http.StatusUnprocessableEntity, gin.H{
-				"error":      "Debes registrar un número de teléfono válido en tu perfil antes de publicar un viaje.",
-				"code":       "DRIVER_PHONE_REQUIRED",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-
-		case errors.Is(err, domain.ErrPriceExceedsCapPrice):
-			c.JSON(http.StatusUnprocessableEntity, gin.H{
-				"error":      "El precio fijado excede el límite máximo permitido (Cap Price) para el trayecto según la normativa de economía colaborativa no lucrativa.",
-				"code":       "PRICE_EXCEEDS_CAP_PRICE",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-
-		case errors.Is(err, domain.ErrVehicleNotAvailable):
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error":      "El vehículo no se encuentra aprobado para realizar viajes.",
-				"code":       "VEHICLE_NOT_APPROVED",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-
-		case errors.Is(err, domain.ErrVehicleNotFound):
-			c.JSON(http.StatusNotFound, gin.H{
-				"error":      "Vehículo no encontrado.",
-				"code":       "VEHICLE_NOT_FOUND",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-
-		case errors.Is(err, domain.ErrUnauthorized):
-			c.JSON(http.StatusForbidden, gin.H{
-				"error":      "El vehículo no pertenece al usuario autenticado.",
-				"code":       "FORBIDDEN",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-
-		case errors.Is(err, domain.ErrDepartureTimeMustBeFuture):
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error":      "La fecha y hora de salida debe ser estrictamente en el futuro.",
-				"code":       "INVALID_DEPARTURE_TIME",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-
-		case errors.Is(err, domain.ErrInvalidRouteCoordinates):
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error":      "Las coordenadas geográficas proporcionadas son inválidas.",
-				"code":       "INVALID_COORDINATES",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-
-		case errors.Is(err, domain.ErrSeatsExceedCapacity):
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error":      "La cantidad de asientos ofertados supera la capacidad del vehículo.",
-				"code":       "SEATS_EXCEED_CAPACITY",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-
-		default:
-			HandleError(c, err)
-			return
-		}
+		respondError(c, err)
+		return
 	}
 
-	c.JSON(http.StatusCreated, gin.H{
-		"message": "Viaje publicado con éxito",
-		"trip":    trip,
+	c.JSON(http.StatusCreated, CreateTripResponse{
+		Message: "Viaje publicado con éxito",
+		Trip:    toTripResponse(trip),
 	})
 }
 
@@ -216,10 +347,7 @@ func (h *TripHandler) SearchTrips(c *gin.Context) {
 	destLonStr := c.Query("dest_lon")
 
 	if origLatStr == "" || origLonStr == "" || destLatStr == "" || destLonStr == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Se requieren los parámetros de coordenadas: orig_lat, orig_lon, dest_lat, dest_lon",
-			"code":  "MISSING_COORDINATES",
-		})
+		RespondBadRequest(c, "Se requieren los parámetros de coordenadas: orig_lat, orig_lon, dest_lat, dest_lon", "MISSING_COORDINATES")
 		return
 	}
 
@@ -229,28 +357,19 @@ func (h *TripHandler) SearchTrips(c *gin.Context) {
 	destLon, err4 := strconv.ParseFloat(destLonStr, 64)
 
 	if err1 != nil || err2 != nil || err3 != nil || err4 != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Los valores de coordenadas deben ser números decimales válidos",
-			"code":  "INVALID_COORDINATES",
-		})
+		RespondBadRequest(c, "Los valores de coordenadas deben ser números decimales válidos", "INVALID_COORDINATES")
 		return
 	}
 
 	origCoords, err := domain.NewCoordinates(origLat, origLon)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Coordenadas de origen fuera de rango",
-			"code":  "INVALID_COORDINATES",
-		})
+		RespondBadRequest(c, "Coordenadas de origen fuera de rango", "INVALID_COORDINATES")
 		return
 	}
 
 	destCoords, err := domain.NewCoordinates(destLat, destLon)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Coordenadas de destino fuera de rango",
-			"code":  "INVALID_COORDINATES",
-		})
+		RespondBadRequest(c, "Coordenadas de destino fuera de rango", "INVALID_COORDINATES")
 		return
 	}
 
@@ -301,44 +420,38 @@ func (h *TripHandler) SearchTrips(c *gin.Context) {
 
 	results, err := h.tripService.SearchTrips(c.Request.Context(), query)
 	if err != nil {
-		HandleError(c, err)
+		respondError(c, err)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"results": results,
-		"count":   len(results),
+	mappedResults := toTripSearchResultResponseList(results)
+	c.JSON(http.StatusOK, SearchTripsResponse{
+		Results: mappedResults,
+		Count:   len(mappedResults),
 	})
 }
 
 // GetTripByID obtiene el detalle integral del viaje con desglose de costos
 // GET /v1/trips/:id ó GET /api/v1/trips/:id
 func (h *TripHandler) GetTripByID(c *gin.Context) {
-	tripID := strings.TrimSpace(c.Param("id"))
-	if tripID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":      "ID de viaje no proporcionado",
-			"code":       "MISSING_TRIP_ID",
-			"request_id": middleware.GetRequestID(c),
-		})
+	rawTripID := strings.TrimSpace(c.Param("id"))
+	if rawTripID == "" {
+		RespondBadRequest(c, "ID de viaje no proporcionado", "MISSING_TRIP_ID")
+		return
+	}
+	tripID, err := domain.ParseUUID(rawTripID)
+	if err != nil {
+		RespondBadRequest(c, "ID de viaje con formato UUID inválido", "INVALID_TRIP_ID")
 		return
 	}
 
 	detail, err := h.tripService.GetTripByID(c.Request.Context(), tripID)
 	if err != nil {
-		if errors.Is(err, domain.ErrTripNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{
-				"error":      "Viaje no encontrado",
-				"code":       "TRIP_NOT_FOUND",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-		}
-		HandleError(c, err)
+		respondError(c, err)
 		return
 	}
 
-	c.JSON(http.StatusOK, detail)
+	c.JSON(http.StatusOK, toTripDetailResponse(detail))
 }
 
 // CancelTrip cancela un viaje publicado si pertenece al conductor autenticado
@@ -346,60 +459,29 @@ func (h *TripHandler) GetTripByID(c *gin.Context) {
 func (h *TripHandler) CancelTrip(c *gin.Context) {
 	driverID, exists := middleware.GetUserID(c)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error":      "usuario no autenticado",
-			"code":       "UNAUTHORIZED",
-			"request_id": middleware.GetRequestID(c),
-		})
+		RespondUnauthorized(c, "usuario no autenticado", "UNAUTHORIZED")
 		return
 	}
 
-	tripID := strings.TrimSpace(c.Param("id"))
-	if tripID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":      "ID de viaje no proporcionado",
-			"code":       "MISSING_TRIP_ID",
-			"request_id": middleware.GetRequestID(c),
-		})
+	rawTripID := strings.TrimSpace(c.Param("id"))
+	if rawTripID == "" {
+		RespondBadRequest(c, "ID de viaje no proporcionado", "MISSING_TRIP_ID")
 		return
 	}
-
-	err := h.tripService.CancelTrip(c.Request.Context(), tripID, driverID)
+	tripID, err := domain.ParseUUID(rawTripID)
 	if err != nil {
-		switch {
-		case errors.Is(err, domain.ErrTripNotFound):
-			c.JSON(http.StatusNotFound, gin.H{
-				"error":      "Viaje no encontrado",
-				"code":       "TRIP_NOT_FOUND",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-
-		case errors.Is(err, domain.ErrUnauthorized):
-			c.JSON(http.StatusForbidden, gin.H{
-				"error":      "No estás autorizado para cancelar este viaje",
-				"code":       "FORBIDDEN",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-
-		case errors.Is(err, domain.ErrCannotCancelStartedTrip):
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error":      "No es posible cancelar un viaje que ya se encuentra en curso o completado",
-				"code":       "CANNOT_CANCEL_STARTED_TRIP",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-
-		default:
-			HandleError(c, err)
-			return
-		}
+		RespondBadRequest(c, "ID de viaje con formato UUID inválido", "INVALID_TRIP_ID")
+		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Viaje cancelado exitosamente",
-		"status":  "CANCELLED",
+	if err := h.tripService.CancelTrip(c.Request.Context(), tripID, driverID); err != nil {
+		respondError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, CancelTripResponse{
+		Message: "Viaje cancelado exitosamente",
+		Status:  domain.TripStatusCancelled,
 	})
 }
 
@@ -408,61 +490,30 @@ func (h *TripHandler) CancelTrip(c *gin.Context) {
 func (h *TripHandler) CompleteTrip(c *gin.Context) {
 	driverID, exists := middleware.GetUserID(c)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error":      "usuario no autenticado",
-			"code":       "UNAUTHORIZED",
-			"request_id": middleware.GetRequestID(c),
-		})
+		RespondUnauthorized(c, "usuario no autenticado", "UNAUTHORIZED")
 		return
 	}
 
-	tripID := strings.TrimSpace(c.Param("id"))
-	if tripID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":      "ID de viaje no proporcionado",
-			"code":       "MISSING_TRIP_ID",
-			"request_id": middleware.GetRequestID(c),
-		})
+	rawTripID := strings.TrimSpace(c.Param("id"))
+	if rawTripID == "" {
+		RespondBadRequest(c, "ID de viaje no proporcionado", "MISSING_TRIP_ID")
+		return
+	}
+	tripID, err := domain.ParseUUID(rawTripID)
+	if err != nil {
+		RespondBadRequest(c, "ID de viaje con formato UUID inválido", "INVALID_TRIP_ID")
 		return
 	}
 
 	trip, err := h.tripService.CompleteTrip(c.Request.Context(), tripID, driverID)
 	if err != nil {
-		switch {
-		case errors.Is(err, domain.ErrTripNotFound):
-			c.JSON(http.StatusNotFound, gin.H{
-				"error":      "Viaje no encontrado",
-				"code":       "TRIP_NOT_FOUND",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-
-		case errors.Is(err, domain.ErrUnauthorized):
-			c.JSON(http.StatusForbidden, gin.H{
-				"error":      "No estás autorizado para finalizar este viaje",
-				"code":       "FORBIDDEN",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-
-		case errors.Is(err, domain.ErrInvalidTripStatusChange):
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error":      "El viaje no se encuentra en un estado que permita su finalización",
-				"code":       "INVALID_TRIP_STATUS",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-
-		default:
-			HandleError(c, err)
-			return
-		}
+		respondError(c, err)
+		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Viaje finalizado exitosamente y liquidación procesada",
-		"status":  "COMPLETED",
-		"trip":    trip,
+	c.JSON(http.StatusOK, CompleteTripResponse{
+		Message: "Viaje finalizado exitosamente y liquidación procesada",
+		Status:  domain.TripStatusCompleted,
+		Trip:    toTripResponse(trip),
 	})
 }
-

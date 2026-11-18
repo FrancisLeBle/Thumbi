@@ -1,0 +1,22 @@
+# Exclude VCS, local secrets, and client/mobile artifacts from Docker build context
+.git
+.github
+.env
+.env.*
+!.env.example
+
+node_modules
+dist
+build
+android
+public
+src
+bin
+coverage
+coverage.out
+*.log
+*.jks
+*.keystore
+*.pem
+*.key
+.DS_Store

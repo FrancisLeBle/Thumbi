@@ -11,26 +11,27 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	adapterHttp "github.com/thumbi/auth-kyc-service/internal/adapters/handlers/http"
-	"github.com/thumbi/auth-kyc-service/internal/adapters/handlers/http/middleware"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
+	adapterHttp "github.com/thumbi/backend/internal/adapters/handlers/http"
+	"github.com/thumbi/backend/internal/adapters/handlers/http/middleware"
+	"github.com/thumbi/backend/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/ports"
 )
 
-// MockTripService implementa ports.TripService con testify/mock
+// MockTripService implementa adapterHttp.TripService con testify/mock
 type MockTripService struct {
 	mock.Mock
 }
 
-func (m *MockTripService) CreateTrip(ctx context.Context, input ports.CreateTripInput) (*domain.Trip, error) {
+func (m *MockTripService) CreateTrip(ctx context.Context, input ports.CreateTripInput) (*ports.TripDTO, error) {
 	args := m.Called(ctx, input)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*domain.Trip), args.Error(1)
+	return args.Get(0).(*ports.TripDTO), args.Error(1)
 }
 
 func (m *MockTripService) SearchTrips(ctx context.Context, query ports.SearchTripsQuery) ([]ports.TripSearchResult, error) {
@@ -41,7 +42,7 @@ func (m *MockTripService) SearchTrips(ctx context.Context, query ports.SearchTri
 	return args.Get(0).([]ports.TripSearchResult), args.Error(1)
 }
 
-func (m *MockTripService) GetTripByID(ctx context.Context, tripID string) (*ports.TripDetailDTO, error) {
+func (m *MockTripService) GetTripByID(ctx context.Context, tripID uuid.UUID) (*ports.TripDetailDTO, error) {
 	args := m.Called(ctx, tripID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -49,13 +50,21 @@ func (m *MockTripService) GetTripByID(ctx context.Context, tripID string) (*port
 	return args.Get(0).(*ports.TripDetailDTO), args.Error(1)
 }
 
-func (m *MockTripService) CancelTrip(ctx context.Context, tripID, driverID string) error {
+func (m *MockTripService) CancelTrip(ctx context.Context, tripID, driverID uuid.UUID) error {
 	args := m.Called(ctx, tripID, driverID)
 	return args.Error(0)
 }
 
+func (m *MockTripService) CompleteTrip(ctx context.Context, tripID, driverID uuid.UUID) (*ports.TripDTO, error) {
+	args := m.Called(ctx, tripID, driverID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*ports.TripDTO), args.Error(1)
+}
+
 // setupTripTestRouter inicializa un router Gin aislado con mock middleware de auth
-func setupTripTestRouter(mockTripSvc *MockTripService, authUserID string) *gin.Engine {
+func setupTripTestRouter(mockTripSvc *MockTripService, authUserID uuid.UUID) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 
 	tripHandler := adapterHttp.NewTripHandler(mockTripSvc)
@@ -67,19 +76,18 @@ func setupTripTestRouter(mockTripSvc *MockTripService, authUserID string) *gin.E
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 			return
 		}
-		if authUserID != "" {
+		if authUserID != uuid.Nil {
 			c.Set(middleware.CtxUserIDKey, authUserID)
 			c.Set(middleware.CtxUserRoleKey, domain.UserRoleDriver)
 		}
 		c.Next()
 	}
 
-	cfg := adapterHttp.RouterConfig{
-		TripHandler:    tripHandler,
-		AuthMiddleware: fakeAuthMiddleware,
-	}
+	cfg := baseTestRouterConfig()
+	cfg.TripHandler = tripHandler
+	cfg.AuthMiddleware = fakeAuthMiddleware
 
-	return adapterHttp.SetupRouter(cfg)
+	return mustSetupTestRouter(cfg)
 }
 
 func TestTripHandler_CreateTrip(t *testing.T) {
@@ -90,28 +98,34 @@ func TestTripHandler_CreateTrip(t *testing.T) {
 	now := time.Now().UTC()
 	departure := now.Add(24 * time.Hour)
 
-	mockCreatedTrip := &domain.Trip{
-		ID:                   "trip-uuid-1",
-		DriverID:             "driver-auth-1",
-		VehicleID:            "vehicle-1",
+	tripID1 := uuid.MustParse("01960000-0000-7000-8000-000000000101")
+	driverAuth1 := uuid.MustParse("01960000-0000-7000-8000-000000000201")
+	passengerUserID := uuid.MustParse("01960000-0000-7000-8000-000000000202")
+	vehicleID1 := uuid.MustParse("01960000-0000-7000-8000-000000000301")
+
+	mockCreatedTrip := &ports.TripDTO{
+		ID:                   tripID1,
+		DriverID:             driverAuth1,
+		VehicleID:            vehicleID1,
 		OriginTitle:          "Buenos Aires",
 		OriginCoords:         orig,
 		DestinationTitle:     "Rosario",
 		DestinationCoords:    dest,
 		RoutePath:            routeLine,
-		DepartureTime:        departure,
-		EstimatedArrivalTime: departure.Add(4 * time.Hour),
+		DepartureTime:        departure.Format(time.RFC3339),
+		EstimatedArrivalTime: departure.Add(4 * time.Hour).Format(time.RFC3339),
 		TotalDistanceKm:      300.0,
 		TotalDurationMinutes: 240,
 		TotalSeatsOffered:    3,
 		AvailableSeats:       3,
-		PricePerSeat:         domain.Money(1100000),
-		CapPricePerSeat:      domain.Money(1138500),
+		Currency:             domain.CurrencyARS,
+		PricePerSeat:         domain.MoneyFromCents(1100000, domain.CurrencyARS),
+		CapPricePerSeat:      domain.MoneyFromCents(1138500, domain.CurrencyARS),
 		Status:               domain.TripStatusPublished,
 	}
 
 	payload := adapterHttp.CreateTripRequest{
-		VehicleID:        "vehicle-1",
+		VehicleID:        vehicleID1.String(),
 		OriginTitle:      "Buenos Aires",
 		OriginLat:        -34.6037,
 		OriginLon:        -58.3816,
@@ -120,22 +134,23 @@ func TestTripHandler_CreateTrip(t *testing.T) {
 		DestinationLon:   -60.6393,
 		DepartureTime:    departure.Format(time.RFC3339),
 		SeatsOffered:     3,
-		PricePerSeat:     domain.Money(1100000),
+		PricePerSeat:     domain.MoneyFromCents(1100000, domain.CurrencyARS),
+		Currency:         domain.CurrencyARS,
 	}
 
 	t.Run("publica viaje exitosamente (201 Created)", func(t *testing.T) {
 		mockSvc := new(MockTripService)
 		mockSvc.On("CreateTrip", mock.Anything, mock.MatchedBy(func(in ports.CreateTripInput) bool {
-			return in.DriverID == "driver-auth-1" &&
-				in.VehicleID == "vehicle-1" &&
-				in.PricePerSeat == domain.Money(1100000) &&
+			return in.DriverID == driverAuth1 &&
+				in.VehicleID == vehicleID1 &&
+				in.PricePerSeat == domain.MoneyFromCents(1100000, domain.CurrencyARS) &&
 				in.SeatsOffered == 3
 		})).Return(mockCreatedTrip, nil)
 
-		router := setupTripTestRouter(mockSvc, "driver-auth-1")
+		router := setupTripTestRouter(mockSvc, driverAuth1)
 
 		body, _ := json.Marshal(payload)
-		req, _ := http.NewRequest(http.MethodPost, "/api/v1/trips", bytes.NewBuffer(body))
+		req, _ := http.NewRequest(http.MethodPost, "/v1/trips", bytes.NewBuffer(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer valid-driver-token")
 
@@ -155,10 +170,10 @@ func TestTripHandler_CreateTrip(t *testing.T) {
 		mockSvc := new(MockTripService)
 		mockSvc.On("CreateTrip", mock.Anything, mock.Anything).Return(nil, domain.ErrDriverNotActive)
 
-		router := setupTripTestRouter(mockSvc, "passenger-user-id")
+		router := setupTripTestRouter(mockSvc, passengerUserID)
 
 		body, _ := json.Marshal(payload)
-		req, _ := http.NewRequest(http.MethodPost, "/api/v1/trips", bytes.NewBuffer(body))
+		req, _ := http.NewRequest(http.MethodPost, "/v1/trips", bytes.NewBuffer(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer valid-token")
 
@@ -176,10 +191,10 @@ func TestTripHandler_CreateTrip(t *testing.T) {
 		mockSvc := new(MockTripService)
 		mockSvc.On("CreateTrip", mock.Anything, mock.Anything).Return(nil, domain.ErrDriverPhoneRequired)
 
-		router := setupTripTestRouter(mockSvc, "driver-auth-1")
+		router := setupTripTestRouter(mockSvc, driverAuth1)
 
 		body, _ := json.Marshal(payload)
-		req, _ := http.NewRequest(http.MethodPost, "/api/v1/trips", bytes.NewBuffer(body))
+		req, _ := http.NewRequest(http.MethodPost, "/v1/trips", bytes.NewBuffer(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer valid-token")
 
@@ -197,13 +212,13 @@ func TestTripHandler_CreateTrip(t *testing.T) {
 		mockSvc := new(MockTripService)
 		mockSvc.On("CreateTrip", mock.Anything, mock.Anything).Return(nil, domain.ErrPriceExceedsCapPrice)
 
-		router := setupTripTestRouter(mockSvc, "driver-auth-1")
+		router := setupTripTestRouter(mockSvc, driverAuth1)
 
 		invalidPayload := payload
-		invalidPayload.PricePerSeat = domain.Money(2500000) // Supera el Cap Price
+		invalidPayload.PricePerSeat = domain.MoneyFromCents(2500000, domain.CurrencyARS) // Supera el Cap Price
 
 		body, _ := json.Marshal(invalidPayload)
-		req, _ := http.NewRequest(http.MethodPost, "/api/v1/trips", bytes.NewBuffer(body))
+		req, _ := http.NewRequest(http.MethodPost, "/v1/trips", bytes.NewBuffer(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer valid-token")
 
@@ -221,10 +236,10 @@ func TestTripHandler_CreateTrip(t *testing.T) {
 		mockSvc := new(MockTripService)
 		mockSvc.On("CreateTrip", mock.Anything, mock.Anything).Return(nil, domain.ErrVehicleNotAvailable)
 
-		router := setupTripTestRouter(mockSvc, "driver-auth-1")
+		router := setupTripTestRouter(mockSvc, driverAuth1)
 
 		body, _ := json.Marshal(payload)
-		req, _ := http.NewRequest(http.MethodPost, "/api/v1/trips", bytes.NewBuffer(body))
+		req, _ := http.NewRequest(http.MethodPost, "/v1/trips", bytes.NewBuffer(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer valid-token")
 
@@ -240,10 +255,10 @@ func TestTripHandler_CreateTrip(t *testing.T) {
 
 	t.Run("rechaza con 401 Unauthorized si falta el token de autorización", func(t *testing.T) {
 		mockSvc := new(MockTripService)
-		router := setupTripTestRouter(mockSvc, "")
+		router := setupTripTestRouter(mockSvc, uuid.Nil)
 
 		body, _ := json.Marshal(payload)
-		req, _ := http.NewRequest(http.MethodPost, "/api/v1/trips", bytes.NewBuffer(body))
+		req, _ := http.NewRequest(http.MethodPost, "/v1/trips", bytes.NewBuffer(body))
 		req.Header.Set("Content-Type", "application/json")
 
 		w := httptest.NewRecorder()
@@ -255,21 +270,21 @@ func TestTripHandler_CreateTrip(t *testing.T) {
 	t.Run("acepta price_per_seat como cadena decimal exacta y rechaza float JSON", func(t *testing.T) {
 		mockSvc := new(MockTripService)
 		mockSvc.On("CreateTrip", mock.Anything, mock.MatchedBy(func(in ports.CreateTripInput) bool {
-			return in.PricePerSeat == domain.Money(1100050)
+			return in.PricePerSeat == domain.MoneyFromCents(1100050, domain.CurrencyARS)
 		})).Return(mockCreatedTrip, nil)
 
-		router := setupTripTestRouter(mockSvc, "driver-auth-1")
+		router := setupTripTestRouter(mockSvc, driverAuth1)
 
-		strJSON := fmt.Sprintf(`{"vehicle_id":"vehicle-1","origin_title":"Buenos Aires","origin_lat":-34.6037,"origin_lon":-58.3816,"destination_title":"Rosario","destination_lat":-32.9468,"destination_lon":-60.6393,"departure_time":%q,"seats_offered":3,"price_per_seat":"11000.50"}`, departure.Format(time.RFC3339))
-		reqStr, _ := http.NewRequest(http.MethodPost, "/api/v1/trips", bytes.NewBufferString(strJSON))
+		strJSON := fmt.Sprintf(`{"vehicle_id":%q,"origin_title":"Buenos Aires","origin_lat":-34.6037,"origin_lon":-58.3816,"destination_title":"Rosario","destination_lat":-32.9468,"destination_lon":-60.6393,"departure_time":%q,"seats_offered":3,"price_per_seat":"11000.50"}`, vehicleID1.String(), departure.Format(time.RFC3339))
+		reqStr, _ := http.NewRequest(http.MethodPost, "/v1/trips", bytes.NewBufferString(strJSON))
 		reqStr.Header.Set("Content-Type", "application/json")
 		reqStr.Header.Set("Authorization", "Bearer valid-driver-token")
 		wStr := httptest.NewRecorder()
 		router.ServeHTTP(wStr, reqStr)
 		assert.Equal(t, http.StatusCreated, wStr.Code)
 
-		floatJSON := fmt.Sprintf(`{"vehicle_id":"vehicle-1","origin_title":"Buenos Aires","origin_lat":-34.6037,"origin_lon":-58.3816,"destination_title":"Rosario","destination_lat":-32.9468,"destination_lon":-60.6393,"departure_time":%q,"seats_offered":3,"price_per_seat":11000.55}`, departure.Format(time.RFC3339))
-		reqFloat, _ := http.NewRequest(http.MethodPost, "/api/v1/trips", bytes.NewBufferString(floatJSON))
+		floatJSON := fmt.Sprintf(`{"vehicle_id":%q,"origin_title":"Buenos Aires","origin_lat":-34.6037,"origin_lon":-58.3816,"destination_title":"Rosario","destination_lat":-32.9468,"destination_lon":-60.6393,"departure_time":%q,"seats_offered":3,"price_per_seat":11000.55}`, vehicleID1.String(), departure.Format(time.RFC3339))
+		reqFloat, _ := http.NewRequest(http.MethodPost, "/v1/trips", bytes.NewBufferString(floatJSON))
 		reqFloat.Header.Set("Content-Type", "application/json")
 		reqFloat.Header.Set("Authorization", "Bearer valid-driver-token")
 		wFloat := httptest.NewRecorder()
@@ -279,13 +294,16 @@ func TestTripHandler_CreateTrip(t *testing.T) {
 }
 
 func TestTripHandler_SearchTrips(t *testing.T) {
+	tripID101 := uuid.MustParse("01960000-0000-7000-8000-000000000102")
+	driverID1 := uuid.MustParse("01960000-0000-7000-8000-000000000201")
+
 	t.Run("devuelve resultados de búsqueda coincidentes (200 OK)", func(t *testing.T) {
 		mockSvc := new(MockTripService)
 
 		expectedResults := []ports.TripSearchResult{
 			{
-				ID:                   "trip-101",
-				DriverID:             "driver-1",
+				ID:                   tripID101,
+				DriverID:             driverID1,
 				DriverFullName:       "Alejandro Sanz",
 				VehicleBrand:         "Ford",
 				VehicleModel:         "Focus",
@@ -293,8 +311,9 @@ func TestTripHandler_SearchTrips(t *testing.T) {
 				OriginTitle:          "Buenos Aires",
 				DestinationTitle:     "Rosario",
 				AvailableSeats:       2,
-				PricePerSeat:         domain.Money(1050000),
-				CapPricePerSeat:      domain.Money(1138500),
+				Currency:             domain.CurrencyARS,
+				PricePerSeat:         domain.MoneyFromCents(1050000, domain.CurrencyARS),
+				CapPricePerSeat:      domain.MoneyFromCents(1138500, domain.CurrencyARS),
 				PickupWalkDistanceM:  320.0,
 				DropoffWalkDistanceM: 540.0,
 				Status:               domain.TripStatusPublished,
@@ -305,31 +324,28 @@ func TestTripHandler_SearchTrips(t *testing.T) {
 			return q.RequiredSeats == 2 && q.ToleranceMeters == 8000.0
 		})).Return(expectedResults, nil)
 
-		router := setupTripTestRouter(mockSvc, "")
+		router := setupTripTestRouter(mockSvc, uuid.Nil)
 
-		req, _ := http.NewRequest(http.MethodGet, "/api/v1/trips/search?orig_lat=-34.6037&orig_lon=-58.3816&dest_lat=-32.9468&dest_lon=-60.6393&seats=2&radius_meters=8000", nil)
+		req, _ := http.NewRequest(http.MethodGet, "/v1/trips/search?orig_lat=-34.6037&orig_lon=-58.3816&dest_lat=-32.9468&dest_lon=-60.6393&seats=2&radius_meters=8000", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		var resp struct {
-			Count   int                      `json:"count"`
-			Results []ports.TripSearchResult `json:"results"`
-		}
+		var resp adapterHttp.SearchTripsResponse
 		err := json.Unmarshal(w.Body.Bytes(), &resp)
 		require.NoError(t, err)
 		assert.Equal(t, 1, resp.Count)
-		assert.Equal(t, "trip-101", resp.Results[0].ID)
+		assert.Equal(t, tripID101, resp.Results[0].ID)
 		assert.Equal(t, "Alejandro Sanz", resp.Results[0].DriverFullName)
 	})
 
 	t.Run("falla con 400 Bad Request si faltan coordenadas de búsqueda", func(t *testing.T) {
 		mockSvc := new(MockTripService)
-		router := setupTripTestRouter(mockSvc, "")
+		router := setupTripTestRouter(mockSvc, uuid.Nil)
 
 		// Falta dest_lat y dest_lon
-		req, _ := http.NewRequest(http.MethodGet, "/api/v1/trips/search?orig_lat=-34.6037&orig_lon=-58.3816", nil)
+		req, _ := http.NewRequest(http.MethodGet, "/v1/trips/search?orig_lat=-34.6037&orig_lon=-58.3816", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -338,25 +354,29 @@ func TestTripHandler_SearchTrips(t *testing.T) {
 }
 
 func TestTripHandler_GetTripByID(t *testing.T) {
+	tripDetailID := uuid.MustParse("01960000-0000-7000-8000-000000000103")
+	nonExistentID := uuid.MustParse("01960000-0000-7000-8000-000000000199")
+
 	t.Run("devuelve 200 OK con detalle y matriz de costos", func(t *testing.T) {
 		mockSvc := new(MockTripService)
 		mockDetail := &ports.TripDetailDTO{
-			Trip: &domain.Trip{
-				ID:           "trip-detail-1",
+			Trip: &ports.TripDTO{
+				ID:           tripDetailID,
 				OriginTitle:  "Buenos Aires",
-				PricePerSeat: domain.Money(1000000),
+				Currency:     domain.CurrencyARS,
+				PricePerSeat: domain.MoneyFromCents(1000000, domain.CurrencyARS),
 			},
 			CostMatrix: domain.CostMatrix{
-				TotalSharedCost: domain.Money(3105000),
-				CostPerSeat:     domain.Money(1035000),
-				CapPricePerSeat: domain.Money(1138500),
+				TotalSharedCost: domain.MoneyFromCents(3105000, domain.CurrencyARS),
+				CostPerSeat:     domain.MoneyFromCents(1035000, domain.CurrencyARS),
+				CapPricePerSeat: domain.MoneyFromCents(1138500, domain.CurrencyARS),
 			},
 		}
 
-		mockSvc.On("GetTripByID", mock.Anything, "trip-detail-1").Return(mockDetail, nil)
+		mockSvc.On("GetTripByID", mock.Anything, tripDetailID).Return(mockDetail, nil)
 
-		router := setupTripTestRouter(mockSvc, "")
-		req, _ := http.NewRequest(http.MethodGet, "/api/v1/trips/trip-detail-1", nil)
+		router := setupTripTestRouter(mockSvc, uuid.Nil)
+		req, _ := http.NewRequest(http.MethodGet, "/v1/trips/"+tripDetailID.String(), nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -365,10 +385,10 @@ func TestTripHandler_GetTripByID(t *testing.T) {
 
 	t.Run("devuelve 404 Not Found si el viaje no existe", func(t *testing.T) {
 		mockSvc := new(MockTripService)
-		mockSvc.On("GetTripByID", mock.Anything, "non-existent").Return(nil, domain.ErrTripNotFound)
+		mockSvc.On("GetTripByID", mock.Anything, nonExistentID).Return(nil, domain.ErrTripNotFound)
 
-		router := setupTripTestRouter(mockSvc, "")
-		req, _ := http.NewRequest(http.MethodGet, "/api/v1/trips/non-existent", nil)
+		router := setupTripTestRouter(mockSvc, uuid.Nil)
+		req, _ := http.NewRequest(http.MethodGet, "/v1/trips/"+nonExistentID.String(), nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -377,12 +397,16 @@ func TestTripHandler_GetTripByID(t *testing.T) {
 }
 
 func TestTripHandler_CancelTrip(t *testing.T) {
+	tripID := uuid.MustParse("01960000-0000-7000-8000-000000000104")
+	driverOwnerID := uuid.MustParse("01960000-0000-7000-8000-000000000201")
+	impostorID := uuid.MustParse("01960000-0000-7000-8000-000000000209")
+
 	t.Run("cancela viaje exitosamente (200 OK)", func(t *testing.T) {
 		mockSvc := new(MockTripService)
-		mockSvc.On("CancelTrip", mock.Anything, "trip-1", "driver-owner").Return(nil)
+		mockSvc.On("CancelTrip", mock.Anything, tripID, driverOwnerID).Return(nil)
 
-		router := setupTripTestRouter(mockSvc, "driver-owner")
-		req, _ := http.NewRequest(http.MethodDelete, "/api/v1/trips/trip-1", nil)
+		router := setupTripTestRouter(mockSvc, driverOwnerID)
+		req, _ := http.NewRequest(http.MethodDelete, "/v1/trips/"+tripID.String(), nil)
 		req.Header.Set("Authorization", "Bearer valid-token")
 
 		w := httptest.NewRecorder()
@@ -397,10 +421,10 @@ func TestTripHandler_CancelTrip(t *testing.T) {
 
 	t.Run("rechaza con 403 Forbidden si el usuario no es el conductor del viaje", func(t *testing.T) {
 		mockSvc := new(MockTripService)
-		mockSvc.On("CancelTrip", mock.Anything, "trip-1", "impostor").Return(domain.ErrUnauthorized)
+		mockSvc.On("CancelTrip", mock.Anything, tripID, impostorID).Return(domain.ErrUnauthorized)
 
-		router := setupTripTestRouter(mockSvc, "impostor")
-		req, _ := http.NewRequest(http.MethodDelete, "/api/v1/trips/trip-1", nil)
+		router := setupTripTestRouter(mockSvc, impostorID)
+		req, _ := http.NewRequest(http.MethodDelete, "/v1/trips/"+tripID.String(), nil)
 		req.Header.Set("Authorization", "Bearer valid-token")
 
 		w := httptest.NewRecorder()

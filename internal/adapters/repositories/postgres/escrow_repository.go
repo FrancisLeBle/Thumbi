@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
+	"github.com/thumbi/backend/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/ports"
 )
 
 type escrowRepository struct {
@@ -22,6 +24,18 @@ func NewEscrowRepository(db DBExecutor) ports.EscrowRepository {
 
 // CreateEscrow persiste el registro inicial de retención de fondos en custodia
 func (r *escrowRepository) CreateEscrow(ctx context.Context, escrow *domain.EscrowTransaction) error {
+	if !escrow.Status.IsValid() {
+		return fmt.Errorf("%w: estado de escrow %s", domain.ErrInvalidStatus, escrow.Status)
+	}
+	escrowCur := escrow.Currency
+	if strings.TrimSpace(string(escrowCur)) == "" {
+		escrowCur = escrow.Amount.EffectiveCurrency()
+	}
+	parsedCur, err := domain.ParseCurrency(string(escrowCur))
+	if err != nil {
+		return err
+	}
+
 	query := `
 		INSERT INTO escrow_transactions (
 			id, booking_id, trip_id, payer_id, payee_id,
@@ -34,7 +48,7 @@ func (r *escrowRepository) CreateEscrow(ctx context.Context, escrow *domain.Escr
 		)
 	`
 
-	_, err := executor(ctx, r.db).Exec(
+	_, err = executor(ctx, r.db).Exec(
 		ctx,
 		query,
 		escrow.ID,
@@ -43,9 +57,9 @@ func (r *escrowRepository) CreateEscrow(ctx context.Context, escrow *domain.Escr
 		escrow.PayerID,
 		escrow.PayeeID,
 		moneyToPGNumeric(escrow.Amount),
-		escrow.Currency,
+		parsedCur.String(),
 		escrow.PaymentGatewayRef,
-		string(escrow.Status),
+		escrow.Status.String(),
 		escrow.HeldAt,
 		escrow.CreatedAt,
 		escrow.UpdatedAt,
@@ -58,7 +72,10 @@ func (r *escrowRepository) CreateEscrow(ctx context.Context, escrow *domain.Escr
 }
 
 // FindByBookingID recupera la transacción de custodia vinculada a una reserva
-func (r *escrowRepository) FindByBookingID(ctx context.Context, bookingID string) (*domain.EscrowTransaction, error) {
+func (r *escrowRepository) FindByBookingID(ctx context.Context, bookingID uuid.UUID) (*domain.EscrowTransaction, error) {
+	if bookingID == uuid.Nil {
+		return nil, domain.ErrEscrowNotFound
+	}
 	query := `
 		SELECT 
 			id, booking_id, trip_id, payer_id, payee_id,
@@ -69,9 +86,10 @@ func (r *escrowRepository) FindByBookingID(ctx context.Context, bookingID string
 	`
 
 	var (
-		e         domain.EscrowTransaction
-		amountNum pgtype.Numeric
-		statusStr string
+		e           domain.EscrowTransaction
+		amountNum   pgtype.Numeric
+		currencyStr string
+		statusStr   string
 	)
 
 	err := executor(ctx, r.db).QueryRow(ctx, query, bookingID).Scan(
@@ -81,7 +99,7 @@ func (r *escrowRepository) FindByBookingID(ctx context.Context, bookingID string
 		&e.PayerID,
 		&e.PayeeID,
 		&amountNum,
-		&e.Currency,
+		&currencyStr,
 		&e.PaymentGatewayRef,
 		&statusStr,
 		&e.HeldAt,
@@ -98,16 +116,31 @@ func (r *escrowRepository) FindByBookingID(ctx context.Context, bookingID string
 		return nil, fmt.Errorf("error consultando escrow para reserva %s: %w", bookingID, err)
 	}
 
-	if e.Amount, err = pgNumericToMoney(amountNum); err != nil {
+	cur, err := domain.ParseCurrency(currencyStr)
+	if err != nil {
+		return nil, fmt.Errorf("error parseando currency de escrow: %w", err)
+	}
+	e.Currency = cur
+
+	if e.Amount, err = pgNumericToMoney(amountNum, cur); err != nil {
 		return nil, fmt.Errorf("error convirtiendo monto de escrow: %w", err)
 	}
 
 	e.Status = domain.EscrowStatus(statusStr)
+	if !e.Status.IsValid() {
+		return nil, fmt.Errorf("%w: estado de escrow inválido %s", domain.ErrInvalidStatus, statusStr)
+	}
 	return &e, nil
 }
 
 // UpdateEscrowStatus actualiza el estado de la custodia y las marcas temporales de liberación o reembolso
-func (r *escrowRepository) UpdateEscrowStatus(ctx context.Context, escrowID string, newStatus domain.EscrowStatus) error {
+func (r *escrowRepository) UpdateEscrowStatus(ctx context.Context, escrowID uuid.UUID, newStatus domain.EscrowStatus) error {
+	if escrowID == uuid.Nil {
+		return domain.ErrEscrowNotFound
+	}
+	if !newStatus.IsValid() {
+		return fmt.Errorf("%w: estado de escrow %s", domain.ErrInvalidStatus, newStatus)
+	}
 	query := `
 		UPDATE escrow_transactions
 		SET status = $1,
@@ -117,7 +150,7 @@ func (r *escrowRepository) UpdateEscrowStatus(ctx context.Context, escrowID stri
 		WHERE id = $2
 	`
 
-	cmd, err := executor(ctx, r.db).Exec(ctx, query, string(newStatus), escrowID)
+	cmd, err := executor(ctx, r.db).Exec(ctx, query, newStatus.String(), escrowID)
 	if err != nil {
 		return fmt.Errorf("error actualizando estado de custodia %s: %w", escrowID, err)
 	}
@@ -131,6 +164,9 @@ func (r *escrowRepository) UpdateEscrowStatus(ctx context.Context, escrowID stri
 
 // RecordRefund registra de forma inmutable la trazabilidad contable del reembolso
 func (r *escrowRepository) RecordRefund(ctx context.Context, refund *domain.RefundTransaction) error {
+	if !refund.RefundType.IsValid() {
+		return fmt.Errorf("%w: tipo de reembolso %s", domain.ErrInvalidStatus, refund.RefundType)
+	}
 	query := `
 		INSERT INTO refund_transactions (
 			id, escrow_transaction_id, booking_id,
@@ -153,7 +189,7 @@ func (r *escrowRepository) RecordRefund(ctx context.Context, refund *domain.Refu
 		refund.BookingID,
 		moneyToPGNumeric(refund.PassengerRefundAmount),
 		moneyToPGNumeric(refund.DriverCompensationAmount),
-		string(refund.RefundType),
+		refund.RefundType.String(),
 		refund.GatewayRefundRef,
 		refund.ProcessedAt,
 		refund.CreatedAt,

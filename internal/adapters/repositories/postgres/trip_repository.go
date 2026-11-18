@@ -5,145 +5,166 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
+	"github.com/thumbi/backend/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/ports"
 )
 
 type tripRepository struct {
-	db DBExecutor
+	db  DBExecutor
+	uow TxUnitOfWork
 }
 
 // NewTripRepository crea una nueva instancia del repositorio PostgreSQL + PostGIS para viajes
-func NewTripRepository(db DBExecutor) ports.TripRepository {
-	return &tripRepository{db: db}
+func NewTripRepository(db DBExecutor, uow ...TxUnitOfWork) ports.TripRepository {
+	return &tripRepository{
+		db:  db,
+		uow: resolveTxUnitOfWork(db, uow...),
+	}
 }
 
-// Save persiste un viaje y sus paradas intermedias de forma atómica convirtiendo geometrías a PostGIS
+// Save persiste un viaje y sus paradas intermedias de forma atómica usando constructores nativos de PostGIS
 func (r *tripRepository) Save(ctx context.Context, trip *domain.Trip) error {
-	// Manejo de transacción si el executor subyacente la soporta
-	type transactor interface {
-		Begin(context.Context) (pgx.Tx, error)
+	if !trip.Status.IsValid() {
+		return fmt.Errorf("%w: estado de viaje %s", domain.ErrInvalidStatus, trip.Status)
 	}
-
-	exec := r.db
-	var tx pgx.Tx
-	var err error
-
-	if existingTx := txFromContext(ctx); existingTx != nil {
-		exec = existingTx
-	} else if t, ok := r.db.(transactor); ok {
-		tx, err = t.Begin(ctx)
-		if err != nil {
-			return fmt.Errorf("error iniciando transacción para guardar viaje: %w", err)
-		}
-		defer func() {
-			if tx != nil {
-				_ = tx.Rollback(ctx)
-			}
-		}()
-		exec = tx
+	if !trip.OriginCoords.IsValid() || !trip.DestinationCoords.IsValid() {
+		return domain.ErrInvalidRouteCoordinates
 	}
-
-	insertTripQuery := `
-		INSERT INTO trips (
-			id, driver_id, vehicle_id,
-			origin_title, origin_geom,
-			destination_title, destination_geom,
-			route_path,
-			departure_time, estimated_arrival_time,
-			total_distance_km, total_duration_minutes,
-			total_seats_offered, available_seats,
-			price_per_seat, cap_price_per_seat,
-			estimated_fuel_cost, estimated_toll_cost,
-			status, created_at, updated_at
-		) VALUES (
-			$1, $2, $3,
-			$4, ST_GeomFromText($5, 4326),
-			$6, ST_GeomFromText($7, 4326),
-			ST_GeomFromText($8, 4326),
-			$9, $10,
-			$11, $12,
-			$13, $14,
-			$15, $16,
-			$17, $18,
-			$19, $20, $21
-		)
-	`
-
-	_, err = exec.Exec(ctx, insertTripQuery,
-		trip.ID,
-		trip.DriverID,
-		trip.VehicleID,
-		trip.OriginTitle,
-		trip.OriginCoords.ToWKTPoint(),
-		trip.DestinationTitle,
-		trip.DestinationCoords.ToWKTPoint(),
-		trip.RoutePath.ToWKTLineString(),
-		trip.DepartureTime,
-		trip.EstimatedArrivalTime,
-		trip.TotalDistanceKm,
-		trip.TotalDurationMinutes,
-		trip.TotalSeatsOffered,
-		trip.AvailableSeats,
-		moneyToPGNumeric(trip.PricePerSeat),
-		moneyToPGNumeric(trip.CapPricePerSeat),
-		moneyToPGNumeric(trip.EstimatedFuelCost),
-		moneyToPGNumeric(trip.EstimatedTollCost),
-		string(trip.Status),
-		trip.CreatedAt,
-		trip.UpdatedAt,
-	)
+	routeLons, routeLats, err := lineStringToLonLatSlices(trip.RoutePath)
 	if err != nil {
-		return fmt.Errorf("error al insertar viaje en trips: %w", err)
+		return err
+	}
+	for _, stop := range trip.Stops {
+		if !stop.Coords.IsValid() {
+			return domain.ErrInvalidRouteCoordinates
+		}
 	}
 
-	// Inserción de paradas intermedias
-	if len(trip.Stops) > 0 {
-		insertStopQuery := `
-			INSERT INTO trip_stops (
-				id, trip_id, stop_order, location_title, location_geom, estimated_arrival_time, created_at
-			) VALUES ($1, $2, $3, $4, ST_GeomFromText($5, 4326), $6, $7)
-		`
-		for _, stop := range trip.Stops {
-			_, err = exec.Exec(ctx, insertStopQuery,
-				stop.ID,
-				trip.ID,
-				stop.StopOrder,
-				stop.LocationTitle,
-				stop.Coords.ToWKTPoint(),
-				stop.EstimatedArrivalTime,
-				stop.CreatedAt,
+	tripCur := trip.Currency
+	if strings.TrimSpace(string(tripCur)) == "" {
+		tripCur = trip.PricePerSeat.EffectiveCurrency()
+	}
+	parsedCur, err := domain.ParseCurrency(string(tripCur))
+	if err != nil {
+		return err
+	}
+
+	return runInRepoTx(ctx, r.uow, func(tx pgx.Tx) error {
+		insertTripQuery := `
+			INSERT INTO trips (
+				id, driver_id, vehicle_id,
+				origin_title, origin_geom,
+				destination_title, destination_geom,
+				route_path,
+				departure_time, estimated_arrival_time,
+				total_distance_km, total_duration_minutes,
+				total_seats_offered, available_seats,
+				currency,
+				price_per_seat, cap_price_per_seat,
+				estimated_fuel_cost, estimated_toll_cost,
+				status, created_at, updated_at
+			) VALUES (
+				$1, $2, $3,
+				$4, ST_SetSRID(ST_MakePoint($5, $6), 4326),
+				$7, ST_SetSRID(ST_MakePoint($8, $9), 4326),
+				ST_SetSRID(
+					ST_MakeLine(
+						ARRAY(
+							SELECT ST_MakePoint(lon, lat)
+							FROM UNNEST($10::float8[], $11::float8[]) WITH ORDINALITY AS pt(lon, lat, ord)
+							ORDER BY ord
+						)
+					),
+					4326
+				),
+				$12, $13,
+				$14, $15,
+				$16, $17,
+				$18,
+				$19, $20,
+				$21, $22,
+				$23, $24, $25
 			)
-			if err != nil {
-				return fmt.Errorf("error al insertar parada intermedia %d: %w", stop.StopOrder, err)
+		`
+
+		if _, err := tx.Exec(ctx, insertTripQuery,
+			trip.ID,
+			trip.DriverID,
+			trip.VehicleID,
+			trip.OriginTitle,
+			trip.OriginCoords.Longitude,
+			trip.OriginCoords.Latitude,
+			trip.DestinationTitle,
+			trip.DestinationCoords.Longitude,
+			trip.DestinationCoords.Latitude,
+			routeLons,
+			routeLats,
+			trip.DepartureTime,
+			trip.EstimatedArrivalTime,
+			trip.TotalDistanceKm,
+			trip.TotalDurationMinutes,
+			trip.TotalSeatsOffered,
+			trip.AvailableSeats,
+			parsedCur.String(),
+			moneyToPGNumeric(trip.PricePerSeat),
+			moneyToPGNumeric(trip.CapPricePerSeat),
+			moneyToPGNumeric(trip.EstimatedFuelCost),
+			moneyToPGNumeric(trip.EstimatedTollCost),
+			trip.Status.String(),
+			trip.CreatedAt,
+			trip.UpdatedAt,
+		); err != nil {
+			return fmt.Errorf("error al insertar viaje en trips: %w", err)
+		}
+
+		// Inserción de paradas intermedias
+		if len(trip.Stops) > 0 {
+			insertStopQuery := `
+				INSERT INTO trip_stops (
+					id, trip_id, stop_order, location_title, location_geom, estimated_arrival_time, created_at
+				) VALUES ($1, $2, $3, $4, ST_SetSRID(ST_MakePoint($5, $6), 4326), $7, $8)
+			`
+			for _, stop := range trip.Stops {
+				if _, err := tx.Exec(ctx, insertStopQuery,
+					stop.ID,
+					trip.ID,
+					stop.StopOrder,
+					stop.LocationTitle,
+					stop.Coords.Longitude,
+					stop.Coords.Latitude,
+					stop.EstimatedArrivalTime,
+					stop.CreatedAt,
+				); err != nil {
+					return fmt.Errorf("error al insertar parada intermedia %d: %w", stop.StopOrder, err)
+				}
 			}
 		}
-	}
 
-	if tx != nil {
-		if err := tx.Commit(ctx); err != nil {
-			return fmt.Errorf("error al confirmar transacción de viaje: %w", err)
-		}
-		tx = nil
-	}
-
-	return nil
+		return nil
+	})
 }
 
-// FindByID recupera un viaje por su identificador primario parseando geometrías PostGIS
-func (r *tripRepository) FindByID(ctx context.Context, id string) (*domain.Trip, error) {
+// FindByID recupera un viaje por su identificador primario leyendo coordenadas y vértices directamente desde PostGIS
+func (r *tripRepository) FindByID(ctx context.Context, id uuid.UUID) (*domain.Trip, error) {
+	if id == uuid.Nil {
+		return nil, domain.ErrTripNotFound
+	}
 	query := `
 		SELECT 
 			id, driver_id, vehicle_id,
-			origin_title, ST_AsText(origin_geom),
-			destination_title, ST_AsText(destination_geom),
-			ST_AsText(route_path),
+			origin_title, ST_X(origin_geom), ST_Y(origin_geom),
+			destination_title, ST_X(destination_geom), ST_Y(destination_geom),
+			ARRAY(SELECT ST_X((dp).geom) FROM ST_DumpPoints(route_path) AS dp ORDER BY (dp).path[1]),
+			ARRAY(SELECT ST_Y((dp).geom) FROM ST_DumpPoints(route_path) AS dp ORDER BY (dp).path[1]),
 			departure_time, estimated_arrival_time,
 			total_distance_km, total_duration_minutes,
 			total_seats_offered, available_seats,
+			currency,
 			price_per_seat, cap_price_per_seat,
 			estimated_fuel_cost, estimated_toll_cost,
 			status, created_at, updated_at
@@ -153,9 +174,13 @@ func (r *tripRepository) FindByID(ctx context.Context, id string) (*domain.Trip,
 
 	var (
 		trip               domain.Trip
-		originWKT          string
-		destWKT            string
-		routeWKT           string
+		originLon          float64
+		originLat          float64
+		destLon            float64
+		destLat            float64
+		routeLons          []float64
+		routeLats          []float64
+		currencyStr        string
 		pricePerSeatNum    pgtype.Numeric
 		capPricePerSeatNum pgtype.Numeric
 		fuelCostNum        pgtype.Numeric
@@ -169,16 +194,20 @@ func (r *tripRepository) FindByID(ctx context.Context, id string) (*domain.Trip,
 		&trip.DriverID,
 		&trip.VehicleID,
 		&trip.OriginTitle,
-		&originWKT,
+		&originLon,
+		&originLat,
 		&trip.DestinationTitle,
-		&destWKT,
-		&routeWKT,
+		&destLon,
+		&destLat,
+		&routeLons,
+		&routeLats,
 		&trip.DepartureTime,
 		&trip.EstimatedArrivalTime,
 		&trip.TotalDistanceKm,
 		&trip.TotalDurationMinutes,
 		&trip.TotalSeatsOffered,
 		&trip.AvailableSeats,
+		&currencyStr,
 		&pricePerSeatNum,
 		&capPricePerSeatNum,
 		&fuelCostNum,
@@ -194,43 +223,51 @@ func (r *tripRepository) FindByID(ctx context.Context, id string) (*domain.Trip,
 		return nil, fmt.Errorf("error al consultar viaje por ID: %w", err)
 	}
 
-	if trip.PricePerSeat, err = pgNumericToMoney(pricePerSeatNum); err != nil {
+	cur, err := domain.ParseCurrency(currencyStr)
+	if err != nil {
+		return nil, fmt.Errorf("error parseando currency de viaje: %w", err)
+	}
+	trip.Currency = cur
+
+	if trip.PricePerSeat, err = pgNumericToMoney(pricePerSeatNum, cur); err != nil {
 		return nil, fmt.Errorf("error convirtiendo price_per_seat: %w", err)
 	}
-	if trip.CapPricePerSeat, err = pgNumericToMoney(capPricePerSeatNum); err != nil {
+	if trip.CapPricePerSeat, err = pgNumericToMoney(capPricePerSeatNum, cur); err != nil {
 		return nil, fmt.Errorf("error convirtiendo cap_price_per_seat: %w", err)
 	}
-	if trip.EstimatedFuelCost, err = pgNumericToMoney(fuelCostNum); err != nil {
+	if trip.EstimatedFuelCost, err = pgNumericToMoney(fuelCostNum, cur); err != nil {
 		return nil, fmt.Errorf("error convirtiendo estimated_fuel_cost: %w", err)
 	}
-	if trip.EstimatedTollCost, err = pgNumericToMoney(tollCostNum); err != nil {
+	if trip.EstimatedTollCost, err = pgNumericToMoney(tollCostNum, cur); err != nil {
 		return nil, fmt.Errorf("error convirtiendo estimated_toll_cost: %w", err)
 	}
 
 	trip.Status = domain.TripStatus(statusStr)
+	if !trip.Status.IsValid() {
+		return nil, fmt.Errorf("%w: estado de viaje inválido %s", domain.ErrInvalidStatus, statusStr)
+	}
 
-	// Reconstruir coordenadas y trazado desde WKT
-	origCoords, err := domain.ParseWKTPoint(originWKT)
+	origCoords, err := domain.NewCoordinates(originLat, originLon)
 	if err != nil {
-		return nil, fmt.Errorf("error parseando origin_geom: %w", err)
+		return nil, fmt.Errorf("error construyendo origin_geom: %w", err)
 	}
 	trip.OriginCoords = origCoords
 
-	destCoords, err := domain.ParseWKTPoint(destWKT)
+	destCoords, err := domain.NewCoordinates(destLat, destLon)
 	if err != nil {
-		return nil, fmt.Errorf("error parseando destination_geom: %w", err)
+		return nil, fmt.Errorf("error construyendo destination_geom: %w", err)
 	}
 	trip.DestinationCoords = destCoords
 
-	routeLine, err := domain.ParseWKTLineString(routeWKT)
+	routeLine, err := lineStringFromLonLatSlices(routeLons, routeLats)
 	if err != nil {
-		return nil, fmt.Errorf("error parseando route_path: %w", err)
+		return nil, fmt.Errorf("error construyendo route_path: %w", err)
 	}
 	trip.RoutePath = routeLine
 
 	// Cargar paradas intermedias
 	stopsQuery := `
-		SELECT id, trip_id, stop_order, location_title, ST_AsText(location_geom), estimated_arrival_time, created_at
+		SELECT id, trip_id, stop_order, location_title, ST_X(location_geom), ST_Y(location_geom), estimated_arrival_time, created_at
 		FROM trip_stops
 		WHERE trip_id = $1
 		ORDER BY stop_order ASC
@@ -240,9 +277,9 @@ func (r *tripRepository) FindByID(ctx context.Context, id string) (*domain.Trip,
 		defer rows.Close()
 		for rows.Next() {
 			var stop domain.TripStop
-			var stopWKT string
-			if err := rows.Scan(&stop.ID, &stop.TripID, &stop.StopOrder, &stop.LocationTitle, &stopWKT, &stop.EstimatedArrivalTime, &stop.CreatedAt); err == nil {
-				if stopCoords, errCoords := domain.ParseWKTPoint(stopWKT); errCoords == nil {
+			var stopLon, stopLat float64
+			if err := rows.Scan(&stop.ID, &stop.TripID, &stop.StopOrder, &stop.LocationTitle, &stopLon, &stopLat, &stop.EstimatedArrivalTime, &stop.CreatedAt); err == nil {
+				if stopCoords, errCoords := domain.NewCoordinates(stopLat, stopLon); errCoords == nil {
 					stop.Coords = stopCoords
 					trip.Stops = append(trip.Stops, stop)
 				}
@@ -253,9 +290,123 @@ func (r *tripRepository) FindByID(ctx context.Context, id string) (*domain.Trip,
 	return &trip, nil
 }
 
+// FindByIDsForUpdate bloquea y recupera viajes en orden determinista de ID para coordinación de cambios en lote.
+func (r *tripRepository) FindByIDsForUpdate(ctx context.Context, ids []uuid.UUID) ([]*domain.Trip, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	query := `
+		SELECT
+			id, driver_id, vehicle_id,
+			origin_title, ST_X(origin_geom), ST_Y(origin_geom),
+			destination_title, ST_X(destination_geom), ST_Y(destination_geom),
+			departure_time, estimated_arrival_time,
+			total_distance_km, total_duration_minutes,
+			total_seats_offered, available_seats,
+			currency,
+			price_per_seat, cap_price_per_seat,
+			estimated_fuel_cost, estimated_toll_cost,
+			status, created_at, updated_at
+		FROM trips
+		WHERE id = ANY($1)
+		ORDER BY id ASC
+		FOR UPDATE
+	`
+
+	rows, err := executor(ctx, r.db).Query(ctx, query, ids)
+	if err != nil {
+		return nil, fmt.Errorf("error bloqueando viajes para actualización en lote: %w", err)
+	}
+	defer rows.Close()
+
+	var trips []*domain.Trip
+	for rows.Next() {
+		var (
+			trip               domain.Trip
+			originLon          float64
+			originLat          float64
+			destLon            float64
+			destLat            float64
+			currencyStr        string
+			pricePerSeatNum    pgtype.Numeric
+			capPricePerSeatNum pgtype.Numeric
+			fuelCostNum        pgtype.Numeric
+			tollCostNum        pgtype.Numeric
+			statusStr          string
+		)
+
+		if err := rows.Scan(
+			&trip.ID,
+			&trip.DriverID,
+			&trip.VehicleID,
+			&trip.OriginTitle,
+			&originLon,
+			&originLat,
+			&trip.DestinationTitle,
+			&destLon,
+			&destLat,
+			&trip.DepartureTime,
+			&trip.EstimatedArrivalTime,
+			&trip.TotalDistanceKm,
+			&trip.TotalDurationMinutes,
+			&trip.TotalSeatsOffered,
+			&trip.AvailableSeats,
+			&currencyStr,
+			&pricePerSeatNum,
+			&capPricePerSeatNum,
+			&fuelCostNum,
+			&tollCostNum,
+			&statusStr,
+			&trip.CreatedAt,
+			&trip.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("error escaneando viaje bloqueado: %w", err)
+		}
+
+		cur, err := domain.ParseCurrency(currencyStr)
+		if err != nil {
+			return nil, fmt.Errorf("error parseando currency de viaje bloqueado: %w", err)
+		}
+		trip.Currency = cur
+
+		if trip.PricePerSeat, err = pgNumericToMoney(pricePerSeatNum, cur); err != nil {
+			return nil, fmt.Errorf("error convirtiendo price_per_seat: %w", err)
+		}
+		if trip.CapPricePerSeat, err = pgNumericToMoney(capPricePerSeatNum, cur); err != nil {
+			return nil, fmt.Errorf("error convirtiendo cap_price_per_seat: %w", err)
+		}
+		if trip.EstimatedFuelCost, err = pgNumericToMoney(fuelCostNum, cur); err != nil {
+			return nil, fmt.Errorf("error convirtiendo estimated_fuel_cost: %w", err)
+		}
+		if trip.EstimatedTollCost, err = pgNumericToMoney(tollCostNum, cur); err != nil {
+			return nil, fmt.Errorf("error convirtiendo estimated_toll_cost: %w", err)
+		}
+
+		trip.Status = domain.TripStatus(statusStr)
+		if !trip.Status.IsValid() {
+			return nil, fmt.Errorf("%w: estado de viaje inválido %s", domain.ErrInvalidStatus, statusStr)
+		}
+		if origCoords, errCoords := domain.NewCoordinates(originLat, originLon); errCoords == nil {
+			trip.OriginCoords = origCoords
+		}
+		if destCoords, errCoords := domain.NewCoordinates(destLat, destLon); errCoords == nil {
+			trip.DestinationCoords = destCoords
+		}
+
+		trips = append(trips, &trip)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterando viajes bloqueados: %w", err)
+	}
+
+	return trips, nil
+}
+
 // SearchMatchingTrips ejecuta la búsqueda geoespacial optimizada usando el índice GIST de expresión (route_path::geography),
-// filtrando dirección con ST_LineLocatePoint antes de calcular distancias geodésicas exactas (ST_Distance) y retornando
-// una polilínea simplificada y comprimida (ST_Simplify + ST_AsEncodedPolyline) en lugar de la geometría WKT completa.
+// filtrando dirección con ST_LineLocatePoint antes de calcular distancias geodésicas exactas (ST_Distance), proyectando
+// origen/destino vía ST_X/ST_Y y retornando una polilínea simplificada y comprimida (ST_Simplify + ST_AsEncodedPolyline).
 func (r *tripRepository) SearchMatchingTrips(ctx context.Context, params ports.SearchTripsParams) ([]ports.MatchedTripRecord, error) {
 	query := `
 		WITH passenger_input AS NOT MATERIALIZED (
@@ -279,6 +430,7 @@ func (r *tripRepository) SearchMatchingTrips(ctx context.Context, params ports.S
 				t.total_duration_minutes,
 				t.total_seats_offered,
 				t.available_seats,
+				t.currency,
 				t.price_per_seat,
 				t.cap_price_per_seat,
 				t.estimated_fuel_cost,
@@ -317,8 +469,10 @@ func (r *tripRepository) SearchMatchingTrips(ctx context.Context, params ports.S
 			v.plate_number,
 			r.origin_title,
 			r.destination_title,
-			ST_AsText(r.origin_geom) AS origin_wkt,
-			ST_AsText(r.destination_geom) AS dest_wkt,
+			ST_X(r.origin_geom) AS origin_lon,
+			ST_Y(r.origin_geom) AS origin_lat,
+			ST_X(r.destination_geom) AS dest_lon,
+			ST_Y(r.destination_geom) AS dest_lat,
 			COALESCE(ST_AsEncodedPolyline(ST_Simplify(r.route_path, 0.001), 5), '') AS route_preview_polyline,
 			r.departure_time,
 			r.estimated_arrival_time,
@@ -326,6 +480,7 @@ func (r *tripRepository) SearchMatchingTrips(ctx context.Context, params ports.S
 			r.total_duration_minutes,
 			r.total_seats_offered,
 			r.available_seats,
+			r.currency,
 			r.price_per_seat,
 			r.cap_price_per_seat,
 			r.estimated_fuel_cost,
@@ -366,8 +521,11 @@ func (r *tripRepository) SearchMatchingTrips(ctx context.Context, params ports.S
 	for rows.Next() {
 		var (
 			rec                ports.MatchedTripRecord
-			originWKT          string
-			destWKT            string
+			originLon          float64
+			originLat          float64
+			destLon            float64
+			destLat            float64
+			currencyStr        string
 			pricePerSeatNum    pgtype.Numeric
 			capPricePerSeatNum pgtype.Numeric
 			fuelCostNum        pgtype.Numeric
@@ -386,8 +544,10 @@ func (r *tripRepository) SearchMatchingTrips(ctx context.Context, params ports.S
 			&rec.VehiclePlate,
 			&rec.Trip.OriginTitle,
 			&rec.Trip.DestinationTitle,
-			&originWKT,
-			&destWKT,
+			&originLon,
+			&originLat,
+			&destLon,
+			&destLat,
 			&rec.RoutePreviewPolyline,
 			&rec.Trip.DepartureTime,
 			&rec.Trip.EstimatedArrivalTime,
@@ -395,6 +555,7 @@ func (r *tripRepository) SearchMatchingTrips(ctx context.Context, params ports.S
 			&rec.Trip.TotalDurationMinutes,
 			&rec.Trip.TotalSeatsOffered,
 			&rec.Trip.AvailableSeats,
+			&currencyStr,
 			&pricePerSeatNum,
 			&capPricePerSeatNum,
 			&fuelCostNum,
@@ -409,25 +570,34 @@ func (r *tripRepository) SearchMatchingTrips(ctx context.Context, params ports.S
 			return nil, fmt.Errorf("error al escanear fila de matched trip: %w", err)
 		}
 
-		if rec.Trip.PricePerSeat, err = pgNumericToMoney(pricePerSeatNum); err != nil {
+		cur, err := domain.ParseCurrency(currencyStr)
+		if err != nil {
+			return nil, fmt.Errorf("error parseando currency de matched trip: %w", err)
+		}
+		rec.Trip.Currency = cur
+
+		if rec.Trip.PricePerSeat, err = pgNumericToMoney(pricePerSeatNum, cur); err != nil {
 			return nil, fmt.Errorf("error convirtiendo price_per_seat: %w", err)
 		}
-		if rec.Trip.CapPricePerSeat, err = pgNumericToMoney(capPricePerSeatNum); err != nil {
+		if rec.Trip.CapPricePerSeat, err = pgNumericToMoney(capPricePerSeatNum, cur); err != nil {
 			return nil, fmt.Errorf("error convirtiendo cap_price_per_seat: %w", err)
 		}
-		if rec.Trip.EstimatedFuelCost, err = pgNumericToMoney(fuelCostNum); err != nil {
+		if rec.Trip.EstimatedFuelCost, err = pgNumericToMoney(fuelCostNum, cur); err != nil {
 			return nil, fmt.Errorf("error convirtiendo estimated_fuel_cost: %w", err)
 		}
-		if rec.Trip.EstimatedTollCost, err = pgNumericToMoney(tollCostNum); err != nil {
+		if rec.Trip.EstimatedTollCost, err = pgNumericToMoney(tollCostNum, cur); err != nil {
 			return nil, fmt.Errorf("error convirtiendo estimated_toll_cost: %w", err)
 		}
 
 		rec.Trip.Status = domain.TripStatus(statusStr)
+		if !rec.Trip.Status.IsValid() {
+			return nil, fmt.Errorf("%w: estado de viaje inválido %s", domain.ErrInvalidStatus, statusStr)
+		}
 
-		if origCoords, errCoords := domain.ParseWKTPoint(originWKT); errCoords == nil {
+		if origCoords, errCoords := domain.NewCoordinates(originLat, originLon); errCoords == nil {
 			rec.Trip.OriginCoords = origCoords
 		}
-		if destCoords, errCoords := domain.ParseWKTPoint(destWKT); errCoords == nil {
+		if destCoords, errCoords := domain.NewCoordinates(destLat, destLon); errCoords == nil {
 			rec.Trip.DestinationCoords = destCoords
 		}
 
@@ -442,13 +612,19 @@ func (r *tripRepository) SearchMatchingTrips(ctx context.Context, params ports.S
 }
 
 // UpdateStatus actualiza el estado de ciclo de vida del viaje
-func (r *tripRepository) UpdateStatus(ctx context.Context, tripID string, newStatus domain.TripStatus) error {
+func (r *tripRepository) UpdateStatus(ctx context.Context, tripID uuid.UUID, newStatus domain.TripStatus) error {
+	if tripID == uuid.Nil {
+		return domain.ErrTripNotFound
+	}
+	if !newStatus.IsValid() {
+		return fmt.Errorf("%w: estado de viaje %s", domain.ErrInvalidStatus, newStatus)
+	}
 	query := `
 		UPDATE trips
 		SET status = $1, updated_at = NOW()
 		WHERE id = $2
 	`
-	cmdTag, err := executor(ctx, r.db).Exec(ctx, query, string(newStatus), tripID)
+	cmdTag, err := executor(ctx, r.db).Exec(ctx, query, newStatus.String(), tripID)
 	if err != nil {
 		return fmt.Errorf("error actualizando estado de viaje: %w", err)
 	}
@@ -458,127 +634,151 @@ func (r *tripRepository) UpdateStatus(ctx context.Context, tripID string, newSta
 	return nil
 }
 
-// ReleaseSeats restituye de forma atómica n asientos disponibles al viaje y lo republica si estaba FULL.
-func (r *tripRepository) ReleaseSeats(ctx context.Context, tripID string, seats int) error {
-	if strings.TrimSpace(tripID) == "" {
-		return domain.ErrTripNotFound
+// ReleaseSeats aplica atómicamente la restitución de plazas y transición de estado decidida por el dominio,
+// reportando si la actualización fue aplicada (RowsAffected() > 0).
+func (r *tripRepository) ReleaseSeats(ctx context.Context, transition domain.SeatTransition) (bool, error) {
+	if transition.TripID == uuid.Nil {
+		return false, domain.ErrTripNotFound
 	}
-	if seats <= 0 {
-		return domain.ErrInvalidSeatCount
+	if transition.SeatsDelta <= 0 {
+		return false, domain.ErrInvalidSeatCount
+	}
+	if !transition.ExpectedStatus.IsValid() || !transition.NewStatus.IsValid() {
+		return false, fmt.Errorf("%w: transición de estado de viaje %s -> %s", domain.ErrInvalidStatus, transition.ExpectedStatus, transition.NewStatus)
 	}
 
 	query := `
 		UPDATE trips
 		SET available_seats = available_seats + $1,
-		    status = CASE WHEN status = 'FULL' THEN 'PUBLISHED'::trip_status_enum ELSE status END,
+		    status = $2,
 		    updated_at = NOW()
-		WHERE id = $2
+		WHERE id = $3
+		  AND status = $4
+		  AND available_seats + $1 <= total_seats_offered
 	`
 
-	cmdTag, err := executor(ctx, r.db).Exec(ctx, query, seats, tripID)
+	cmdTag, err := executor(ctx, r.db).Exec(
+		ctx,
+		query,
+		transition.SeatsDelta,
+		transition.NewStatus.String(),
+		transition.TripID,
+		transition.ExpectedStatus.String(),
+	)
 	if err != nil {
-		return fmt.Errorf("error restituyendo %d asientos al viaje %s: %w", seats, tripID, err)
+		return false, fmt.Errorf("error restituyendo %d asientos al viaje %s: %w", transition.SeatsDelta, transition.TripID, err)
 	}
-	if cmdTag.RowsAffected() == 0 {
-		return domain.ErrTripNotFound
-	}
-	return nil
+	return cmdTag.RowsAffected() > 0, nil
 }
 
-// ListByDriverID lista los viajes creados por un conductor ordenados por fecha de partida
-// omitiendo la geometría WKT completa (reservada para FindByID) y retornando una polilínea simplificada.
-func (r *tripRepository) ListByDriverID(ctx context.Context, driverID string, limit, offset int) ([]*domain.Trip, error) {
+// ApplySeatTransitionsBatch aplica en un único UPDATE ... FROM UNNEST las restituciones de asientos
+// y transiciones de estado ya decididas por el dominio, validando las guardas de estado y capacidad.
+func (r *tripRepository) ApplySeatTransitionsBatch(ctx context.Context, transitions []domain.SeatTransition, updatedAt time.Time) (int, error) {
+	if len(transitions) == 0 {
+		return 0, nil
+	}
+
+	tripIDs := make([]uuid.UUID, len(transitions))
+	seatsDeltas := make([]int32, len(transitions))
+	expectedStatuses := make([]string, len(transitions))
+	newStatuses := make([]string, len(transitions))
+
+	for i, tr := range transitions {
+		if tr.TripID == uuid.Nil {
+			return 0, domain.ErrTripNotFound
+		}
+		if tr.SeatsDelta <= 0 {
+			return 0, domain.ErrInvalidSeatCount
+		}
+		if !tr.ExpectedStatus.IsValid() || !tr.NewStatus.IsValid() {
+			return 0, fmt.Errorf("%w: transición de estado de viaje %s -> %s", domain.ErrInvalidStatus, tr.ExpectedStatus, tr.NewStatus)
+		}
+		tripIDs[i] = tr.TripID
+		seatsDeltas[i] = int32(tr.SeatsDelta)
+		expectedStatuses[i] = tr.ExpectedStatus.String()
+		newStatuses[i] = tr.NewStatus.String()
+	}
+
 	query := `
-		SELECT 
-			id, driver_id, vehicle_id,
-			origin_title, ST_AsText(origin_geom),
-			destination_title, ST_AsText(destination_geom),
-			COALESCE(ST_AsEncodedPolyline(ST_Simplify(route_path, 0.001), 5), '') AS route_preview_polyline,
-			departure_time, estimated_arrival_time,
-			total_distance_km, total_duration_minutes,
-			total_seats_offered, available_seats,
-			price_per_seat, cap_price_per_seat,
-			estimated_fuel_cost, estimated_toll_cost,
-			status, created_at, updated_at
-		FROM trips
-		WHERE driver_id = $1
-		ORDER BY departure_time DESC
-		LIMIT $2 OFFSET $3
+		UPDATE trips t
+		SET available_seats = t.available_seats + r.seats_to_restore,
+		    status = r.new_status::trip_status_enum,
+		    updated_at = $1
+		FROM UNNEST($2::uuid[], $3::int[], $4::text[], $5::text[]) AS r(trip_id, seats_to_restore, expected_status, new_status)
+		WHERE t.id = r.trip_id
+		  AND t.status::text = r.expected_status
+		  AND t.available_seats + r.seats_to_restore <= t.total_seats_offered
 	`
 
-	rows, err := executor(ctx, r.db).Query(ctx, query, driverID, limit, offset)
+	cmdTag, err := executor(ctx, r.db).Exec(ctx, query, updatedAt.UTC(), tripIDs, seatsDeltas, expectedStatuses, newStatuses)
 	if err != nil {
-		return nil, fmt.Errorf("error al listar viajes del conductor: %w", err)
+		return 0, fmt.Errorf("error aplicando restitución en lote de asientos: %w", err)
 	}
-	defer rows.Close()
+	return int(cmdTag.RowsAffected()), nil
+}
 
-	var trips []*domain.Trip
-	for rows.Next() {
-		var (
-			trip               domain.Trip
-			originWKT          string
-			destWKT            string
-			pricePerSeatNum    pgtype.Numeric
-			capPricePerSeatNum pgtype.Numeric
-			fuelCostNum        pgtype.Numeric
-			tollCostNum        pgtype.Numeric
-			statusStr          string
-		)
+// CalculateRouteDistanceKm delega a PostGIS (ST_Length sobre geography WGS 84) el cálculo geodésico de longitud de una polilínea en kilómetros.
+func (r *tripRepository) CalculateRouteDistanceKm(ctx context.Context, routePath domain.LineString) (float64, error) {
+	lons, lats, err := lineStringToLonLatSlices(routePath)
+	if err != nil {
+		return 0, err
+	}
 
-		err := rows.Scan(
-			&trip.ID,
-			&trip.DriverID,
-			&trip.VehicleID,
-			&trip.OriginTitle,
-			&originWKT,
-			&trip.DestinationTitle,
-			&destWKT,
-			&trip.RoutePreviewPolyline,
-			&trip.DepartureTime,
-			&trip.EstimatedArrivalTime,
-			&trip.TotalDistanceKm,
-			&trip.TotalDurationMinutes,
-			&trip.TotalSeatsOffered,
-			&trip.AvailableSeats,
-			&pricePerSeatNum,
-			&capPricePerSeatNum,
-			&fuelCostNum,
-			&tollCostNum,
-			&statusStr,
-			&trip.CreatedAt,
-			&trip.UpdatedAt,
+	query := `
+		SELECT COALESCE(
+			ST_Length(
+				ST_SetSRID(
+					ST_MakeLine(
+						ARRAY(
+							SELECT ST_MakePoint(lon, lat)
+							FROM UNNEST($1::float8[], $2::float8[]) WITH ORDINALITY AS pt(lon, lat, ord)
+							ORDER BY ord
+						)
+					),
+					4326
+				)::geography
+			) / 1000.0,
+			0
 		)
+	`
+
+	var distanceKm float64
+	if err := executor(ctx, r.db).QueryRow(ctx, query, lons, lats).Scan(&distanceKm); err != nil {
+		return 0, fmt.Errorf("error calculando distancia geodésica de ruta en PostGIS: %w", err)
+	}
+	return distanceKm, nil
+}
+
+func lineStringToLonLatSlices(ls domain.LineString) ([]float64, []float64, error) {
+	if len(ls.Coordinates) < 2 {
+		return nil, nil, domain.ErrInsufficientRoutePoints
+	}
+	lons := make([]float64, len(ls.Coordinates))
+	lats := make([]float64, len(ls.Coordinates))
+	for i, c := range ls.Coordinates {
+		if !c.IsValid() {
+			return nil, nil, domain.ErrInvalidRouteCoordinates
+		}
+		lons[i] = c.Longitude
+		lats[i] = c.Latitude
+	}
+	return lons, lats, nil
+}
+
+func lineStringFromLonLatSlices(lons, lats []float64) (domain.LineString, error) {
+	if len(lons) != len(lats) {
+		return domain.LineString{}, domain.ErrInvalidRouteCoordinates
+	}
+	if len(lons) < 2 {
+		return domain.LineString{}, domain.ErrInsufficientRoutePoints
+	}
+	coords := make([]domain.Coordinates, len(lons))
+	for i := range lons {
+		c, err := domain.NewCoordinates(lats[i], lons[i])
 		if err != nil {
-			return nil, fmt.Errorf("error escaneando viaje del conductor: %w", err)
+			return domain.LineString{}, err
 		}
-
-		if trip.PricePerSeat, err = pgNumericToMoney(pricePerSeatNum); err != nil {
-			return nil, fmt.Errorf("error convirtiendo price_per_seat: %w", err)
-		}
-		if trip.CapPricePerSeat, err = pgNumericToMoney(capPricePerSeatNum); err != nil {
-			return nil, fmt.Errorf("error convirtiendo cap_price_per_seat: %w", err)
-		}
-		if trip.EstimatedFuelCost, err = pgNumericToMoney(fuelCostNum); err != nil {
-			return nil, fmt.Errorf("error convirtiendo estimated_fuel_cost: %w", err)
-		}
-		if trip.EstimatedTollCost, err = pgNumericToMoney(tollCostNum); err != nil {
-			return nil, fmt.Errorf("error convirtiendo estimated_toll_cost: %w", err)
-		}
-
-		trip.Status = domain.TripStatus(statusStr)
-		if origCoords, errCoords := domain.ParseWKTPoint(originWKT); errCoords == nil {
-			trip.OriginCoords = origCoords
-		}
-		if destCoords, errCoords := domain.ParseWKTPoint(destWKT); errCoords == nil {
-			trip.DestinationCoords = destCoords
-		}
-
-		trips = append(trips, &trip)
+		coords[i] = c
 	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterando viajes del conductor: %w", err)
-	}
-
-	return trips, nil
+	return domain.NewLineString(coords)
 }

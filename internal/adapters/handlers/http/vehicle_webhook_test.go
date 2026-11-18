@@ -8,9 +8,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
-	"github.com/thumbi/auth-kyc-service/internal/adapters/handlers/http/middleware"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
+	"github.com/thumbi/backend/internal/adapters/handlers/http/middleware"
+	"github.com/thumbi/backend/internal/core/domain"
 )
 
 func TestWebhook_VehicleResolution_Security(t *testing.T) {
@@ -69,7 +70,7 @@ func TestWebhook_VehicleResolution_Security(t *testing.T) {
 	vehData := vehRes["vehicle"].(map[string]interface{})
 	vehID := vehData["id"].(string)
 
-	secret := middleware.DefaultWebhookSecret
+	secret := testWebhookSecret
 
 	approvalPayload, _ := json.Marshal(map[string]interface{}{
 		"approved": true,
@@ -136,12 +137,12 @@ func TestWebhook_VehicleResolution_Security(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code)
 
 		// Verificar que el vehículo fue aprobado
-		vehicle, err := env.vehicleRepo.GetByID(context.Background(), vehID)
+		vehicle, err := env.vehicleRepo.GetByID(context.Background(), uuid.MustParse(vehID))
 		assert.NoError(t, err)
 		assert.Equal(t, domain.VehicleStatusApproved, vehicle.Status)
 
 		// Verificar que el usuario fue promovido a conductor
-		user, err := env.userRepo.GetByID(context.Background(), userID)
+		user, err := env.userRepo.GetByID(context.Background(), uuid.MustParse(userID))
 		assert.NoError(t, err)
 		assert.Equal(t, domain.RoleDriver, user.Role)
 		assert.True(t, user.IsDriverActive)

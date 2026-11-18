@@ -443,7 +443,7 @@ func GenerateWhatsAppLink(phone, bookingID, origin, destination, departureTime, 
 import (
 	"testing"
 	"github.com/stretchr/testify/assert"
-	"github.com/thumbi/auth-kyc-service/pkg/whatsapp"
+	"github.com/thumbi/backend/pkg/whatsapp"
 )
 
 func TestCleanPhoneNumber(t *testing.T) {

@@ -2,6 +2,8 @@ package domain
 
 import (
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // VehicleStatus define el estado de tramitación asíncrona del vehículo (RF-11, RF-12)
@@ -13,18 +15,28 @@ const (
 	VehicleStatusRejected            VehicleStatus = "REJECTED"
 )
 
+// IsValid verifica que el estado del vehículo pertenezca a los valores válidos del dominio.
+func (s VehicleStatus) IsValid() bool {
+	return s == VehicleStatusPendingVerification || s == VehicleStatusApproved || s == VehicleStatusRejected
+}
+
+// String retorna la representación textual del estado del vehículo.
+func (s VehicleStatus) String() string {
+	return string(s)
+}
+
 // Vehicle representa el automóvil y la documentación de conducción presentada (RF-10, RF-11, RF-12, RF-13)
 type Vehicle struct {
-	ID                 string        `json:"id"`
-	UserID             string        `json:"user_id"`
-	Brand              string        `json:"brand"`               // Ej: Toyota
-	Model              string        `json:"model"`               // Ej: Corolla
-	Year               int           `json:"year"`                // Ej: 2022
-	PlateNumber        string        `json:"plate_number"`        // Ej: AB123CD
-	Color              string        `json:"color"`               // Ej: Blanco
-	SeatCapacity       int           `json:"seat_capacity"`       // Capacidad de pasajeros
-	DriverLicenseURL   string        `json:"driver_license_url"`  // Foto de Licencia de Conducir
-	VehicleCedulaURL   string        `json:"vehicle_cedula_url"`  // Cédula de Identificación del Vehículo
+	ID                 uuid.UUID     `json:"id"`
+	UserID             uuid.UUID     `json:"user_id"`
+	Brand              string        `json:"brand"`              // Ej: Toyota
+	Model              string        `json:"model"`              // Ej: Corolla
+	Year               int           `json:"year"`               // Ej: 2022
+	PlateNumber        string        `json:"plate_number"`       // Ej: AB123CD
+	Color              string        `json:"color"`              // Ej: Blanco
+	SeatCapacity       int           `json:"seat_capacity"`      // Capacidad de pasajeros
+	DriverLicenseURL   string        `json:"driver_license_url"` // Foto de Licencia de Conducir
+	VehicleCedulaURL   string        `json:"vehicle_cedula_url"` // Cédula de Identificación del Vehículo
 	InsurancePolicyURL string        `json:"insurance_policy_url,omitempty"`
 	Status             VehicleStatus `json:"status"`
 	RejectionReason    string        `json:"rejection_reason,omitempty"`
@@ -34,7 +46,7 @@ type Vehicle struct {
 }
 
 // NewVehicle crea una nueva solicitud de registro de vehículo en estado PENDING_VERIFICATION (RF-11)
-func NewVehicle(id, userID, brand, model string, year int, plate, color string, seats int, licenseURL, cedulaURL string) *Vehicle {
+func NewVehicle(id, userID uuid.UUID, brand, model string, year int, plate, color string, seats int, licenseURL, cedulaURL string) *Vehicle {
 	now := time.Now().UTC()
 	return &Vehicle{
 		ID:               id,

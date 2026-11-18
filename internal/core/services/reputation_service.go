@@ -6,12 +6,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
+	"github.com/thumbi/backend/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/ports"
 )
 
-// reputationService implementa ports.ReputationService bajo Clean Architecture
-type reputationService struct {
+// ReputationService implementa los casos de uso para emisión de calificaciones y consulta reputacional.
+type ReputationService struct {
 	reviewRepo  ports.ReviewRepository
 	bookingRepo ports.BookingRepository
 	tripRepo    ports.TripRepository
@@ -25,8 +25,8 @@ func NewReputationService(
 	bookingRepo ports.BookingRepository,
 	tripRepo ports.TripRepository,
 	userRepo ports.UserRepository,
-) ports.ReputationService {
-	return &reputationService{
+) *ReputationService {
+	return &ReputationService{
 		reviewRepo:  reviewRepo,
 		bookingRepo: bookingRepo,
 		tripRepo:    tripRepo,
@@ -36,10 +36,10 @@ func NewReputationService(
 }
 
 // CreateReview emite una calificación entre usuarios (conductor <-> pasajero) tras finalizar el viaje
-func (s *reputationService) CreateReview(ctx context.Context, input ports.CreateReviewInput) (*ports.ReviewDTO, error) {
-	reviewerID := strings.TrimSpace(input.ReviewerID)
-	bookingID := strings.TrimSpace(input.BookingID)
-	if reviewerID == "" || bookingID == "" {
+func (s *ReputationService) CreateReview(ctx context.Context, input ports.CreateReviewInput) (*ports.ReviewDTO, error) {
+	reviewerID := input.ReviewerID
+	bookingID := input.BookingID
+	if reviewerID == uuid.Nil || bookingID == uuid.Nil {
 		return nil, domain.ErrInvalidRating
 	}
 
@@ -68,7 +68,7 @@ func (s *reputationService) CreateReview(ctx context.Context, input ports.Create
 	}
 
 	// 4. Determinar los roles: el evaluador debe ser parte de la reserva
-	var revieweeID string
+	var revieweeID uuid.UUID
 	if reviewerID == booking.PassengerID {
 		// Pasajero califica al conductor
 		revieweeID = trip.DriverID
@@ -92,7 +92,7 @@ func (s *reputationService) CreateReview(ctx context.Context, input ports.Create
 	}
 
 	// 7. Instanciar la entidad Review con validación de invariantes
-	reviewID := uuid.New().String()
+	reviewID := domain.NewUUIDv7()
 	review, err := domain.NewReview(domain.ReviewParams{
 		ID:            reviewID,
 		TripID:        trip.ID,
@@ -137,14 +137,13 @@ func (s *reputationService) CreateReview(ctx context.Context, input ports.Create
 }
 
 // GetUserReviews consulta el historial paginado de opiniones y el promedio reputacional de un usuario
-func (s *reputationService) GetUserReviews(ctx context.Context, userID string, limit, offset int) (*ports.UserReputationDTO, error) {
-	trimmedID := strings.TrimSpace(userID)
-	if trimmedID == "" {
+func (s *ReputationService) GetUserReviews(ctx context.Context, userID uuid.UUID, limit, offset int) (*ports.UserReputationDTO, error) {
+	if userID == uuid.Nil {
 		return nil, domain.ErrUserNotFound
 	}
 
 	// 1. Validar que el usuario exista
-	user, err := s.userRepo.GetByID(ctx, trimmedID)
+	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil || user == nil {
 		return nil, domain.ErrUserNotFound
 	}
@@ -161,7 +160,7 @@ func (s *reputationService) GetUserReviews(ctx context.Context, userID string, l
 	}
 
 	// 3. Obtener lista de reseñas
-	reviews, err := s.reviewRepo.ListByUserID(ctx, trimmedID, limit, offset)
+	reviews, err := s.reviewRepo.ListByUserID(ctx, userID, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +187,7 @@ func (s *reputationService) GetUserReviews(ctx context.Context, userID string, l
 	}
 
 	// 5. Obtener promedio y conteo actualizados
-	avg, count, err := s.reviewRepo.GetAverageRating(ctx, trimmedID)
+	avg, count, err := s.reviewRepo.GetAverageRating(ctx, userID)
 	ratingAvg := user.RatingAvg
 	ratingCount := user.RatingCount
 	if err == nil && count > 0 {

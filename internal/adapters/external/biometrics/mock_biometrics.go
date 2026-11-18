@@ -1,7 +1,7 @@
 package biometrics
 
 import (
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
+	"github.com/thumbi/backend/internal/core/ports"
 	"context"
 	"strings"
 )

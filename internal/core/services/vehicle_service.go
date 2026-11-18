@@ -6,12 +6,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
+	"github.com/thumbi/backend/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/ports"
 )
 
-// vehicleService implementa ports.VehicleService
-type vehicleService struct {
+// VehicleService implementa los casos de uso para el alta y tramitación asíncrona de vehículos.
+type VehicleService struct {
 	userRepo    ports.UserRepository
 	vehicleRepo ports.VehicleRepository
 	notifier    ports.Notifier
@@ -22,8 +22,8 @@ func NewVehicleService(
 	userRepo ports.UserRepository,
 	vehicleRepo ports.VehicleRepository,
 	notifier ports.Notifier,
-) ports.VehicleService {
-	return &vehicleService{
+) *VehicleService {
+	return &VehicleService{
 		userRepo:    userRepo,
 		vehicleRepo: vehicleRepo,
 		notifier:    notifier,
@@ -31,7 +31,7 @@ func NewVehicleService(
 }
 
 // RegisterVehicle inicia el trámite de registro de vehículo y licencias (RF-10, RF-11)
-func (s *vehicleService) RegisterVehicle(ctx context.Context, input ports.VehicleRegistrationInput) (*domain.Vehicle, error) {
+func (s *VehicleService) RegisterVehicle(ctx context.Context, input ports.VehicleRegistrationInput) (*ports.VehicleDTO, error) {
 	// 1. Validar que el usuario exista y tenga la verificación de identidad (DNI + Selfie) aprobada
 	user, err := s.userRepo.GetByID(ctx, input.UserID)
 	if err != nil {
@@ -56,7 +56,7 @@ func (s *vehicleService) RegisterVehicle(ctx context.Context, input ports.Vehicl
 	}
 
 	// 4. Crear registro en estado PENDING_VERIFICATION (RF-11)
-	vehID := uuid.New().String()
+	vehID := domain.NewUUIDv7()
 	vehicle := domain.NewVehicle(
 		vehID,
 		input.UserID,
@@ -66,8 +66,8 @@ func (s *vehicleService) RegisterVehicle(ctx context.Context, input ports.Vehicl
 		input.PlateNumber,
 		input.Color,
 		input.SeatCapacity,
-		"https://storage.thumbi.app/docs/license_"+vehID+".jpg",
-		"https://storage.thumbi.app/docs/cedula_"+vehID+".jpg",
+		"https://storage.thumbi.app/docs/license_"+vehID.String()+".jpg",
+		"https://storage.thumbi.app/docs/cedula_"+vehID.String()+".jpg",
 	)
 
 	if err := s.vehicleRepo.Create(ctx, vehicle); err != nil {
@@ -83,16 +83,16 @@ func (s *vehicleService) RegisterVehicle(ctx context.Context, input ports.Vehicl
 			Message: fmt.Sprintf("Hemos recibido la documentación de tu %s %s (%s). Te notificaremos cuando concluya la revisión.", vehicle.Brand, vehicle.Model, vehicle.PlateNumber),
 			Type:    "VEHICLE_PENDING_VERIFICATION",
 			Metadata: map[string]string{
-				"vehicle_id": vehicle.ID,
+				"vehicle_id": vehicle.ID.String(),
 			},
 		})
 	}
 
-	return vehicle, nil
+	return toVehicleDTO(vehicle), nil
 }
 
 // GetVehicleStatus consulta el estado del vehículo asociado al usuario
-func (s *vehicleService) GetVehicleStatus(ctx context.Context, userID string) (*domain.Vehicle, error) {
+func (s *VehicleService) GetVehicleStatus(ctx context.Context, userID uuid.UUID) (*ports.VehicleDTO, error) {
 	vehicle, err := s.vehicleRepo.GetByUserID(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -100,11 +100,11 @@ func (s *vehicleService) GetVehicleStatus(ctx context.Context, userID string) (*
 	if vehicle == nil {
 		return nil, domain.ErrVehicleNotFound
 	}
-	return vehicle, nil
+	return toVehicleDTO(vehicle), nil
 }
 
 // ProcessAsyncResolution procesa el resultado del trámite (RF-12, RF-13)
-func (s *vehicleService) ProcessAsyncResolution(ctx context.Context, vehicleID string, approved bool, reason string) error {
+func (s *VehicleService) ProcessAsyncResolution(ctx context.Context, vehicleID uuid.UUID, approved bool, reason string) error {
 	// 1. Obtener el vehículo
 	vehicle, err := s.vehicleRepo.GetByID(ctx, vehicleID)
 	if err != nil {
@@ -145,7 +145,7 @@ func (s *vehicleService) ProcessAsyncResolution(ctx context.Context, vehicleID s
 				Message: fmt.Sprintf("Tu %s %s (%s) fue aprobado con éxito. Ya puedes publicar tus primeros viajes compartidos.", vehicle.Brand, vehicle.Model, vehicle.PlateNumber),
 				Type:    "VEHICLE_APPROVED",
 				Metadata: map[string]string{
-					"vehicle_id": vehicle.ID,
+					"vehicle_id": vehicle.ID.String(),
 				},
 			})
 		}
@@ -175,7 +175,7 @@ func (s *vehicleService) ProcessAsyncResolution(ctx context.Context, vehicleID s
 				Message: fmt.Sprintf("La documentación de tu vehículo no pudo ser validada. Motivo: %s. Aún puedes buscar y reservar viajes como pasajero sin restricciones.", reason),
 				Type:    "VEHICLE_REJECTED",
 				Metadata: map[string]string{
-					"vehicle_id":       vehicle.ID,
+					"vehicle_id":       vehicle.ID.String(),
 					"rejection_reason": reason,
 				},
 			})
@@ -183,4 +183,28 @@ func (s *vehicleService) ProcessAsyncResolution(ctx context.Context, vehicleID s
 	}
 
 	return nil
+}
+
+func toVehicleDTO(v *domain.Vehicle) *ports.VehicleDTO {
+	if v == nil {
+		return nil
+	}
+	return &ports.VehicleDTO{
+		ID:                 v.ID,
+		UserID:             v.UserID,
+		Brand:              v.Brand,
+		Model:              v.Model,
+		Year:               v.Year,
+		PlateNumber:        v.PlateNumber,
+		Color:              v.Color,
+		SeatCapacity:       v.SeatCapacity,
+		DriverLicenseURL:   v.DriverLicenseURL,
+		VehicleCedulaURL:   v.VehicleCedulaURL,
+		InsurancePolicyURL: v.InsurancePolicyURL,
+		Status:             v.Status,
+		RejectionReason:    v.RejectionReason,
+		VerifiedAt:         formatOptionalTimeRFC3339(v.VerifiedAt),
+		CreatedAt:          formatTimeRFC3339(v.CreatedAt),
+		UpdatedAt:          formatTimeRFC3339(v.UpdatedAt),
+	}
 }

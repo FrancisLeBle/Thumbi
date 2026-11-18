@@ -5,9 +5,10 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
+	"github.com/thumbi/backend/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/ports"
 )
 
 type identityRepository struct {
@@ -20,6 +21,9 @@ func NewIdentityRepository(db DBExecutor) ports.IdentityRepository {
 }
 
 func (r *identityRepository) Create(ctx context.Context, identity *domain.UserIdentity) error {
+	if !identity.Provider.IsValid() {
+		return fmt.Errorf("%w: proveedor %s", domain.ErrInvalidStatus, identity.Provider)
+	}
 	query := `
 		INSERT INTO user_identities (
 			id, user_id, provider, provider_user_id, email, email_verified,
@@ -29,7 +33,7 @@ func (r *identityRepository) Create(ctx context.Context, identity *domain.UserId
 	_, err := r.db.Exec(ctx, query,
 		identity.ID,
 		identity.UserID,
-		string(identity.Provider),
+		identity.Provider.String(),
 		identity.ProviderUserID,
 		identity.Email,
 		identity.EmailVerified,
@@ -42,7 +46,10 @@ func (r *identityRepository) Create(ctx context.Context, identity *domain.UserId
 	return nil
 }
 
-func (r *identityRepository) GetByID(ctx context.Context, id string) (*domain.UserIdentity, error) {
+func (r *identityRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.UserIdentity, error) {
+	if id == uuid.Nil {
+		return nil, domain.ErrIdentityNotFound
+	}
 	query := `
 		SELECT id, user_id, provider, provider_user_id, email, email_verified,
 		       created_at, updated_at
@@ -53,16 +60,19 @@ func (r *identityRepository) GetByID(ctx context.Context, id string) (*domain.Us
 }
 
 func (r *identityRepository) GetByProviderAndID(ctx context.Context, provider domain.AuthProvider, providerUserID string) (*domain.UserIdentity, error) {
+	if !provider.IsValid() {
+		return nil, fmt.Errorf("%w: proveedor %s", domain.ErrInvalidStatus, provider)
+	}
 	query := `
 		SELECT id, user_id, provider, provider_user_id, email, email_verified,
 		       created_at, updated_at
 		FROM user_identities
 		WHERE provider = $1 AND provider_user_id = $2
 	`
-	return r.scanIdentity(r.db.QueryRow(ctx, query, string(provider), providerUserID))
+	return r.scanIdentity(r.db.QueryRow(ctx, query, provider.String(), providerUserID))
 }
 
-func (r *identityRepository) ListByUserID(ctx context.Context, userID string) ([]*domain.UserIdentity, error) {
+func (r *identityRepository) ListByUserID(ctx context.Context, userID uuid.UUID) ([]*domain.UserIdentity, error) {
 	query := `
 		SELECT id, user_id, provider, provider_user_id, email, email_verified,
 		       created_at, updated_at
@@ -95,6 +105,9 @@ func (r *identityRepository) ListByUserID(ctx context.Context, userID string) ([
 			return nil, fmt.Errorf("error scanning user identity row: %w", err)
 		}
 		ident.Provider = domain.AuthProvider(providerStr)
+		if !ident.Provider.IsValid() {
+			return nil, fmt.Errorf("%w: proveedor %s en user_identities", domain.ErrInvalidStatus, providerStr)
+		}
 		identities = append(identities, &ident)
 	}
 
@@ -105,7 +118,10 @@ func (r *identityRepository) ListByUserID(ctx context.Context, userID string) ([
 	return identities, nil
 }
 
-func (r *identityRepository) Delete(ctx context.Context, id string) error {
+func (r *identityRepository) Delete(ctx context.Context, id uuid.UUID) error {
+	if id == uuid.Nil {
+		return domain.ErrIdentityNotFound
+	}
 	query := `DELETE FROM user_identities WHERE id = $1`
 	tag, err := r.db.Exec(ctx, query, id)
 	if err != nil {
@@ -141,5 +157,8 @@ func (r *identityRepository) scanIdentity(row pgx.Row) (*domain.UserIdentity, er
 	}
 
 	ident.Provider = domain.AuthProvider(providerStr)
+	if !ident.Provider.IsValid() {
+		return nil, fmt.Errorf("%w: proveedor %s en user_identities", domain.ErrInvalidStatus, providerStr)
+	}
 	return &ident, nil
 }

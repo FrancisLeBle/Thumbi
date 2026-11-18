@@ -6,9 +6,10 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
+	"github.com/thumbi/backend/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/ports"
 )
 
 type vehicleRepository struct {
@@ -21,6 +22,9 @@ func NewVehicleRepository(db DBExecutor) ports.VehicleRepository {
 }
 
 func (r *vehicleRepository) Create(ctx context.Context, vehicle *domain.Vehicle) error {
+	if !vehicle.Status.IsValid() {
+		return fmt.Errorf("%w: estado de vehículo %s", domain.ErrInvalidStatus, vehicle.Status)
+	}
 	query := `
 		INSERT INTO vehicles (
 			id, user_id, brand, model, year, plate_number, color, seat_capacity,
@@ -56,7 +60,7 @@ func (r *vehicleRepository) Create(ctx context.Context, vehicle *domain.Vehicle)
 		vehicle.DriverLicenseURL,
 		vehicle.VehicleCedulaURL,
 		insuranceURL,
-		string(vehicle.Status),
+		vehicle.Status.String(),
 		rejectionReason,
 		verifiedAt,
 		vehicle.CreatedAt,
@@ -68,7 +72,10 @@ func (r *vehicleRepository) Create(ctx context.Context, vehicle *domain.Vehicle)
 	return nil
 }
 
-func (r *vehicleRepository) GetByID(ctx context.Context, id string) (*domain.Vehicle, error) {
+func (r *vehicleRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Vehicle, error) {
+	if id == uuid.Nil {
+		return nil, domain.ErrVehicleNotFound
+	}
 	query := `
 		SELECT id, user_id, brand, model, year, plate_number, color, seat_capacity,
 		       driver_license_url, vehicle_cedula_url, insurance_policy_url,
@@ -79,7 +86,10 @@ func (r *vehicleRepository) GetByID(ctx context.Context, id string) (*domain.Veh
 	return r.scanVehicle(r.db.QueryRow(ctx, query, id))
 }
 
-func (r *vehicleRepository) GetByUserID(ctx context.Context, userID string) (*domain.Vehicle, error) {
+func (r *vehicleRepository) GetByUserID(ctx context.Context, userID uuid.UUID) (*domain.Vehicle, error) {
+	if userID == uuid.Nil {
+		return nil, domain.ErrVehicleNotFound
+	}
 	query := `
 		SELECT id, user_id, brand, model, year, plate_number, color, seat_capacity,
 		       driver_license_url, vehicle_cedula_url, insurance_policy_url,
@@ -105,6 +115,9 @@ func (r *vehicleRepository) GetByPlateNumber(ctx context.Context, plateNumber st
 }
 
 func (r *vehicleRepository) Update(ctx context.Context, vehicle *domain.Vehicle) error {
+	if !vehicle.Status.IsValid() {
+		return fmt.Errorf("%w: estado de vehículo %s", domain.ErrInvalidStatus, vehicle.Status)
+	}
 	query := `
 		UPDATE vehicles
 		SET status = $2,
@@ -127,7 +140,7 @@ func (r *vehicleRepository) Update(ctx context.Context, vehicle *domain.Vehicle)
 
 	tag, err := r.db.Exec(ctx, query,
 		vehicle.ID,
-		string(vehicle.Status),
+		vehicle.Status.String(),
 		rejectionReason,
 		verifiedAt,
 		vehicle.UpdatedAt,
@@ -139,33 +152,6 @@ func (r *vehicleRepository) Update(ctx context.Context, vehicle *domain.Vehicle)
 		return domain.ErrVehicleNotFound
 	}
 	return nil
-}
-
-func (r *vehicleRepository) ListPendingVerification(ctx context.Context, limit, offset int) ([]*domain.Vehicle, error) {
-	query := `
-		SELECT id, user_id, brand, model, year, plate_number, color, seat_capacity,
-		       driver_license_url, vehicle_cedula_url, insurance_policy_url,
-		       status, rejection_reason, verified_at, created_at, updated_at
-		FROM vehicles
-		WHERE status = $1
-		ORDER BY created_at ASC
-		LIMIT $2 OFFSET $3
-	`
-	rows, err := r.db.Query(ctx, query, string(domain.VehicleStatusPendingVerification), limit, offset)
-	if err != nil {
-		return nil, fmt.Errorf("error querying pending vehicles: %w", err)
-	}
-	defer rows.Close()
-
-	var list []*domain.Vehicle
-	for rows.Next() {
-		veh, err := r.scanVehicle(rows)
-		if err != nil {
-			return nil, err
-		}
-		list = append(list, veh)
-	}
-	return list, nil
 }
 
 func (r *vehicleRepository) scanVehicle(row pgx.Row) (*domain.Vehicle, error) {
@@ -203,6 +189,9 @@ func (r *vehicleRepository) scanVehicle(row pgx.Row) (*domain.Vehicle, error) {
 	}
 
 	v.Status = domain.VehicleStatus(statusStr)
+	if !v.Status.IsValid() {
+		return nil, fmt.Errorf("%w: estado de vehículo inválido %s", domain.ErrInvalidStatus, statusStr)
+	}
 	if rejectionReason.Valid {
 		v.RejectionReason = rejectionReason.String
 	}

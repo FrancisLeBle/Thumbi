@@ -5,18 +5,19 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/domain"
 )
 
 func TestDispute_ValidCreationAndLifecycle(t *testing.T) {
 	now := time.Now().UTC()
+	adminID := domain.NewUUIDv7()
 	params := domain.DisputeParams{
-		ID:                  "disp-1",
-		EscrowTransactionID: "escrow-100",
-		BookingID:           "book-100",
-		TripID:              "trip-100",
-		ReporterID:          "passenger-1",
-		DefendantID:         "driver-1",
+		ID:                  domain.NewUUIDv7(),
+		EscrowTransactionID: domain.NewUUIDv7(),
+		BookingID:           domain.NewUUIDv7(),
+		TripID:              domain.NewUUIDv7(),
+		ReporterID:          domain.NewUUIDv7(),
+		DefendantID:         domain.NewUUIDv7(),
 		Reason:              domain.DisputeReasonRouteDeviation,
 		Description:         "El conductor tomó una ruta distinta y cobró peajes adicionales en efectivo.",
 		EvidenceURLs:        []string{"https://s3.amazonaws.com/thumbi/ev1.jpg"},
@@ -30,31 +31,32 @@ func TestDispute_ValidCreationAndLifecycle(t *testing.T) {
 	assert.False(t, dispute.IsClosed())
 
 	// Transición a IN_REVIEW por administrador
-	err = dispute.StartReview("admin-99", now)
+	err = dispute.StartReview(adminID, now)
 	assert.NoError(t, err)
 	assert.Equal(t, domain.DisputeStatusInReview, dispute.Status)
-	assert.Equal(t, "admin-99", *dispute.ResolvedBy)
+	assert.Equal(t, adminID, *dispute.ResolvedBy)
 
 	// Resolución a favor del pasajero
-	err = dispute.ResolvePassengerRefund("admin-99", "Evidencias válidas, se procede al reembolso del 100%.", now)
+	err = dispute.ResolvePassengerRefund(adminID, "Evidencias válidas, se procede al reembolso del 100%.", now)
 	assert.NoError(t, err)
 	assert.Equal(t, domain.DisputeStatusResolvedPassengerRefund, dispute.Status)
 	assert.True(t, dispute.IsClosed())
 	assert.NotNil(t, dispute.ResolvedAt)
 
 	// Intento de reabrir o modificar disputa cerrada
-	err = dispute.ResolveDriverPayout("admin-99", "Reintentando payout", now)
+	err = dispute.ResolveDriverPayout(adminID, "Reintentando payout", now)
 	assert.ErrorIs(t, err, domain.ErrDisputeAlreadyResolved)
 }
 
 func TestDispute_RejectSelfDispute(t *testing.T) {
+	sameUser := domain.NewUUIDv7()
 	params := domain.DisputeParams{
-		ID:                  "disp-2",
-		EscrowTransactionID: "escrow-200",
-		BookingID:           "book-200",
-		TripID:              "trip-200",
-		ReporterID:          "user-1",
-		DefendantID:         "user-1", // Mismo usuario
+		ID:                  domain.NewUUIDv7(),
+		EscrowTransactionID: domain.NewUUIDv7(),
+		BookingID:           domain.NewUUIDv7(),
+		TripID:              domain.NewUUIDv7(),
+		ReporterID:          sameUser,
+		DefendantID:         sameUser, // Mismo usuario
 		Reason:              domain.DisputeReasonNoShow,
 		Description:         "Auto disputa",
 		EscrowStatus:        domain.EscrowStatusHeld,
@@ -67,12 +69,12 @@ func TestDispute_RejectSelfDispute(t *testing.T) {
 
 func TestDispute_CannotDisputeSettledEscrow(t *testing.T) {
 	params := domain.DisputeParams{
-		ID:                  "disp-3",
-		EscrowTransactionID: "escrow-300",
-		BookingID:           "book-300",
-		TripID:              "trip-300",
-		ReporterID:          "passenger-1",
-		DefendantID:         "driver-1",
+		ID:                  domain.NewUUIDv7(),
+		EscrowTransactionID: domain.NewUUIDv7(),
+		BookingID:           domain.NewUUIDv7(),
+		TripID:              domain.NewUUIDv7(),
+		ReporterID:          domain.NewUUIDv7(),
+		DefendantID:         domain.NewUUIDv7(),
 		Reason:              domain.DisputeReasonVehicleMismatch,
 		Description:         "Vehículo no correspondía con el auto registrado.",
 		EscrowStatus:        domain.EscrowStatusReleased, // Ya liquidado
@@ -85,7 +87,15 @@ func TestDispute_CannotDisputeSettledEscrow(t *testing.T) {
 
 func TestDispute_DriverPayoutResolutionAllowsEscrowRelease(t *testing.T) {
 	now := time.Now().UTC()
-	escrow, err := domain.NewEscrowTransaction("escrow-400", "book-400", "trip-400", "pass-1", "driver-1", domain.Money(4500), "USD", "pi_test_400")
+	escrow, err := domain.NewEscrowTransaction(
+		domain.NewUUIDv7(),
+		domain.NewUUIDv7(),
+		domain.NewUUIDv7(),
+		domain.NewUUIDv7(),
+		domain.NewUUIDv7(),
+		domain.MoneyFromCents(450000, domain.CurrencyARS),
+		"pi_test_400",
+	)
 	assert.NoError(t, err)
 
 	// Se abre disputa sobre el escrow
@@ -95,7 +105,7 @@ func TestDispute_DriverPayoutResolutionAllowsEscrowRelease(t *testing.T) {
 
 	// Disputa resuelta a favor del conductor
 	disputeParams := domain.DisputeParams{
-		ID:                  "disp-400",
+		ID:                  domain.NewUUIDv7(),
 		EscrowTransactionID: escrow.ID,
 		BookingID:           escrow.BookingID,
 		TripID:              escrow.TripID,
@@ -108,7 +118,7 @@ func TestDispute_DriverPayoutResolutionAllowsEscrowRelease(t *testing.T) {
 	dispute, err := domain.NewDispute(disputeParams)
 	assert.NoError(t, err)
 
-	err = dispute.ResolveDriverPayout("admin-1", "Se verificó la espera del conductor.", now)
+	err = dispute.ResolveDriverPayout(domain.NewUUIDv7(), "Se verificó la espera del conductor.", now)
 	assert.NoError(t, err)
 
 	// El escrow en estado DISPUTED ahora puede ser liberado al conductor

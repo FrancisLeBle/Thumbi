@@ -1,28 +1,36 @@
 package middleware
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
+	"github.com/google/uuid"
+	"github.com/thumbi/backend/internal/core/domain"
 )
 
 const (
-	CtxUserClaimsKey = "user_claims"
-	CtxUserIDKey     = "user_id"
-	CtxUserRoleKey   = "user_role"
+	CtxUserClaimsKey    = "user_claims"
+	CtxUserIDKey        = "user_id"
+	CtxUserRoleKey      = "user_role"
+	CtxUserKYCStatusKey = "kyc_status"
 
 	// Alias para compatibilidad de contexto
-	UserIDKey     = CtxUserIDKey
-	UserRoleKey   = CtxUserRoleKey
-	UserClaimsKey = CtxUserClaimsKey
+	UserIDKey        = CtxUserIDKey
+	UserRoleKey      = CtxUserRoleKey
+	UserKYCStatusKey = CtxUserKYCStatusKey
+	UserClaimsKey    = CtxUserClaimsKey
 )
 
-// AuthMiddleware intercepta las solicitudes HTTP, extrae y valida el Bearer JWT (TTL 20 min)
-func AuthMiddleware(authService ports.AuthService) gin.HandlerFunc {
+// TokenValidator define el contrato mínimo requerido por el middleware de autenticación (SOLID · ISP).
+type TokenValidator interface {
+	ValidateToken(ctx context.Context, token string) (*domain.UserClaims, error)
+}
+
+// AuthMiddleware intercepta las solicitudes HTTP, extrae y valida el token de sesión opaco Bearer (TTL 20 min)
+func AuthMiddleware(validator TokenValidator) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
@@ -52,7 +60,7 @@ func AuthMiddleware(authService ports.AuthService) gin.HandlerFunc {
 		}
 
 		// Validar token y expiración de 20 minutos (RF-04, RF-06)
-		claims, err := authService.ValidateToken(c.Request.Context(), tokenString)
+		claims, err := validator.ValidateToken(c.Request.Context(), tokenString)
 		if err != nil {
 			status := http.StatusUnauthorized
 			errorCode := "UNAUTHORIZED"
@@ -70,13 +78,15 @@ func AuthMiddleware(authService ports.AuthService) gin.HandlerFunc {
 			return
 		}
 
-		// Almacenar información de identidad en el contexto de la solicitud
+		// Almacenar información de identidad y estado vigente (resuelto desde sesión/DB) en el contexto
 		c.Set(CtxUserClaimsKey, claims)
 		c.Set(CtxUserIDKey, claims.UserID)
 		c.Set(CtxUserRoleKey, claims.Role)
+		c.Set(CtxUserKYCStatusKey, claims.KYCStatus)
 		// Establecer alias para compatibilidad
 		c.Set(UserIDKey, claims.UserID)
 		c.Set(UserRoleKey, claims.Role)
+		c.Set(UserKYCStatusKey, claims.KYCStatus)
 
 		c.Next()
 	}
@@ -95,22 +105,36 @@ func GetUserClaims(c *gin.Context) (*domain.UserClaims, bool) {
 	return claims, ok
 }
 
+func extractUUIDFromContextValue(val interface{}) (uuid.UUID, bool) {
+	switch v := val.(type) {
+	case uuid.UUID:
+		if v != uuid.Nil {
+			return v, true
+		}
+	case string:
+		if id, err := domain.ParseUUID(v); err == nil && id != uuid.Nil {
+			return id, true
+		}
+	}
+	return uuid.Nil, false
+}
+
 // GetUserID helper para obtener el ID de usuario del contexto
-func GetUserID(c *gin.Context) (string, bool) {
+func GetUserID(c *gin.Context) (uuid.UUID, bool) {
 	if val, exists := c.Get(CtxUserIDKey); exists {
-		if id, ok := val.(string); ok && id != "" {
+		if id, ok := extractUUIDFromContextValue(val); ok {
 			return id, true
 		}
 	}
 	if val, exists := c.Get(UserIDKey); exists {
-		if id, ok := val.(string); ok && id != "" {
+		if id, ok := extractUUIDFromContextValue(val); ok {
 			return id, true
 		}
 	}
-	if claims, ok := GetUserClaims(c); ok && claims != nil && claims.UserID != "" {
+	if claims, ok := GetUserClaims(c); ok && claims != nil && claims.UserID != uuid.Nil {
 		return claims.UserID, true
 	}
-	return "", false
+	return uuid.Nil, false
 }
 
 // GetUserRole helper para obtener el rol del usuario autenticado del contexto Gin
@@ -118,29 +142,65 @@ func GetUserRole(c *gin.Context) (domain.UserRole, bool) {
 	if val, exists := c.Get(CtxUserRoleKey); exists {
 		switch r := val.(type) {
 		case domain.UserRole:
-			if r != "" {
+			if r.IsValid() {
 				return r, true
 			}
 		case string:
-			if r != "" {
-				return domain.UserRole(r), true
+			role := domain.UserRole(strings.TrimSpace(r))
+			if role.IsValid() {
+				return role, true
 			}
 		}
 	}
 	if val, exists := c.Get(UserRoleKey); exists {
 		switch r := val.(type) {
 		case domain.UserRole:
-			if r != "" {
+			if r.IsValid() {
 				return r, true
 			}
 		case string:
-			if r != "" {
-				return domain.UserRole(r), true
+			role := domain.UserRole(strings.TrimSpace(r))
+			if role.IsValid() {
+				return role, true
 			}
 		}
 	}
-	if claims, ok := GetUserClaims(c); ok && claims != nil && claims.Role != "" {
+	if claims, ok := GetUserClaims(c); ok && claims != nil && claims.Role.IsValid() {
 		return claims.Role, true
+	}
+	return "", false
+}
+
+// GetUserKYCStatus helper para obtener el estado KYC vigente del usuario autenticado del contexto Gin
+func GetUserKYCStatus(c *gin.Context) (domain.KYCStatus, bool) {
+	if val, exists := c.Get(CtxUserKYCStatusKey); exists {
+		switch s := val.(type) {
+		case domain.KYCStatus:
+			if s.IsValid() {
+				return s, true
+			}
+		case string:
+			status := domain.KYCStatus(strings.TrimSpace(s))
+			if status.IsValid() {
+				return status, true
+			}
+		}
+	}
+	if val, exists := c.Get(UserKYCStatusKey); exists {
+		switch s := val.(type) {
+		case domain.KYCStatus:
+			if s.IsValid() {
+				return s, true
+			}
+		case string:
+			status := domain.KYCStatus(strings.TrimSpace(s))
+			if status.IsValid() {
+				return status, true
+			}
+		}
+	}
+	if claims, ok := GetUserClaims(c); ok && claims != nil && claims.KYCStatus.IsValid() {
+		return claims.KYCStatus, true
 	}
 	return "", false
 }
@@ -149,7 +209,7 @@ func GetUserRole(c *gin.Context) (domain.UserRole, bool) {
 func RequireRole(allowedRoles ...domain.UserRole) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID, exists := GetUserID(c)
-		if !exists || strings.TrimSpace(userID) == "" {
+		if !exists || userID == uuid.Nil {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 				"error": "usuario no autenticado",
 				"code":  "UNAUTHORIZED",
@@ -158,7 +218,7 @@ func RequireRole(allowedRoles ...domain.UserRole) gin.HandlerFunc {
 		}
 
 		userRole, roleExists := GetUserRole(c)
-		if !roleExists || strings.TrimSpace(string(userRole)) == "" {
+		if !roleExists || !userRole.IsValid() {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 				"error": "acceso denegado: rol de usuario no definido",
 				"code":  "FORBIDDEN",

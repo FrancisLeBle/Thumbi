@@ -4,8 +4,6 @@ import (
 	"context"
 	"log"
 	"time"
-
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
 )
 
 const (
@@ -15,22 +13,27 @@ const (
 	maxBatchesPerTick   = 10
 )
 
+// BookingExpirationService define el contrato mínimo requerido por ExpirationWorker (SOLID · ISP).
+type BookingExpirationService interface {
+	ProcessExpiredBookings(ctx context.Context) (int, error)
+}
+
 // ExpirationWorker ejecuta de manera periódica la expiración en lotes de reservas en PENDING_PAYMENT
 // que hayan superado su TTL (15 min), restituyendo atómicamente los asientos retenidos.
 // Es seguro para ejecutarse en múltiples réplicas concurrentes gracias a FOR UPDATE SKIP LOCKED.
 type ExpirationWorker struct {
-	bookingService ports.BookingService
-	interval       time.Duration
+	expirationService BookingExpirationService
+	interval          time.Duration
 }
 
 // NewExpirationWorker inicializa el worker de expiración con intervalo configurable
-func NewExpirationWorker(bookingService ports.BookingService, interval time.Duration) *ExpirationWorker {
+func NewExpirationWorker(expirationService BookingExpirationService, interval time.Duration) *ExpirationWorker {
 	if interval <= 0 {
 		interval = 1 * time.Minute
 	}
 	return &ExpirationWorker{
-		bookingService: bookingService,
-		interval:       interval,
+		expirationService: expirationService,
+		interval:          interval,
 	}
 }
 
@@ -64,7 +67,7 @@ func (w *ExpirationWorker) runOnce(ctx context.Context) {
 			break
 		}
 
-		expiredCount, err := w.bookingService.ProcessExpiredBookings(opCtx)
+		expiredCount, err := w.expirationService.ProcessExpiredBookings(opCtx)
 		if err != nil {
 			log.Printf("[ERROR] ExpirationWorker: error al procesar lote de reservas vencidas: %v", err)
 			break

@@ -1,28 +1,37 @@
 package http
 
 import (
-	"errors"
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/thumbi/auth-kyc-service/internal/adapters/handlers/http/middleware"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
+	"github.com/google/uuid"
+	"github.com/thumbi/backend/internal/adapters/handlers/http/middleware"
+	"github.com/thumbi/backend/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/ports"
 )
+
+// DisputeService define el contrato mínimo requerido por DisputeHandler (SOLID · ISP).
+type DisputeService interface {
+	OpenDispute(ctx context.Context, input ports.OpenDisputeInput) (*ports.DisputeDTO, error)
+	ResolveDispute(ctx context.Context, input ports.ResolveDisputeInput) (*ports.DisputeDTO, error)
+	GetDisputeByID(ctx context.Context, disputeID uuid.UUID) (*ports.DisputeDTO, error)
+	ListDisputes(ctx context.Context, limit, offset int) ([]*ports.DisputeDTO, error)
+}
 
 // DisputeHandler gestiona los endpoints relacionados con la apertura y arbitraje de disputas
 type DisputeHandler struct {
-	disputeService ports.DisputeService
+	disputeService DisputeService
 }
 
 // NewDisputeHandler crea una nueva instancia de DisputeHandler
-func NewDisputeHandler(disputeService ports.DisputeService) *DisputeHandler {
+func NewDisputeHandler(disputeService DisputeService) *DisputeHandler {
 	return &DisputeHandler{disputeService: disputeService}
 }
 
-// OpenDisputeRequest payload para registrar un nuevo reclamo formal
+// OpenDisputeRequest payload para registrar un nuevo reclamo formal (reporter_id se extrae del token)
 type OpenDisputeRequest struct {
 	BookingID    string               `json:"booking_id" binding:"required"`
 	Reason       domain.DisputeReason `json:"reason" binding:"required"`
@@ -30,31 +39,90 @@ type OpenDisputeRequest struct {
 	EvidenceURLs []string             `json:"evidence_urls"`
 }
 
+// ResolveDisputeRequest payload para dictaminar una resolución sobre la disputa (admin_id se extrae del token)
+type ResolveDisputeRequest struct {
+	Resolution domain.DisputeStatus `json:"resolution" binding:"required"`
+	AdminNotes string               `json:"admin_notes" binding:"required"`
+}
+
+// DisputeResponse DTO HTTP de una disputa para clientes y mesa de control
+type DisputeResponse struct {
+	ID                  uuid.UUID            `json:"id"`
+	EscrowTransactionID uuid.UUID            `json:"escrow_transaction_id"`
+	BookingID           uuid.UUID            `json:"booking_id"`
+	TripID              uuid.UUID            `json:"trip_id"`
+	ReporterID          uuid.UUID            `json:"reporter_id"`
+	DefendantID         uuid.UUID            `json:"defendant_id"`
+	Reason              domain.DisputeReason `json:"reason"`
+	Description         string               `json:"description"`
+	EvidenceURLs        []string             `json:"evidence_urls"`
+	Status              domain.DisputeStatus `json:"status"`
+	AdminNotes          *string              `json:"admin_notes,omitempty"`
+	ResolvedBy          *uuid.UUID           `json:"resolved_by,omitempty"`
+	ResolvedAt          *string              `json:"resolved_at,omitempty"`
+	CreatedAt           string               `json:"created_at"`
+	UpdatedAt           string               `json:"updated_at"`
+}
+
+func toDisputeResponse(dto *ports.DisputeDTO) *DisputeResponse {
+	if dto == nil {
+		return nil
+	}
+	return &DisputeResponse{
+		ID:                  dto.ID,
+		EscrowTransactionID: dto.EscrowTransactionID,
+		BookingID:           dto.BookingID,
+		TripID:              dto.TripID,
+		ReporterID:          dto.ReporterID,
+		DefendantID:         dto.DefendantID,
+		Reason:              dto.Reason,
+		Description:         dto.Description,
+		EvidenceURLs:        dto.EvidenceURLs,
+		Status:              dto.Status,
+		AdminNotes:          dto.AdminNotes,
+		ResolvedBy:          dto.ResolvedBy,
+		ResolvedAt:          dto.ResolvedAt,
+		CreatedAt:           dto.CreatedAt,
+		UpdatedAt:           dto.UpdatedAt,
+	}
+}
+
+func toDisputeResponseList(dtos []*ports.DisputeDTO) []*DisputeResponse {
+	out := make([]*DisputeResponse, 0, len(dtos))
+	for _, d := range dtos {
+		out = append(out, toDisputeResponse(d))
+	}
+	return out
+}
+
 // OpenDispute registra una reclamación formal y congela la transacción de custodia en DISPUTED
 // POST /v1/disputes ó POST /api/v1/disputes
 func (h *DisputeHandler) OpenDispute(c *gin.Context) {
 	reporterID, exists := middleware.GetUserID(c)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error":      "usuario no autenticado",
-			"code":       "UNAUTHORIZED",
-			"request_id": middleware.GetRequestID(c),
-		})
+		RespondUnauthorized(c, "usuario no autenticado", "UNAUTHORIZED")
 		return
 	}
 
 	var req OpenDisputeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":      "cuerpo de solicitud incompleto o inválido",
-			"code":       "INVALID_REQUEST_BODY",
-			"request_id": middleware.GetRequestID(c),
-		})
+		RespondBadRequest(c, "cuerpo de solicitud incompleto o inválido", "INVALID_REQUEST_BODY")
+		return
+	}
+
+	bookingID, err := domain.ParseUUID(req.BookingID)
+	if err != nil {
+		RespondBadRequest(c, "ID de reserva con formato UUID inválido", "INVALID_BOOKING_ID")
+		return
+	}
+
+	if !req.Reason.IsValid() {
+		RespondBadRequest(c, "motivo de disputa inválido", "INVALID_DISPUTE_DATA")
 		return
 	}
 
 	input := ports.OpenDisputeInput{
-		BookingID:    req.BookingID,
+		BookingID:    bookingID,
 		ReporterID:   reporterID,
 		Reason:       req.Reason,
 		Description:  req.Description,
@@ -63,78 +131,11 @@ func (h *DisputeHandler) OpenDispute(c *gin.Context) {
 
 	dispute, err := h.disputeService.OpenDispute(c.Request.Context(), input)
 	if err != nil {
-		switch {
-		case errors.Is(err, domain.ErrDisputeAlreadyExists):
-			c.JSON(http.StatusConflict, gin.H{
-				"error":      "Ya existe una disputa activa sobre esta transacción de custodia",
-				"code":       "DISPUTE_ALREADY_EXISTS",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-
-		case errors.Is(err, domain.ErrEscrowAlreadySettled):
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error":      "Los fondos en custodia ya han sido liquidados o reembolsados previamente",
-				"code":       "ESCROW_ALREADY_SETTLED",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-
-		case errors.Is(err, domain.ErrBookingNotFound):
-			c.JSON(http.StatusNotFound, gin.H{
-				"error":      "Reserva no encontrada",
-				"code":       "BOOKING_NOT_FOUND",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-
-		case errors.Is(err, domain.ErrEscrowNotFound):
-			c.JSON(http.StatusNotFound, gin.H{
-				"error":      "Transacción de custodia no encontrada",
-				"code":       "ESCROW_NOT_FOUND",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-
-		case errors.Is(err, domain.ErrTripNotFound):
-			c.JSON(http.StatusNotFound, gin.H{
-				"error":      "Viaje asociado no encontrado",
-				"code":       "TRIP_NOT_FOUND",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-
-		case errors.Is(err, domain.ErrUnauthorized):
-			c.JSON(http.StatusForbidden, gin.H{
-				"error":      "No perteneces a la reserva o viaje para presentar este reclamo",
-				"code":       "FORBIDDEN",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-
-		case errors.Is(err, domain.ErrDisputeSelfNotAllowed):
-			c.JSON(http.StatusUnprocessableEntity, gin.H{
-				"error":      "No es posible disputar una transacción contra uno mismo",
-				"code":       "DISPUTE_SELF_NOT_ALLOWED",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-
-		case errors.Is(err, domain.ErrInvalidDisputeData):
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error":      "Datos de la disputa inválidos o insuficientes",
-				"code":       "INVALID_DISPUTE_DATA",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-
-		default:
-			HandleError(c, err)
-			return
-		}
+		respondError(c, err)
+		return
 	}
 
-	c.JSON(http.StatusCreated, dispute)
+	c.JSON(http.StatusCreated, toDisputeResponse(dispute))
 }
 
 // GetDisputeByID consulta el detalle de una disputa por su ID previa validación de propiedad o rol admin
@@ -142,35 +143,24 @@ func (h *DisputeHandler) OpenDispute(c *gin.Context) {
 func (h *DisputeHandler) GetDisputeByID(c *gin.Context) {
 	currentUserID, exists := middleware.GetUserID(c)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error":      "usuario no autenticado",
-			"code":       "UNAUTHORIZED",
-			"request_id": middleware.GetRequestID(c),
-		})
+		RespondUnauthorized(c, "usuario no autenticado", "UNAUTHORIZED")
 		return
 	}
 
-	disputeID := strings.TrimSpace(c.Param("id"))
-	if disputeID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":      "ID de disputa no especificado",
-			"code":       "MISSING_DISPUTE_ID",
-			"request_id": middleware.GetRequestID(c),
-		})
+	rawDisputeID := strings.TrimSpace(c.Param("id"))
+	if rawDisputeID == "" {
+		RespondBadRequest(c, "ID de disputa no especificado", "MISSING_DISPUTE_ID")
+		return
+	}
+	disputeID, err := domain.ParseUUID(rawDisputeID)
+	if err != nil {
+		RespondBadRequest(c, "ID de disputa con formato UUID inválido", "INVALID_DISPUTE_ID")
 		return
 	}
 
 	dispute, err := h.disputeService.GetDisputeByID(c.Request.Context(), disputeID)
 	if err != nil {
-		if errors.Is(err, domain.ErrDisputeNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{
-				"error":      "Disputa no encontrada",
-				"code":       "DISPUTE_NOT_FOUND",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-		}
-		HandleError(c, err)
+		respondError(c, err)
 		return
 	}
 
@@ -179,25 +169,15 @@ func (h *DisputeHandler) GetDisputeByID(c *gin.Context) {
 	// pueden acceder a la información de la disputa.
 	userRole, _ := middleware.GetUserRole(c)
 	isAdmin := userRole == domain.RoleAdmin || userRole == domain.UserRoleAdmin
-	isParticipant := (dispute.ReporterID != "" && currentUserID == dispute.ReporterID) ||
-		(dispute.DefendantID != "" && currentUserID == dispute.DefendantID)
+	isParticipant := (dispute.ReporterID != uuid.Nil && currentUserID == dispute.ReporterID) ||
+		(dispute.DefendantID != uuid.Nil && currentUserID == dispute.DefendantID)
 
 	if !isAdmin && !isParticipant {
-		c.JSON(http.StatusForbidden, gin.H{
-			"error":      "acceso denegado: no posees autorización para ver los detalles de esta disputa",
-			"code":       "FORBIDDEN",
-			"request_id": middleware.GetRequestID(c),
-		})
+		RespondForbidden(c, "acceso denegado: no posees autorización para ver los detalles de esta disputa", "FORBIDDEN")
 		return
 	}
 
-	c.JSON(http.StatusOK, dispute)
-}
-
-// ResolveDisputeRequest payload para dictaminar una resolución sobre la disputa
-type ResolveDisputeRequest struct {
-	Resolution domain.DisputeStatus `json:"resolution" binding:"required"`
-	AdminNotes string               `json:"admin_notes" binding:"required"`
+	c.JSON(http.StatusOK, toDisputeResponse(dispute))
 }
 
 // ResolveDispute procesa la decisión administrativa y acciona contablemente sobre el Escrow
@@ -205,60 +185,41 @@ type ResolveDisputeRequest struct {
 func (h *DisputeHandler) ResolveDispute(c *gin.Context) {
 	adminID, exists := middleware.GetUserID(c)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error":      "usuario no autenticado",
-			"code":       "UNAUTHORIZED",
-			"request_id": middleware.GetRequestID(c),
-		})
+		RespondUnauthorized(c, "usuario no autenticado", "UNAUTHORIZED")
 		return
 	}
 
 	// Control de acceso RBAC: Solo administradores pueden resolver disputas y dictaminar fondos
 	userRole, hasRole := middleware.GetUserRole(c)
 	if !hasRole || (userRole != domain.RoleAdmin && userRole != domain.UserRoleAdmin) {
-		c.JSON(http.StatusForbidden, gin.H{
-			"error":      "acceso denegado: solo los administradores pueden dictaminar y resolver disputas",
-			"code":       "FORBIDDEN",
-			"request_id": middleware.GetRequestID(c),
-		})
+		RespondForbidden(c, "acceso denegado: solo los administradores pueden dictaminar y resolver disputas", "FORBIDDEN")
 		return
 	}
 
-	disputeID := strings.TrimSpace(c.Param("id"))
-	if disputeID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":      "ID de disputa no especificado",
-			"code":       "MISSING_DISPUTE_ID",
-			"request_id": middleware.GetRequestID(c),
-		})
+	rawDisputeID := strings.TrimSpace(c.Param("id"))
+	if rawDisputeID == "" {
+		RespondBadRequest(c, "ID de disputa no especificado", "MISSING_DISPUTE_ID")
+		return
+	}
+	disputeID, err := domain.ParseUUID(rawDisputeID)
+	if err != nil {
+		RespondBadRequest(c, "ID de disputa con formato UUID inválido", "INVALID_DISPUTE_ID")
 		return
 	}
 
 	var req ResolveDisputeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":      "cuerpo de solicitud inválido",
-			"code":       "INVALID_REQUEST_BODY",
-			"request_id": middleware.GetRequestID(c),
-		})
+		RespondBadRequest(c, "cuerpo de solicitud inválido", "INVALID_REQUEST_BODY")
 		return
 	}
 
-	if !domain.IsValidDisputeResolution(req.Resolution) {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":      "Dictamen de resolución inválido; valores permitidos: RESOLVED_PASSENGER_REFUND, RESOLVED_DRIVER_PAYOUT, REJECTED",
-			"code":       "INVALID_RESOLUTION",
-			"request_id": middleware.GetRequestID(c),
-		})
+	if !req.Resolution.IsValidResolution() {
+		RespondBadRequest(c, "Dictamen de resolución inválido; valores permitidos: RESOLVED_PASSENGER_REFUND, RESOLVED_DRIVER_PAYOUT, REJECTED", "INVALID_RESOLUTION")
 		return
 	}
 
 	if strings.TrimSpace(req.AdminNotes) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":      "Las notas administrativas de resolución son obligatorias",
-			"code":       "INVALID_DISPUTE_DATA",
-			"request_id": middleware.GetRequestID(c),
-		})
+		RespondBadRequest(c, "Las notas administrativas de resolución son obligatorias", "INVALID_DISPUTE_DATA")
 		return
 	}
 
@@ -271,38 +232,11 @@ func (h *DisputeHandler) ResolveDispute(c *gin.Context) {
 
 	resolved, err := h.disputeService.ResolveDispute(c.Request.Context(), input)
 	if err != nil {
-		switch {
-		case errors.Is(err, domain.ErrDisputeNotFound):
-			c.JSON(http.StatusNotFound, gin.H{
-				"error":      "Disputa no encontrada",
-				"code":       "DISPUTE_NOT_FOUND",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-
-		case errors.Is(err, domain.ErrDisputeAlreadyResolved):
-			c.JSON(http.StatusConflict, gin.H{
-				"error":      "La disputa ya ha sido resuelta o desestimada previamente",
-				"code":       "DISPUTE_ALREADY_RESOLVED",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-
-		case errors.Is(err, domain.ErrInvalidDisputeData):
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error":      "Dictamen de resolución inválido",
-				"code":       "INVALID_RESOLUTION",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-
-		default:
-			HandleError(c, err)
-			return
-		}
+		respondError(c, err)
+		return
 	}
 
-	c.JSON(http.StatusOK, resolved)
+	c.JSON(http.StatusOK, toDisputeResponse(resolved))
 }
 
 // ListDisputes lista las disputas con soporte de paginación (limit/offset o page) para soporte y mediación
@@ -311,11 +245,7 @@ func (h *DisputeHandler) ListDisputes(c *gin.Context) {
 	// Solo administradores pueden listar el repositorio global de disputas
 	userRole, hasRole := middleware.GetUserRole(c)
 	if !hasRole || (userRole != domain.RoleAdmin && userRole != domain.UserRoleAdmin) {
-		c.JSON(http.StatusForbidden, gin.H{
-			"error":      "acceso denegado: permisos insuficientes para listar disputas",
-			"code":       "FORBIDDEN",
-			"request_id": middleware.GetRequestID(c),
-		})
+		RespondForbidden(c, "acceso denegado: permisos insuficientes para listar disputas", "FORBIDDEN")
 		return
 	}
 
@@ -339,9 +269,9 @@ func (h *DisputeHandler) ListDisputes(c *gin.Context) {
 
 	disputes, err := h.disputeService.ListDisputes(c.Request.Context(), limit, offset)
 	if err != nil {
-		HandleError(c, err)
+		respondError(c, err)
 		return
 	}
 
-	c.JSON(http.StatusOK, disputes)
+	c.JSON(http.StatusOK, toDisputeResponseList(disputes))
 }

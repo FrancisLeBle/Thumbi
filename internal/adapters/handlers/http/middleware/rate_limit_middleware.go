@@ -7,7 +7,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
+	"github.com/google/uuid"
+	"github.com/thumbi/backend/internal/core/ports"
 )
 
 // RateLimitByIP aplica limitación de tasa basada en la dirección IP del cliente (para endpoints públicos).
@@ -61,8 +62,8 @@ func RateLimitByUser(limiter ports.RateLimiter, limit int, window time.Duration,
 
 		var key string
 		userID, exists := GetUserID(c)
-		if exists && userID != "" {
-			key = fmt.Sprintf("ratelimit:user:%s:%s", routeKey, userID)
+		if exists && userID != uuid.Nil {
+			key = fmt.Sprintf("ratelimit:user:%s:%s", routeKey, userID.String())
 		} else {
 			key = fmt.Sprintf("ratelimit:ip:%s:%s", routeKey, c.ClientIP())
 		}

@@ -17,8 +17,8 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
+	"github.com/thumbi/backend/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/ports"
 )
 
 // Constantes oficiales de endpoints JWKS y emisores (Issuers)
@@ -245,7 +245,7 @@ func decodeBase64URL(s string) ([]byte, error) {
 
 // isDevEnvironment verifica si el entorno actual autoriza el uso de tokens mock o sintéticos.
 // CONTROL DE SEGURIDAD CRÍTICO:
-// Los tokens simulados solo se permiten explícitamente en desarrollo (ENV=development, dev, local, test)
+// Los tokens simulados solo se permiten explícitamente en desarrollo local (ENV=local o ENV=development)
 // o durante la ejecución de pruebas unitarias (`go test`).
 // En entornos de producción, staging o cualquier entorno no declarado explícitamente, se rechazan.
 func isDevEnvironment(configuredEnv string) bool {
@@ -258,7 +258,7 @@ func isDevEnvironment(configuredEnv string) bool {
 	}
 
 	switch env {
-	case "development", "dev", "local", "test", "testing":
+	case "development", "local":
 		return true
 	default:
 		// Detecta si la ejecución proviene del runner de pruebas de Go (go test)
@@ -376,7 +376,11 @@ func (p *GoogleOAuthProvider) ValidateToken(ctx context.Context, idToken string)
 	// -------------------------------------------------------------------------
 	// CONTROL DE SEGURIDAD 5: Verificación de Audiencia (Audience 'aud')
 	// -------------------------------------------------------------------------
-	if p.clientID != "" {
+	if strings.TrimSpace(p.clientID) == "" {
+		if !isDevEnvironment(p.environment) {
+			return nil, fmt.Errorf("%w: GOOGLE_CLIENT_ID no configurado en entorno no local", ErrAudienceMismatch)
+		}
+	} else {
 		var audMatched bool
 		for _, aud := range claims.Audience {
 			if aud == p.clientID {
@@ -539,7 +543,11 @@ func (p *AppleOAuthProvider) ValidateToken(ctx context.Context, idToken string) 
 	// -------------------------------------------------------------------------
 	// CONTROL DE SEGURIDAD 5: Verificación de Audiencia (Audience 'aud')
 	// -------------------------------------------------------------------------
-	if p.clientID != "" {
+	if strings.TrimSpace(p.clientID) == "" {
+		if !isDevEnvironment(p.environment) {
+			return nil, fmt.Errorf("%w: APPLE_CLIENT_ID no configurado en entorno no local", ErrAudienceMismatch)
+		}
+	} else {
 		var audMatched bool
 		for _, aud := range claims.Audience {
 			if aud == p.clientID {

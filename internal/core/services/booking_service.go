@@ -2,51 +2,57 @@ package services
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
-	"github.com/thumbi/auth-kyc-service/pkg/whatsapp"
+	"github.com/thumbi/backend/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/ports"
 )
 
-// bookingService implementa ports.BookingService bajo Clean Architecture
-type bookingService struct {
-	bookingRepo    ports.BookingRepository
-	escrowRepo     ports.EscrowRepository
-	tripRepo       ports.TripRepository
-	userRepo       ports.UserRepository
-	vehicleRepo    ports.VehicleRepository
-	paymentGateway ports.PaymentGateway
-	notifier       ports.Notifier
-	txManager      ports.TransactionManager
-	clock          func() time.Time
+const maxSeatHoldAttempts = 3
+
+// BookingSettlementService define el subconjunto de operaciones financieras de liquidación
+// requeridas por el ciclo de vida de reservas (SOLID · ISP).
+type BookingSettlementService interface {
+	CreatePaymentIntent(ctx context.Context, bookingID uuid.UUID, amount domain.Money) (*ports.PaymentIntentResult, error)
+	ConfirmPayment(ctx context.Context, gatewayRef string) error
+	HoldEscrow(ctx context.Context, input HoldEscrowInput) (*domain.EscrowTransaction, error)
+	SettleCancellationRefund(ctx context.Context, input CancellationRefundInput) (*domain.RefundTransaction, error)
 }
 
-// NewBookingService instancia el servicio de reservas y pagos en custodia
+// BookingService implementa los casos de uso del ciclo de vida y consultas de reservas.
+type BookingService struct {
+	bookingRepo ports.BookingRepository
+	tripRepo    ports.TripRepository
+	userRepo    ports.UserRepository
+	vehicleRepo ports.VehicleRepository
+	settlement  BookingSettlementService
+	notifier    ports.Notifier
+	txManager   ports.TransactionManager
+	clock       func() time.Time
+}
+
+// NewBookingService instancia el servicio del ciclo de vida de reservas.
 func NewBookingService(
 	bookingRepo ports.BookingRepository,
-	escrowRepo ports.EscrowRepository,
 	tripRepo ports.TripRepository,
 	userRepo ports.UserRepository,
 	vehicleRepo ports.VehicleRepository,
-	paymentGateway ports.PaymentGateway,
+	settlement BookingSettlementService,
 	notifier ports.Notifier,
 	optionalDeps ...any,
-) ports.BookingService {
-	svc := &bookingService{
-		bookingRepo:    bookingRepo,
-		escrowRepo:     escrowRepo,
-		tripRepo:       tripRepo,
-		userRepo:       userRepo,
-		vehicleRepo:    vehicleRepo,
-		paymentGateway: paymentGateway,
-		notifier:       notifier,
-		clock:          time.Now,
+) *BookingService {
+	svc := &BookingService{
+		bookingRepo: bookingRepo,
+		tripRepo:    tripRepo,
+		userRepo:    userRepo,
+		vehicleRepo: vehicleRepo,
+		settlement:  settlement,
+		notifier:    notifier,
+		clock:       time.Now,
 	}
 	for _, opt := range optionalDeps {
 		if tm, ok := opt.(ports.TransactionManager); ok {
@@ -56,108 +62,163 @@ func NewBookingService(
 	return svc
 }
 
-func (s *bookingService) runInTx(ctx context.Context, fn func(txCtx context.Context) error) error {
+func (s *BookingService) runInTx(ctx context.Context, fn func(txCtx context.Context) error) error {
 	if s.txManager != nil {
 		return s.txManager.WithinTransaction(ctx, fn)
 	}
 	return fn(ctx)
 }
 
-func (s *bookingService) rejectAndReleaseSeats(ctx context.Context, booking *domain.Booking, reason string) error {
-	if rejectErr := booking.Reject(reason, s.clock().UTC()); rejectErr != nil {
+func (s *BookingService) releaseTripSeatsWithRetry(ctx context.Context, trip *domain.Trip, seats int, now time.Time) error {
+	currentTrip := trip
+	for attempt := 0; attempt < maxSeatHoldAttempts; attempt++ {
+		if currentTrip == nil {
+			return domain.ErrTripNotFound
+		}
+
+		transition, err := currentTrip.ReleaseSeats(seats, now)
+		if err != nil {
+			return err
+		}
+
+		applied, err := s.tripRepo.ReleaseSeats(ctx, transition)
+		if err != nil {
+			return err
+		}
+		if applied {
+			return nil
+		}
+
+		reloaded, err := s.tripRepo.FindByID(ctx, currentTrip.ID)
+		if err != nil || reloaded == nil {
+			return domain.ErrTripNotFound
+		}
+		currentTrip = reloaded
+	}
+	return domain.ErrConcurrentModification
+}
+
+func (s *BookingService) rejectAndReleaseSeats(ctx context.Context, trip *domain.Trip, booking *domain.Booking, reason string) error {
+	now := s.clock().UTC()
+	if rejectErr := booking.Reject(reason, now); rejectErr != nil {
 		return rejectErr
 	}
 	return s.runInTx(ctx, func(txCtx context.Context) error {
 		if err := s.bookingRepo.UpdateStatus(txCtx, booking.ID, booking.Status, booking.CancellationReason); err != nil {
 			return err
 		}
-		if err := s.tripRepo.ReleaseSeats(txCtx, booking.TripID, booking.SeatsBooked); err != nil {
-			return err
-		}
-		return nil
+		return s.releaseTripSeatsWithRetry(txCtx, trip, booking.SeatsBooked, now)
 	})
 }
 
-// CreateBooking procesa la solicitud de reserva con verificación y decremento atómico de asientos
-func (s *bookingService) CreateBooking(ctx context.Context, input ports.CreateBookingInput) (*ports.BookingDTO, error) {
-	if strings.TrimSpace(input.TripID) == "" || strings.TrimSpace(input.PassengerID) == "" {
+// CreateBooking procesa la solicitud de reserva delegando al dominio la decisión de invariantes/transiciones
+// y aplicando el hold en base de datos mediante UPDATE atómico con guarda.
+func (s *BookingService) CreateBooking(ctx context.Context, input ports.CreateBookingInput) (*ports.BookingDTO, error) {
+	if input.TripID == uuid.Nil || input.PassengerID == uuid.Nil {
 		return nil, domain.ErrBookingNotFound
 	}
 	if input.SeatsRequested <= 0 {
 		return nil, domain.ErrInvalidSeatCount
 	}
 
-	// 1. Obtener viaje y validar estado inicial
-	trip, err := s.tripRepo.FindByID(ctx, input.TripID)
-	if err != nil || trip == nil {
-		return nil, domain.ErrTripNotFound
-	}
-
-	// 2. Invariante RF-02: El pasajero no puede ser el mismo conductor
-	if trip.DriverID == input.PassengerID {
-		return nil, domain.ErrCannotBookOwnTrip
-	}
-
-	// 3. El viaje debe estar publicado
-	if trip.Status != domain.TripStatusPublished {
-		return nil, domain.ErrInvalidTripStatusChange
-	}
-
-	// 4. Verificación previa de asientos disponibles
-	if trip.AvailableSeats < input.SeatsRequested {
-		return nil, domain.ErrInsufficientSeats
-	}
-
-	// 5. Invariante RF-03: Detección de solapamiento horario (tstzrange &&) y control de reservas pendientes en una sola consulta JOIN
 	now := s.clock().UTC()
-	hasOverlap, pendingCount, err := s.bookingRepo.CheckPassengerBookingConstraints(
-		ctx,
-		input.PassengerID,
-		trip.ID,
-		trip.DepartureTime,
-		trip.EstimatedArrivalTime,
-		now,
+	constraintsChecked := false
+	var (
+		trip    *domain.Trip
+		booking *domain.Booking
+		held    bool
 	)
+
+	for attempt := 0; attempt < maxSeatHoldAttempts; attempt++ {
+		var err error
+		trip, err = s.tripRepo.FindByID(ctx, input.TripID)
+		if err != nil || trip == nil {
+			return nil, domain.ErrTripNotFound
+		}
+
+		// El dominio valida elegibilidad, auto-reserva, estado del viaje y disponibilidad de asientos.
+		if err := trip.CanBook(input.PassengerID, input.SeatsRequested); err != nil {
+			return nil, err
+		}
+
+		// Invariante RF-03: Detección de solapamiento horario (tstzrange &&) y control de reservas pendientes en una sola consulta JOIN
+		if !constraintsChecked {
+			hasOverlap, pendingCount, err := s.bookingRepo.CheckPassengerBookingConstraints(
+				ctx,
+				input.PassengerID,
+				trip.ID,
+				trip.DepartureTime,
+				trip.EstimatedArrivalTime,
+				now,
+			)
+			if err != nil {
+				return nil, err
+			}
+			if hasOverlap {
+				return nil, domain.ErrOverlappingTripBooking
+			}
+			if pendingCount >= domain.MaxPendingBookingsPerPassenger {
+				return nil, domain.ErrMaxPendingBookingsExceeded
+			}
+			constraintsChecked = true
+		}
+
+		// El dominio calcula el nuevo estado del viaje (ej. PUBLISHED -> FULL) y genera el SeatTransition con guarda.
+		seatHold, err := trip.ReserveSeats(input.SeatsRequested, now)
+		if err != nil {
+			return nil, err
+		}
+
+		if booking == nil {
+			booking, err = domain.NewBooking(domain.BookingParams{
+				ID:            domain.NewUUIDv7(),
+				TripID:        trip.ID,
+				PassengerID:   input.PassengerID,
+				DriverID:      trip.DriverID,
+				SeatsBooked:   input.SeatsRequested,
+				Currency:      trip.Currency,
+				UnitPrice:     trip.PricePerSeat,
+				PickupStopID:  input.PickupStopID,
+				DropoffStopID: input.DropoffStopID,
+				TTL:           domain.DefaultBookingTTL,
+			})
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		applied, err := s.bookingRepo.CreateWithHold(ctx, booking, seatHold)
+		if err != nil {
+			return nil, err
+		}
+		if applied {
+			held = true
+			break
+		}
+	}
+
+	if !held {
+		latestTrip, err := s.tripRepo.FindByID(ctx, input.TripID)
+		if err != nil || latestTrip == nil {
+			return nil, domain.ErrTripNotFound
+		}
+		if err := latestTrip.CanBook(input.PassengerID, input.SeatsRequested); err != nil {
+			return nil, err
+		}
+		return nil, domain.ErrConcurrentModification
+	}
+
+	// Inicializar intención de pago delegando la pasarela a SettlementService
+	if s.settlement == nil {
+		if txErr := s.rejectAndReleaseSeats(ctx, trip, booking, "Servicio de liquidación no configurado"); txErr != nil {
+			return nil, fmt.Errorf("%w: error al revertir reserva y restituir asientos: %w", domain.ErrPaymentFailed, txErr)
+		}
+		return nil, domain.ErrPaymentFailed
+	}
+
+	paymentIntent, err := s.settlement.CreatePaymentIntent(ctx, booking.ID, booking.TotalPrice)
 	if err != nil {
-		return nil, err
-	}
-	if hasOverlap {
-		return nil, domain.ErrOverlappingTripBooking
-	}
-
-	// Mitigación de DoS/Abuso: Limitar el número de reservas simultáneas reteniendo asientos sin pagar
-	if pendingCount >= domain.MaxPendingBookingsPerPassenger {
-		return nil, domain.ErrMaxPendingBookingsExceeded
-	}
-
-	// 6. Instanciar entidad de dominio Booking en estado PENDING_PAYMENT con TTL de 15 minutos
-	bookingID := uuid.New().String()
-	booking, err := domain.NewBooking(domain.BookingParams{
-		ID:            bookingID,
-		TripID:        trip.ID,
-		PassengerID:   input.PassengerID,
-		DriverID:      trip.DriverID,
-		SeatsBooked:   input.SeatsRequested,
-		UnitPrice:     trip.PricePerSeat,
-		PickupStopID:  input.PickupStopID,
-		DropoffStopID: input.DropoffStopID,
-		TTL:           domain.DefaultBookingTTL,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	// 7. Persistir atómicamente la reserva con bloqueo pesimista en base de datos (SELECT ... FOR UPDATE)
-	if err := s.bookingRepo.CreateWithHold(ctx, booking); err != nil {
-		return nil, err
-	}
-
-	// 8. Crear intención de pago con la pasarela externa
-	currency := "USD"
-	paymentIntent, err := s.paymentGateway.CreatePaymentIntent(ctx, booking.ID, booking.TotalPrice, currency)
-	if err != nil {
-		// Si la pasarela falla, rechazar la reserva y liberar los asientos atómicamente en la misma transacción
-		if txErr := s.rejectAndReleaseSeats(ctx, booking, "Fallo al inicializar intención de pago en pasarela"); txErr != nil {
+		if txErr := s.rejectAndReleaseSeats(ctx, trip, booking, "Fallo al inicializar intención de pago en pasarela"); txErr != nil {
 			return nil, fmt.Errorf("%w: error al revertir reserva y restituir asientos: %w", domain.ErrPaymentFailed, txErr)
 		}
 		return nil, domain.ErrPaymentFailed
@@ -166,21 +227,19 @@ func (s *bookingService) CreateBooking(ctx context.Context, input ports.CreateBo
 	// Vincular y persistir la referencia de la orden/intención creada en la pasarela
 	booking.SetPaymentIntentID(paymentIntent.GatewayRef)
 	if err := s.bookingRepo.UpdatePaymentIntent(ctx, booking.ID, paymentIntent.GatewayRef); err != nil {
-		if txErr := s.rejectAndReleaseSeats(ctx, booking, "Fallo al vincular intención de pago en base de datos"); txErr != nil {
+		if txErr := s.rejectAndReleaseSeats(ctx, trip, booking, "Fallo al vincular intención de pago en base de datos"); txErr != nil {
 			return nil, fmt.Errorf("error vinculando payment_intent_id (%v) y al revertir reserva: %w", err, txErr)
 		}
 		return nil, fmt.Errorf("error vinculando payment_intent_id de la reserva: %w", err)
 	}
 
-	// 9. Enriquecer resumen del viaje para el DTO
 	tripSummary := s.buildTripSummary(ctx, trip)
-
 	return s.toBookingDTO(booking, tripSummary, paymentIntent), nil
 }
 
-// ConfirmBookingPayment acredita el cobro, transiciona a CONFIRMED y retiene fondos en Escrow
-func (s *bookingService) ConfirmBookingPayment(ctx context.Context, input ports.ConfirmBookingPaymentInput) (*ports.BookingDTO, error) {
-	if strings.TrimSpace(input.BookingID) == "" || strings.TrimSpace(input.PaymentGatewayRef) == "" {
+// ConfirmBookingPayment acredita el cobro vía SettlementService, transiciona a CONFIRMED y constituye la custodia en Escrow.
+func (s *BookingService) ConfirmBookingPayment(ctx context.Context, input ports.ConfirmBookingPaymentInput) (*ports.BookingDTO, error) {
+	if input.BookingID == uuid.Nil || strings.TrimSpace(input.PaymentGatewayRef) == "" {
 		return nil, domain.ErrBookingNotFound
 	}
 
@@ -190,14 +249,14 @@ func (s *bookingService) ConfirmBookingPayment(ctx context.Context, input ports.
 		return nil, domain.ErrBookingNotFound
 	}
 
-	// 2. Control de Autorización: Si es llamada directa de cliente (no webhook), validar que quien confirma sea el pasajero de la reserva
+	// 2. Control de Autorización: Si es llamada directa de cliente (no webhook), validar que quien confirma sea el pasajero
 	if !input.IsWebhook {
-		if strings.TrimSpace(input.RequestingUserID) == "" || booking.PassengerID != strings.TrimSpace(input.RequestingUserID) {
+		if input.RequestingUserID == uuid.Nil || booking.PassengerID != input.RequestingUserID {
 			return nil, domain.ErrUnauthorized
 		}
 	}
 
-	// 3. Validación de Payment Intent: La referencia de pago debe coincidir exactamente con el intent generado para esta reserva
+	// 3. Validación de Payment Intent
 	if booking.PaymentIntentID == nil || strings.TrimSpace(*booking.PaymentIntentID) == "" || *booking.PaymentIntentID != input.PaymentGatewayRef {
 		return nil, domain.ErrInvalidPaymentGatewayRef
 	}
@@ -212,10 +271,13 @@ func (s *bookingService) ConfirmBookingPayment(ctx context.Context, input ports.
 		return nil, domain.ErrInvalidBookingStatus
 	}
 
-	// 5. Confirmar la transacción con la pasarela de pagos
-	confirmed, err := s.paymentGateway.ConfirmPayment(ctx, input.PaymentGatewayRef)
-	if err != nil || !confirmed {
+	if s.settlement == nil {
 		return nil, domain.ErrPaymentFailed
+	}
+
+	// 5. Confirmar el pago ante la pasarela vía SettlementService
+	if err := s.settlement.ConfirmPayment(ctx, input.PaymentGatewayRef); err != nil {
+		return nil, err
 	}
 
 	// 6. Obtener datos del viaje para vincular al conductor en Escrow
@@ -224,41 +286,31 @@ func (s *bookingService) ConfirmBookingPayment(ctx context.Context, input ports.
 		return nil, domain.ErrTripNotFound
 	}
 
-	// 7. Transicionar estado a CONFIRMED y construir registro de custodia en memoria
+	// 7. Transicionar estado a CONFIRMED
 	if err := booking.Confirm(now); err != nil {
 		return nil, err
 	}
 
-	escrowID := uuid.New().String()
-	escrow, err := domain.NewEscrowTransaction(
-		escrowID,
-		booking.ID,
-		trip.ID,
-		booking.PassengerID,
-		trip.DriverID,
-		booking.TotalPrice,
-		"USD",
-		input.PaymentGatewayRef,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	// 8. Persistir confirmación atómica (validando PENDING_PAYMENT y expires_at > NOW() en BD) y Escrow en la misma transacción
+	// 8. Persistir confirmación atómica y constituir el Escrow en la misma transacción
 	err = s.runInTx(ctx, func(txCtx context.Context) error {
 		if err := s.bookingRepo.UpdateStatus(txCtx, booking.ID, booking.Status, nil); err != nil {
 			return err
 		}
-		if err := s.escrowRepo.CreateEscrow(txCtx, escrow); err != nil {
-			return err
-		}
-		return nil
+		_, err := s.settlement.HoldEscrow(txCtx, HoldEscrowInput{
+			BookingID:         booking.ID,
+			TripID:            trip.ID,
+			PassengerID:       booking.PassengerID,
+			DriverID:          trip.DriverID,
+			Amount:            booking.TotalPrice,
+			PaymentGatewayRef: input.PaymentGatewayRef,
+		})
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	// 9. Notificar a las partes si el notificador está configurado (best-effort fuera de la transacción de BD)
+	// 9. Notificar al pasajero (best-effort fuera de la transacción de BD)
 	if s.notifier != nil {
 		if notifyErr := s.notifier.SendResolutionNotification(ctx, ports.NotificationPayload{
 			UserID:  booking.PassengerID,
@@ -273,9 +325,9 @@ func (s *bookingService) ConfirmBookingPayment(ctx context.Context, input ports.
 	return s.toBookingDTO(booking, tripSummary, nil), nil
 }
 
-// CancelBooking procesa la cancelación, restituye asientos y liquida reembolsos según política
-func (s *bookingService) CancelBooking(ctx context.Context, input ports.CancelBookingInput) (*domain.RefundTransaction, error) {
-	if strings.TrimSpace(input.BookingID) == "" || strings.TrimSpace(input.RequestingUserID) == "" {
+// CancelBooking procesa la cancelación, restituye asientos atómicamente y delega el reembolso de Escrow a SettlementService.
+func (s *BookingService) CancelBooking(ctx context.Context, input ports.CancelBookingInput) (*ports.RefundDTO, error) {
+	if input.BookingID == uuid.Nil || input.RequestingUserID == uuid.Nil {
 		return nil, domain.ErrBookingNotFound
 	}
 
@@ -289,7 +341,6 @@ func (s *bookingService) CancelBooking(ctx context.Context, input ports.CancelBo
 		return nil, domain.ErrTripNotFound
 	}
 
-	// Validar que quien cancela sea el conductor o el pasajero
 	isDriver := input.RequestingUserID == trip.DriverID
 	isPassenger := input.RequestingUserID == booking.PassengerID
 	if !isDriver && !isPassenger {
@@ -308,99 +359,39 @@ func (s *bookingService) CancelBooking(ctx context.Context, input ports.CancelBo
 		return nil, err
 	}
 
-	// 2. Actualizar estado de la reserva y restituir atómicamente los asientos en la misma transacción de base de datos
+	// 2. Actualizar estado de la reserva y restituir atómicamente los asientos en la misma transacción
 	err = s.runInTx(ctx, func(txCtx context.Context) error {
 		if err := s.bookingRepo.UpdateStatus(txCtx, booking.ID, booking.Status, booking.CancellationReason); err != nil {
 			return err
 		}
-		if err := s.tripRepo.ReleaseSeats(txCtx, booking.TripID, booking.SeatsBooked); err != nil {
-			return err
-		}
-		return nil
+		return s.releaseTripSeatsWithRetry(txCtx, trip, booking.SeatsBooked, now)
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	// 3. Si la reserva estaba confirmada, procesar el reembolso en Escrow
-	if booking.Status == domain.BookingStatusCancelledByPassenger || booking.Status == domain.BookingStatusCancelledByDriver {
-		escrow, err := s.escrowRepo.FindByBookingID(ctx, booking.ID)
-		if errors.Is(err, domain.ErrEscrowNotFound) || (err == nil && escrow == nil) {
-			// Si no hay transacción de custodia (ej. canceló en PENDING_PAYMENT), no hay reembolso
-			return nil, nil
-		}
-		if err != nil {
-			return nil, err
-		}
-
-		// Calcular importes de reembolso según regla de tiempo
-		pRefund, dComp, refundType := domain.CalculateCancellationRefund(escrow.Amount, trip.DepartureTime, now, isDriver)
-
-		// Invocar pasarela de pago para devolución
-		gatewayRefundRef := ""
-		if pRefund > 0 {
-			refundResult, err := s.paymentGateway.ProcessRefund(ctx, escrow.PaymentGatewayRef, pRefund, string(refundType))
-			if err != nil {
-				return nil, fmt.Errorf("%w: %w", domain.ErrPaymentFailed, err)
-			}
-			if refundResult != nil {
-				gatewayRefundRef = refundResult.GatewayRefundRef
-			}
-		}
-
-		// Actualizar estado del Escrow
-		if refundType == domain.RefundTypePassengerLate {
-			if err := escrow.RefundPartial(now); err != nil {
-				return nil, err
-			}
-		} else {
-			if err := escrow.RefundFull(now); err != nil {
-				return nil, err
-			}
-		}
-
-		// Registrar transacción inmutable de reembolso
-		refundID := uuid.New().String()
-		refundTx, err := domain.NewRefundTransaction(
-			refundID,
-			escrow.ID,
-			booking.ID,
-			pRefund,
-			dComp,
-			refundType,
-			gatewayRefundRef,
-		)
-		if err != nil {
-			return nil, err
-		}
-
-		err = s.runInTx(ctx, func(txCtx context.Context) error {
-			if err := s.escrowRepo.UpdateEscrowStatus(txCtx, escrow.ID, escrow.Status); err != nil {
-				return err
-			}
-			if err := s.escrowRepo.RecordRefund(txCtx, refundTx); err != nil {
-				return err
-			}
-			return nil
+	// 3. Delegar la liquidación y reembolso de Escrow a SettlementService
+	if s.settlement != nil && (booking.Status == domain.BookingStatusCancelledByPassenger || booking.Status == domain.BookingStatusCancelledByDriver) {
+		refund, err := s.settlement.SettleCancellationRefund(ctx, CancellationRefundInput{
+			BookingID:            booking.ID,
+			DepartureTime:        trip.DepartureTime,
+			CancelledAt:          now,
+			IsDriverCancellation: isDriver,
 		})
 		if err != nil {
 			return nil, err
 		}
-
-		return refundTx, nil
+		return toRefundDTO(refund), nil
 	}
 
 	return nil, nil
 }
 
-// ProcessExpiredBookings ejecuta la expiración masiva de reservas pendientes vencidas
-func (s *bookingService) ProcessExpiredBookings(ctx context.Context) (int, error) {
-	now := s.clock().UTC()
-	return s.bookingRepo.ExpirePendingBookings(ctx, now)
-}
-
-// GetBookingByID consulta una reserva validando autorización del solicitante
-func (s *bookingService) GetBookingByID(ctx context.Context, bookingID, requestingUserID string) (*ports.BookingDTO, error) {
+// GetBookingByID consulta una reserva validando autorización del solicitante.
+func (s *BookingService) GetBookingByID(ctx context.Context, bookingID, requestingUserID uuid.UUID) (*ports.BookingDTO, error) {
+	if bookingID == uuid.Nil {
+		return nil, domain.ErrBookingNotFound
+	}
 	booking, err := s.bookingRepo.FindByID(ctx, bookingID)
 	if err != nil || booking == nil {
 		return nil, domain.ErrBookingNotFound
@@ -419,75 +410,8 @@ func (s *bookingService) GetBookingByID(ctx context.Context, bookingID, requesti
 	return s.toBookingDTO(booking, tripSummary, nil), nil
 }
 
-// GetContactLink genera el Deeplink de WhatsApp para que el pasajero autenticado contacte al conductor del viaje
-func (s *bookingService) GetContactLink(ctx context.Context, bookingID, requestingUserID string) (*ports.ContactLinkDTO, error) {
-	if strings.TrimSpace(bookingID) == "" || strings.TrimSpace(requestingUserID) == "" {
-		return nil, domain.ErrBookingNotFound
-	}
-
-	// 1. Buscar la reserva
-	booking, err := s.bookingRepo.FindByID(ctx, bookingID)
-	if err != nil || booking == nil {
-		return nil, domain.ErrBookingNotFound
-	}
-
-	// 2. Validar que la reserva pertenezca al usuario que consulta (el pasajero autenticado)
-	if booking.PassengerID != requestingUserID {
-		return nil, domain.ErrUnauthorized
-	}
-
-	// 3. Buscar el viaje correspondiente
-	trip, err := s.tripRepo.FindByID(ctx, booking.TripID)
-	if err != nil || trip == nil {
-		return nil, domain.ErrTripNotFound
-	}
-
-	// 4. Obtener datos del conductor y validar su número telefónico registrado
-	if s.userRepo == nil {
-		return nil, domain.ErrDriverPhoneRequired
-	}
-
-	driver, err := s.userRepo.GetByID(ctx, trip.DriverID)
-	if err != nil {
-		return nil, err
-	}
-	if driver == nil {
-		return nil, domain.ErrUserNotFound
-	}
-
-	driverPhone := strings.TrimSpace(driver.Phone)
-	if driverPhone == "" || len(whatsapp.CleanPhoneNumber(driverPhone)) < 7 {
-		return nil, domain.ErrDriverPhoneRequired
-	}
-
-	passengerName := ""
-	passenger, err := s.userRepo.GetByID(ctx, booking.PassengerID)
-	if err == nil && passenger != nil {
-		passengerName = passenger.FullName()
-	}
-
-	departureTimeStr := "18:00"
-	if !trip.DepartureTime.IsZero() {
-		departureTimeStr = trip.DepartureTime.Format("15:04")
-	}
-
-	whatsappURL := whatsapp.GenerateWhatsAppLink(
-		driverPhone,
-		booking.ID,
-		trip.OriginTitle,
-		trip.DestinationTitle,
-		departureTimeStr,
-		passengerName,
-	)
-
-	return &ports.ContactLinkDTO{
-		WhatsAppURL: whatsappURL,
-		DriverPhone: driverPhone,
-	}, nil
-}
-
-// ListPassengerBookings devuelve el historial de reservas de un pasajero
-func (s *bookingService) ListPassengerBookings(ctx context.Context, passengerID string, limit, offset int) ([]*ports.BookingDTO, error) {
+// ListPassengerBookings devuelve el historial de reservas de un pasajero.
+func (s *BookingService) ListPassengerBookings(ctx context.Context, passengerID uuid.UUID, limit, offset int) ([]*ports.BookingDTO, error) {
 	bookings, err := s.bookingRepo.GetPassengerBookings(ctx, passengerID, limit, offset)
 	if err != nil {
 		return nil, err
@@ -506,33 +430,8 @@ func (s *bookingService) ListPassengerBookings(ctx context.Context, passengerID 
 	return dtos, nil
 }
 
-// ListTripBookings lista las reservas de un viaje, accesible únicamente por su conductor
-func (s *bookingService) ListTripBookings(ctx context.Context, tripID, driverID string) ([]*ports.BookingDTO, error) {
-	trip, err := s.tripRepo.FindByID(ctx, tripID)
-	if err != nil || trip == nil {
-		return nil, domain.ErrTripNotFound
-	}
-
-	if trip.DriverID != driverID {
-		return nil, domain.ErrUnauthorized
-	}
-
-	bookings, err := s.bookingRepo.GetActiveBookingsByTrip(ctx, tripID)
-	if err != nil {
-		return nil, err
-	}
-
-	tripSummary := s.buildTripSummary(ctx, trip)
-	dtos := make([]*ports.BookingDTO, 0, len(bookings))
-	for _, b := range bookings {
-		dtos = append(dtos, s.toBookingDTO(b, tripSummary, nil))
-	}
-
-	return dtos, nil
-}
-
-// buildTripSummary construye el resumen contextual del viaje para el DTO
-func (s *bookingService) buildTripSummary(ctx context.Context, trip *domain.Trip) *ports.BookingTripSummary {
+// buildTripSummary construye el resumen contextual del viaje para el DTO.
+func (s *BookingService) buildTripSummary(ctx context.Context, trip *domain.Trip) *ports.BookingTripSummary {
 	summary := &ports.BookingTripSummary{
 		TripID:           trip.ID,
 		OriginTitle:      trip.OriginTitle,
@@ -560,8 +459,8 @@ func (s *bookingService) buildTripSummary(ctx context.Context, trip *domain.Trip
 	return summary
 }
 
-// toBookingDTO mapea la entidad de dominio a DTO de presentación
-func (s *bookingService) toBookingDTO(b *domain.Booking, tripSummary *ports.BookingTripSummary, paymentIntent *ports.PaymentIntentResult) *ports.BookingDTO {
+// toBookingDTO mapea la entidad de dominio a DTO de presentación.
+func (s *BookingService) toBookingDTO(b *domain.Booking, tripSummary *ports.BookingTripSummary, paymentIntent *ports.PaymentIntentResult) *ports.BookingDTO {
 	var confirmedAtStr *string
 	if b.ConfirmedAt != nil {
 		formatted := b.ConfirmedAt.Format(time.RFC3339)
@@ -579,6 +478,7 @@ func (s *bookingService) toBookingDTO(b *domain.Booking, tripSummary *ports.Book
 		TripID:             b.TripID,
 		PassengerID:        b.PassengerID,
 		SeatsBooked:        b.SeatsBooked,
+		Currency:           b.Currency,
 		UnitPrice:          b.UnitPrice,
 		TotalPrice:         b.TotalPrice,
 		Status:             b.Status,
@@ -592,5 +492,22 @@ func (s *bookingService) toBookingDTO(b *domain.Booking, tripSummary *ports.Book
 		CreatedAt:          b.CreatedAt.Format(time.RFC3339),
 		PaymentIntent:      paymentIntent,
 		TripSummary:        tripSummary,
+	}
+}
+
+func toRefundDTO(r *domain.RefundTransaction) *ports.RefundDTO {
+	if r == nil {
+		return nil
+	}
+	return &ports.RefundDTO{
+		ID:                       r.ID,
+		EscrowTransactionID:      r.EscrowTransactionID,
+		BookingID:                r.BookingID,
+		PassengerRefundAmount:    r.PassengerRefundAmount,
+		DriverCompensationAmount: r.DriverCompensationAmount,
+		RefundType:               r.RefundType,
+		GatewayRefundRef:         r.GatewayRefundRef,
+		ProcessedAt:              formatTimeRFC3339(r.ProcessedAt),
+		CreatedAt:                formatTimeRFC3339(r.CreatedAt),
 	}
 }

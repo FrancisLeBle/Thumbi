@@ -7,13 +7,15 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	adapterHttp "github.com/thumbi/auth-kyc-service/internal/adapters/handlers/http"
+	"github.com/stretchr/testify/require"
+	adapterHttp "github.com/thumbi/backend/internal/adapters/handlers/http"
 )
 
 func TestCORSMiddleware_TrustedOrigins(t *testing.T) {
-	router := adapterHttp.SetupRouter(adapterHttp.RouterConfig{
-		AllowedOrigins: []string{"https://thumbi.app"},
-	})
+	cfg := baseTestRouterConfig()
+	cfg.AllowedOrigins = []string{"https://thumbi.app"}
+	router, err := adapterHttp.SetupRouter(cfg)
+	require.NoError(t, err)
 
 	t.Run("permite preflight OPTIONS desde https://localhost y expone cabeceras seguras", func(t *testing.T) {
 		req, _ := http.NewRequest(http.MethodOptions, "/health", nil)
@@ -98,7 +100,7 @@ func TestCORSMiddleware_AppURLEnv(t *testing.T) {
 	os.Setenv("APP_URL", "https://web.thumbi-production.com")
 	defer os.Unsetenv("APP_URL")
 
-	router := adapterHttp.SetupRouter(adapterHttp.RouterConfig{})
+	router := mustSetupTestRouter(baseTestRouterConfig())
 
 	req, _ := http.NewRequest(http.MethodOptions, "/health", nil)
 	req.Header.Set("Origin", "https://web.thumbi-production.com")

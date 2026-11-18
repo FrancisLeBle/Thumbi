@@ -51,11 +51,6 @@ func NewHealthHandler(db DBPingChecker) *HealthHandler {
 	return hh
 }
 
-// SetStatsFunc permite inyectar una función de métricas del pool personalizada (útil para pruebas).
-func (h *HealthHandler) SetStatsFunc(fn func() map[string]any) {
-	h.statsFunc = fn
-}
-
 // Health evalúa la vitalidad básica del servicio (Liveness Probe) y latencia hacia la base de datos.
 // GET /health
 func (h *HealthHandler) Health(c *gin.Context) {

@@ -1,4 +1,4 @@
-module github.com/thumbi/auth-kyc-service
+module github.com/thumbi/backend
 
 go 1.25
 

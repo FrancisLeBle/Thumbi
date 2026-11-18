@@ -5,10 +5,11 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
+	"github.com/thumbi/backend/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/ports"
 )
 
 // disputeRepository implementa ports.DisputeRepository interactuando con PostgreSQL
@@ -23,6 +24,9 @@ func NewDisputeRepository(db DBExecutor) ports.DisputeRepository {
 
 // Save registra una nueva reclamación formal en la tabla disputes
 func (r *disputeRepository) Save(ctx context.Context, dispute *domain.Dispute) error {
+	if !dispute.Reason.IsValid() || !dispute.Status.IsValid() {
+		return fmt.Errorf("%w: motivo o estado de disputa inválido", domain.ErrInvalidStatus)
+	}
 	query := `
 		INSERT INTO disputes (
 			id, escrow_transaction_id, booking_id, trip_id,
@@ -52,10 +56,10 @@ func (r *disputeRepository) Save(ctx context.Context, dispute *domain.Dispute) e
 		dispute.TripID,
 		dispute.ReporterID,
 		dispute.DefendantID,
-		string(dispute.Reason),
+		dispute.Reason.String(),
 		dispute.Description,
 		evidence,
-		string(dispute.Status),
+		dispute.Status.String(),
 		dispute.AdminNotes,
 		dispute.ResolvedBy,
 		dispute.ResolvedAt,
@@ -74,7 +78,10 @@ func (r *disputeRepository) Save(ctx context.Context, dispute *domain.Dispute) e
 }
 
 // FindByID recupera una disputa por su identificador único
-func (r *disputeRepository) FindByID(ctx context.Context, id string) (*domain.Dispute, error) {
+func (r *disputeRepository) FindByID(ctx context.Context, id uuid.UUID) (*domain.Dispute, error) {
+	if id == uuid.Nil {
+		return nil, domain.ErrDisputeNotFound
+	}
 	query := `
 		SELECT 
 			id, escrow_transaction_id, booking_id, trip_id,
@@ -90,7 +97,10 @@ func (r *disputeRepository) FindByID(ctx context.Context, id string) (*domain.Di
 }
 
 // FindByEscrowID recupera la disputa asociada a una transacción de fondos en custodia específica
-func (r *disputeRepository) FindByEscrowID(ctx context.Context, escrowID string) (*domain.Dispute, error) {
+func (r *disputeRepository) FindByEscrowID(ctx context.Context, escrowID uuid.UUID) (*domain.Dispute, error) {
+	if escrowID == uuid.Nil {
+		return nil, domain.ErrDisputeNotFound
+	}
 	query := `
 		SELECT 
 			id, escrow_transaction_id, booking_id, trip_id,
@@ -107,6 +117,9 @@ func (r *disputeRepository) FindByEscrowID(ctx context.Context, escrowID string)
 
 // Update persiste los cambios de estado, notas administrativas y resolución de la disputa
 func (r *disputeRepository) Update(ctx context.Context, dispute *domain.Dispute) error {
+	if !dispute.Status.IsValid() {
+		return fmt.Errorf("%w: estado de disputa %s", domain.ErrInvalidStatus, dispute.Status)
+	}
 	query := `
 		UPDATE disputes
 		SET status = $1,
@@ -121,7 +134,7 @@ func (r *disputeRepository) Update(ctx context.Context, dispute *domain.Dispute)
 	tag, err := exec.Exec(
 		ctx,
 		query,
-		string(dispute.Status),
+		dispute.Status.String(),
 		dispute.AdminNotes,
 		dispute.ResolvedBy,
 		dispute.ResolvedAt,
@@ -186,6 +199,9 @@ func (r *disputeRepository) List(ctx context.Context, limit, offset int) ([]*dom
 
 		d.Reason = domain.DisputeReason(reasonStr)
 		d.Status = domain.DisputeStatus(statusStr)
+		if !d.Reason.IsValid() || !d.Status.IsValid() {
+			return nil, fmt.Errorf("%w: motivo o estado de disputa inválido en base de datos", domain.ErrInvalidStatus)
+		}
 		if d.EvidenceURLs == nil {
 			d.EvidenceURLs = []string{}
 		}
@@ -231,6 +247,9 @@ func (r *disputeRepository) scanDispute(row pgx.Row) (*domain.Dispute, error) {
 
 	d.Reason = domain.DisputeReason(reasonStr)
 	d.Status = domain.DisputeStatus(statusStr)
+	if !d.Reason.IsValid() || !d.Status.IsValid() {
+		return nil, fmt.Errorf("%w: motivo o estado de disputa inválido en base de datos", domain.ErrInvalidStatus)
+	}
 	if d.EvidenceURLs == nil {
 		d.EvidenceURLs = []string{}
 	}

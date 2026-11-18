@@ -18,11 +18,11 @@ export const RegisterScreen: React.FC<RegisterScreenProps> = ({
   onNavigateToWelcome,
   onContinueToVerification,
 }) => {
-  const [firstName, setFirstName] = useState<string>('Sofía');
-  const [lastName, setLastName] = useState<string>('Fernández');
-  const [email, setEmail] = useState<string>('sofia.f@email.com');
-  const [password, setPassword] = useState<string>('Password123!');
-  const [phone, setPhone] = useState<string>('+54 9 11 1234-5678');
+  const [firstName, setFirstName] = useState<string>('');
+  const [lastName, setLastName] = useState<string>('');
+  const [email, setEmail] = useState<string>('');
+  const [password, setPassword] = useState<string>('');
+  const [phone, setPhone] = useState<string>('');
   const [role, setRole] = useState<'PASSENGER' | 'DRIVER'>('PASSENGER');
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(false);

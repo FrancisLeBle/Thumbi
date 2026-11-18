@@ -4,18 +4,19 @@ import (
 	"context"
 	"time"
 
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
+	"github.com/google/uuid"
+	"github.com/thumbi/backend/internal/core/domain"
 )
 
 // SocialUserProfile datos de perfil extraídos tras verificar el token social
 type SocialUserProfile struct {
-	ProviderID    string              `json:"provider_id"`
-	Email         string              `json:"email"`
-	FirstName     string              `json:"first_name"`
-	LastName      string              `json:"last_name"`
-	AvatarURL     string              `json:"avatar_url,omitempty"`
-	Provider      domain.AuthProvider `json:"provider"`
-	EmailVerified bool                `json:"email_verified"`
+	ProviderID    string
+	Email         string
+	FirstName     string
+	LastName      string
+	AvatarURL     string
+	Provider      domain.AuthProvider
+	EmailVerified bool
 }
 
 // OAuthProvider contrato para la validación de tokens de proveedores sociales (Google, Apple)
@@ -26,12 +27,12 @@ type OAuthProvider interface {
 
 // BiometricEvaluationResult resultado devuelto por el motor biométrico / OCR de identidad
 type BiometricEvaluationResult struct {
-	IsValidDocument bool    `json:"is_valid_document"`
-	LivenessScore   float64 `json:"liveness_score"`   // Escala 0.0 a 1.0 (>= 0.85 para pasar)
-	FaceMatchScore  float64 `json:"face_match_score"` // Coincidencia entre rostro del DNI y selfie 3D
-	ExtractedDNI    string  `json:"extracted_dni"`    // OCR del DNI
-	ExtractedName   string  `json:"extracted_name"`
-	RejectionReason string  `json:"rejection_reason,omitempty"`
+	IsValidDocument bool
+	LivenessScore   float64 // Escala 0.0 a 1.0 (>= 0.85 para pasar)
+	FaceMatchScore  float64 // Coincidencia entre rostro del DNI y selfie 3D
+	ExtractedDNI    string  // OCR del DNI
+	ExtractedName   string
+	RejectionReason string
 }
 
 // BiometricsProvider contrato para comunicarse con el motor de prueba de vida y validación documental
@@ -41,12 +42,12 @@ type BiometricsProvider interface {
 
 // NotificationPayload contenido genérico de notificación para el usuario
 type NotificationPayload struct {
-	UserID   string            `json:"user_id"`
-	Email    string            `json:"email"`
-	Title    string            `json:"title"`
-	Message  string            `json:"message"`
-	Type     string            `json:"type"` // Ej: KYC_RESOLVED, VEHICLE_APPROVED, VEHICLE_REJECTED
-	Metadata map[string]string `json:"metadata,omitempty"`
+	UserID   uuid.UUID
+	Email    string
+	Title    string
+	Message  string
+	Type     string // Ej: KYC_RESOLVED, VEHICLE_APPROVED, VEHICLE_REJECTED
+	Metadata map[string]string
 }
 
 // Notifier contrato para emisión de notificaciones asíncronas (Push, Email, Eventos de infraestructura)
@@ -56,19 +57,19 @@ type Notifier interface {
 
 // RouteCalculationRequest parámetros para solicitar el trazado de una ruta al motor cartográfico
 type RouteCalculationRequest struct {
-	Origin      domain.Coordinates   `json:"origin"`
-	Destination domain.Coordinates   `json:"destination"`
-	Waypoints   []domain.Coordinates `json:"waypoints,omitempty"`
+	Origin      domain.Coordinates
+	Destination domain.Coordinates
+	Waypoints   []domain.Coordinates
 }
 
 // RouteDetails respuesta devuelta por el motor cartográfico (ej. OSRM, Valhalla o Google Maps)
 type RouteDetails struct {
-	RoutePath         domain.LineString `json:"route_path"`
-	DistanceKm        float64           `json:"distance_km"`
-	DurationMinutes   int               `json:"duration_minutes"`
-	EstimatedTollCost domain.Money      `json:"estimated_toll_cost"`
-	TollsCount        int               `json:"tolls_count"`
-	EstimatedFuelCost domain.Money      `json:"estimated_fuel_cost"`
+	RoutePath         domain.LineString
+	DistanceKm        float64
+	DurationMinutes   int
+	EstimatedTollCost domain.Money
+	TollsCount        int
+	EstimatedFuelCost domain.Money
 }
 
 // RoutingProvider contrato para consultar polilínea, distancias, peajes y tiempos estimados a un motor de rutas
@@ -78,23 +79,23 @@ type RoutingProvider interface {
 
 // PaymentIntentResult resultado de la inicialización de intención de cobro con pasarela de pagos
 type PaymentIntentResult struct {
-	GatewayRef   string       `json:"gateway_ref"`
-	ClientSecret string       `json:"client_secret,omitempty"`
-	Amount       domain.Money `json:"amount"`
-	Currency     string       `json:"currency"`
-	Status       string       `json:"status"` // Ej: requires_payment_method, succeeded, pending
+	GatewayRef   string
+	ClientSecret string
+	Amount       domain.Money
+	Currency     domain.Currency
+	Status       string // Ej: requires_payment_method, succeeded, pending
 }
 
 // RefundResult resultado de la solicitud de reintegro ante la pasarela
 type RefundResult struct {
-	GatewayRefundRef string       `json:"gateway_refund_ref"`
-	Amount           domain.Money `json:"amount"`
-	Status           string       `json:"status"`
+	GatewayRefundRef string
+	Amount           domain.Money
+	Status           string
 }
 
 // PaymentGateway define el contrato desacoplado para interactuar con pasarelas de pago (Stripe, MercadoPago, etc.)
 type PaymentGateway interface {
-	CreatePaymentIntent(ctx context.Context, bookingID string, amount domain.Money, currency string) (*PaymentIntentResult, error)
+	CreatePaymentIntent(ctx context.Context, bookingID uuid.UUID, amount domain.Money) (*PaymentIntentResult, error)
 	ConfirmPayment(ctx context.Context, gatewayRef string) (bool, error)
 	ProcessRefund(ctx context.Context, gatewayRef string, amount domain.Money, reason string) (*RefundResult, error)
 }
@@ -105,4 +106,3 @@ type RateLimiter interface {
 	// Retorna allowed (true/false), remaining (solicitudes restantes), resetDuration (tiempo restante de la ventana), y error si lo hubiere.
 	Allow(ctx context.Context, key string, limit int, window time.Duration) (allowed bool, remaining int, resetDuration time.Duration, err error)
 }
-

@@ -1,7 +1,7 @@
 package services
 
 import (
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/domain"
 )
 
 // PricingCalculator define el contrato del motor de cálculo de costos de combustible, peajes y Cap Pricing
@@ -28,7 +28,7 @@ func NewPricingCalculatorWithRates(consumptionLiters float64, pricePerLiter doma
 	if consumptionLiters <= 0 {
 		consumptionLiters = domain.DefaultFuelConsumptionLitersPer100Km
 	}
-	if pricePerLiter <= 0 {
+	if pricePerLiter.Amount <= 0 {
 		pricePerLiter = domain.DefaultFuelPricePerLiter
 	}
 	return &pricingCalculator{

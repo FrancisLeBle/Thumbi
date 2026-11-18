@@ -4,16 +4,17 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/domain"
 )
 
 func TestReview_ValidCreation(t *testing.T) {
+	revID := domain.NewUUIDv7()
 	params := domain.ReviewParams{
-		ID:            "rev-1",
-		TripID:        "trip-100",
-		BookingID:     "book-100",
-		ReviewerID:    "passenger-1",
-		RevieweeID:    "driver-1",
+		ID:            revID,
+		TripID:        domain.NewUUIDv7(),
+		BookingID:     domain.NewUUIDv7(),
+		ReviewerID:    domain.NewUUIDv7(),
+		RevieweeID:    domain.NewUUIDv7(),
 		Rating:        5,
 		Comment:       "Excelente viaje, muy puntual y conducción prudente.",
 		TripStatus:    domain.TripStatusCompleted,
@@ -23,7 +24,7 @@ func TestReview_ValidCreation(t *testing.T) {
 	review, err := domain.NewReview(params)
 	assert.NoError(t, err)
 	assert.NotNil(t, review)
-	assert.Equal(t, "rev-1", review.ID)
+	assert.Equal(t, revID, review.ID)
 	assert.Equal(t, 5, review.Rating)
 	assert.True(t, review.IsPositive())
 	assert.False(t, review.IsNegative())
@@ -31,12 +32,13 @@ func TestReview_ValidCreation(t *testing.T) {
 }
 
 func TestReview_RejectSelfReview(t *testing.T) {
+	sameUser := domain.NewUUIDv7()
 	params := domain.ReviewParams{
-		ID:            "rev-2",
-		TripID:        "trip-100",
-		BookingID:     "book-100",
-		ReviewerID:    "user-1",
-		RevieweeID:    "user-1", // Mismo usuario
+		ID:            domain.NewUUIDv7(),
+		TripID:        domain.NewUUIDv7(),
+		BookingID:     domain.NewUUIDv7(),
+		ReviewerID:    sameUser,
+		RevieweeID:    sameUser, // Mismo usuario
 		Rating:        5,
 		Comment:       "Me auto califico con 5 estrellas.",
 		TripStatus:    domain.TripStatusCompleted,
@@ -51,11 +53,11 @@ func TestReview_RejectSelfReview(t *testing.T) {
 func TestReview_InvalidRating(t *testing.T) {
 	// Puntuación 0 (menor a 1)
 	paramsLow := domain.ReviewParams{
-		ID:            "rev-3",
-		TripID:        "trip-100",
-		BookingID:     "book-100",
-		ReviewerID:    "passenger-1",
-		RevieweeID:    "driver-1",
+		ID:            domain.NewUUIDv7(),
+		TripID:        domain.NewUUIDv7(),
+		BookingID:     domain.NewUUIDv7(),
+		ReviewerID:    domain.NewUUIDv7(),
+		RevieweeID:    domain.NewUUIDv7(),
 		Rating:        0,
 		TripStatus:    domain.TripStatusCompleted,
 		BookingStatus: domain.BookingStatusCompleted,
@@ -75,11 +77,11 @@ func TestReview_InvalidRating(t *testing.T) {
 func TestReview_TripNotCompleted(t *testing.T) {
 	// Viaje aún en progreso
 	params := domain.ReviewParams{
-		ID:            "rev-4",
-		TripID:        "trip-100",
-		BookingID:     "book-100",
-		ReviewerID:    "passenger-1",
-		RevieweeID:    "driver-1",
+		ID:            domain.NewUUIDv7(),
+		TripID:        domain.NewUUIDv7(),
+		BookingID:     domain.NewUUIDv7(),
+		ReviewerID:    domain.NewUUIDv7(),
+		RevieweeID:    domain.NewUUIDv7(),
 		Rating:        4,
 		TripStatus:    domain.TripStatusInProgress,
 		BookingStatus: domain.BookingStatusConfirmed,
@@ -91,7 +93,7 @@ func TestReview_TripNotCompleted(t *testing.T) {
 }
 
 func TestUser_UpdateReputation(t *testing.T) {
-	user := domain.NewUser("usr-1", "ana@example.com", "Ana", "Gomez", "", domain.ProviderGoogle, "g-1")
+	user := domain.NewUser(domain.NewUUIDv7(), "ana@example.com", "Ana", "Gomez", "", domain.ProviderGoogle, "g-1")
 	assert.Equal(t, 5.00, user.RatingAvg)
 	assert.Equal(t, 0, user.RatingCount)
 

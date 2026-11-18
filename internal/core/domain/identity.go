@@ -2,14 +2,16 @@ package domain
 
 import (
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // UserIdentity representa la vinculación explícita, auditable y segura entre una cuenta de usuario interna
 // y una identidad de un proveedor federado externo (Google, Apple, etc.).
 // Esto desacopla la autenticación federada del correo electrónico simple, mitigando ataques de account takeover.
 type UserIdentity struct {
-	ID             string       `json:"id"`
-	UserID         string       `json:"user_id"`
+	ID             uuid.UUID    `json:"id"`
+	UserID         uuid.UUID    `json:"user_id"`
 	Provider       AuthProvider `json:"provider"`
 	ProviderUserID string       `json:"provider_user_id"`
 	Email          string       `json:"email"`
@@ -19,7 +21,7 @@ type UserIdentity struct {
 }
 
 // NewUserIdentity crea una nueva instancia de UserIdentity garantizando timestamps en UTC
-func NewUserIdentity(id, userID string, provider AuthProvider, providerUserID, email string, emailVerified bool) *UserIdentity {
+func NewUserIdentity(id, userID uuid.UUID, provider AuthProvider, providerUserID, email string, emailVerified bool) *UserIdentity {
 	now := time.Now().UTC()
 	return &UserIdentity{
 		ID:             id,

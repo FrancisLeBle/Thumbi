@@ -11,7 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
-	adapterHttp "github.com/thumbi/auth-kyc-service/internal/adapters/handlers/http"
+	adapterHttp "github.com/thumbi/backend/internal/adapters/handlers/http"
 )
 
 type mockHealthDB struct {
@@ -62,14 +62,6 @@ func TestHealthHandler_Health_UP(t *testing.T) {
 	}
 
 	handler := adapterHttp.NewHealthHandler(dbMock)
-	handler.SetStatsFunc(func() map[string]any {
-		return map[string]any{
-			"total_conns":    int32(10),
-			"idle_conns":     int32(8),
-			"acquired_conns": int32(2),
-			"max_conns":      int32(20),
-		}
-	})
 
 	router := setupHealthRouter(handler)
 
@@ -92,7 +84,6 @@ func TestHealthHandler_Health_UP(t *testing.T) {
 	metrics := res["metrics"].(map[string]any)
 	assert.NotNil(t, metrics["goroutines"])
 	assert.NotNil(t, metrics["memory_alloc_mb"])
-	assert.NotNil(t, metrics["db_pool"])
 }
 
 func TestHealthHandler_Health_DB_Down(t *testing.T) {

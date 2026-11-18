@@ -5,10 +5,11 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
+	"github.com/thumbi/backend/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/ports"
 )
 
 // reviewRepository implementa ports.ReviewRepository interactuando con PostgreSQL
@@ -65,7 +66,10 @@ func (r *reviewRepository) Save(ctx context.Context, review *domain.Review) erro
 }
 
 // FindByID recupera una calificación por su identificador único
-func (r *reviewRepository) FindByID(ctx context.Context, id string) (*domain.Review, error) {
+func (r *reviewRepository) FindByID(ctx context.Context, id uuid.UUID) (*domain.Review, error) {
+	if id == uuid.Nil {
+		return nil, domain.ErrReviewNotFound
+	}
 	query := `
 		SELECT 
 			id, trip_id, booking_id, reviewer_id, reviewee_id,
@@ -103,7 +107,10 @@ func (r *reviewRepository) FindByID(ctx context.Context, id string) (*domain.Rev
 }
 
 // FindByBookingAndReviewer consulta una reseña específica por reserva y usuario emisor
-func (r *reviewRepository) FindByBookingAndReviewer(ctx context.Context, bookingID, reviewerID string) (*domain.Review, error) {
+func (r *reviewRepository) FindByBookingAndReviewer(ctx context.Context, bookingID, reviewerID uuid.UUID) (*domain.Review, error) {
+	if bookingID == uuid.Nil || reviewerID == uuid.Nil {
+		return nil, domain.ErrReviewNotFound
+	}
 	query := `
 		SELECT 
 			id, trip_id, booking_id, reviewer_id, reviewee_id,
@@ -141,7 +148,7 @@ func (r *reviewRepository) FindByBookingAndReviewer(ctx context.Context, booking
 }
 
 // ListByUserID obtiene el listado paginado de reseñas recibidas por un usuario (reviewee_id = $1), ordenadas por created_at DESC
-func (r *reviewRepository) ListByUserID(ctx context.Context, userID string, limit, offset int) ([]*domain.Review, error) {
+func (r *reviewRepository) ListByUserID(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*domain.Review, error) {
 	query := `
 		SELECT 
 			id, trip_id, booking_id, reviewer_id, reviewee_id,
@@ -192,7 +199,7 @@ func (r *reviewRepository) ListByUserID(ctx context.Context, userID string, limi
 }
 
 // GetAverageRating ejecuta una consulta agregada directa (AVG(rating), COUNT(*)) como fallback o verificación independiente
-func (r *reviewRepository) GetAverageRating(ctx context.Context, userID string) (float64, int, error) {
+func (r *reviewRepository) GetAverageRating(ctx context.Context, userID uuid.UUID) (float64, int, error) {
 	query := `
 		SELECT 
 			COALESCE(ROUND(AVG(rating)::numeric, 2), 5.00),

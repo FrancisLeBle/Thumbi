@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
+	"github.com/thumbi/backend/internal/core/ports"
 )
 
 // RedisRateLimiter implementa ports.RateLimiter utilizando Redis (mediante protocolo RESP nativo)

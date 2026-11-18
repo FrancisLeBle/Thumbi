@@ -10,16 +10,17 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	adapterHttp "github.com/thumbi/auth-kyc-service/internal/adapters/handlers/http"
-	"github.com/thumbi/auth-kyc-service/internal/adapters/handlers/http/middleware"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
+	adapterHttp "github.com/thumbi/backend/internal/adapters/handlers/http"
+	"github.com/thumbi/backend/internal/adapters/handlers/http/middleware"
+	"github.com/thumbi/backend/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/ports"
 )
 
-// MockBookingService implementa ports.BookingService con testify/mock para pruebas de endpoints HTTP
+// MockBookingService implementa adapterHttp.BookingService con testify/mock para pruebas de endpoints HTTP
 type MockBookingService struct {
 	mock.Mock
 }
@@ -40,15 +41,15 @@ func (m *MockBookingService) ConfirmBookingPayment(ctx context.Context, input po
 	return args.Get(0).(*ports.BookingDTO), args.Error(1)
 }
 
-func (m *MockBookingService) CancelBooking(ctx context.Context, input ports.CancelBookingInput) (*domain.RefundTransaction, error) {
+func (m *MockBookingService) CancelBooking(ctx context.Context, input ports.CancelBookingInput) (*ports.RefundDTO, error) {
 	args := m.Called(ctx, input)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*domain.RefundTransaction), args.Error(1)
+	return args.Get(0).(*ports.RefundDTO), args.Error(1)
 }
 
-func (m *MockBookingService) GetBookingByID(ctx context.Context, bookingID, requestingUserID string) (*ports.BookingDTO, error) {
+func (m *MockBookingService) GetBookingByID(ctx context.Context, bookingID, requestingUserID uuid.UUID) (*ports.BookingDTO, error) {
 	args := m.Called(ctx, bookingID, requestingUserID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -56,7 +57,7 @@ func (m *MockBookingService) GetBookingByID(ctx context.Context, bookingID, requ
 	return args.Get(0).(*ports.BookingDTO), args.Error(1)
 }
 
-func (m *MockBookingService) ListPassengerBookings(ctx context.Context, passengerID string, limit, offset int) ([]*ports.BookingDTO, error) {
+func (m *MockBookingService) ListPassengerBookings(ctx context.Context, passengerID uuid.UUID, limit, offset int) ([]*ports.BookingDTO, error) {
 	args := m.Called(ctx, passengerID, limit, offset)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -64,15 +65,12 @@ func (m *MockBookingService) ListPassengerBookings(ctx context.Context, passenge
 	return args.Get(0).([]*ports.BookingDTO), args.Error(1)
 }
 
-func (m *MockBookingService) ListTripBookings(ctx context.Context, tripID, driverID string) ([]*ports.BookingDTO, error) {
-	args := m.Called(ctx, tripID, driverID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]*ports.BookingDTO), args.Error(1)
+// MockContactLinkService implementa adapterHttp.ContactLinkService con testify/mock
+type MockContactLinkService struct {
+	mock.Mock
 }
 
-func (m *MockBookingService) GetContactLink(ctx context.Context, bookingID, requestingUserID string) (*ports.ContactLinkDTO, error) {
+func (m *MockContactLinkService) GetContactLink(ctx context.Context, bookingID, requestingUserID uuid.UUID) (*ports.ContactLinkDTO, error) {
 	args := m.Called(ctx, bookingID, requestingUserID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -80,16 +78,11 @@ func (m *MockBookingService) GetContactLink(ctx context.Context, bookingID, requ
 	return args.Get(0).(*ports.ContactLinkDTO), args.Error(1)
 }
 
-func (m *MockBookingService) ProcessExpiredBookings(ctx context.Context) (int, error) {
-	args := m.Called(ctx)
-	return args.Int(0), args.Error(1)
-}
-
 // setupBookingTestRouter inicializa un router Gin aislado con mock middleware de autenticación
-func setupBookingTestRouter(mockService *MockBookingService, authUserID string) *gin.Engine {
+func setupBookingTestRouter(mockService *MockBookingService, authUserID uuid.UUID, contactLinkServices ...adapterHttp.ContactLinkService) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 
-	bookingHandler := adapterHttp.NewBookingHandler(mockService)
+	bookingHandler := adapterHttp.NewBookingHandler(mockService, contactLinkServices...)
 
 	fakeAuthMiddleware := func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
@@ -100,33 +93,37 @@ func setupBookingTestRouter(mockService *MockBookingService, authUserID string) 
 			})
 			return
 		}
-		if authUserID != "" {
+		if authUserID != uuid.Nil {
 			c.Set(middleware.CtxUserIDKey, authUserID)
 			c.Set(middleware.CtxUserRoleKey, domain.UserRolePassenger)
 		}
 		c.Next()
 	}
 
-	cfg := adapterHttp.RouterConfig{
-		BookingHandler: bookingHandler,
-		AuthMiddleware: fakeAuthMiddleware,
-	}
+	cfg := baseTestRouterConfig()
+	cfg.BookingHandler = bookingHandler
+	cfg.AuthMiddleware = fakeAuthMiddleware
 
-	return adapterHttp.SetupRouter(cfg)
+	return mustSetupTestRouter(cfg)
 }
 
 func TestBookingHandler_CreateBooking(t *testing.T) {
+	passengerID := uuid.MustParse("01960000-0000-7000-8000-000000000201")
+	driverID := uuid.MustParse("01960000-0000-7000-8000-000000000202")
+	tripID := uuid.MustParse("01960000-0000-7000-8000-000000000101")
+	bookingID := uuid.MustParse("01960000-0000-7000-8000-000000000999")
+
 	t.Run("falla con 401 si no se provee token de autenticación", func(t *testing.T) {
 		mockSvc := new(MockBookingService)
-		router := setupBookingTestRouter(mockSvc, "passenger-123")
+		router := setupBookingTestRouter(mockSvc, passengerID)
 
 		body := adapterHttp.CreateBookingRequest{
-			TripID:         "trip-1",
+			TripID:         tripID.String(),
 			SeatsRequested: 2,
 		}
 		jsonBytes, _ := json.Marshal(body)
 
-		req, _ := http.NewRequest(http.MethodPost, "/api/v1/bookings", bytes.NewBuffer(jsonBytes))
+		req, _ := http.NewRequest(http.MethodPost, "/v1/bookings", bytes.NewBuffer(jsonBytes))
 		req.Header.Set("Content-Type", "application/json")
 		// No se setea Authorization header
 
@@ -138,21 +135,21 @@ func TestBookingHandler_CreateBooking(t *testing.T) {
 
 	t.Run("falla con 400 Bad Request si el conductor intenta reservar su propio viaje", func(t *testing.T) {
 		mockSvc := new(MockBookingService)
-		router := setupBookingTestRouter(mockSvc, "driver-123")
+		router := setupBookingTestRouter(mockSvc, driverID)
 
 		body := adapterHttp.CreateBookingRequest{
-			TripID:         "trip-own",
+			TripID:         tripID.String(),
 			SeatsRequested: 1,
 		}
 		jsonBytes, _ := json.Marshal(body)
 
 		mockSvc.On("CreateBooking", mock.Anything, ports.CreateBookingInput{
-			TripID:         "trip-own",
-			PassengerID:    "driver-123",
+			TripID:         tripID,
+			PassengerID:    driverID,
 			SeatsRequested: 1,
 		}).Return(nil, domain.ErrCannotBookOwnTrip)
 
-		req, _ := http.NewRequest(http.MethodPost, "/api/v1/bookings", bytes.NewBuffer(jsonBytes))
+		req, _ := http.NewRequest(http.MethodPost, "/v1/bookings", bytes.NewBuffer(jsonBytes))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer valid-token")
 
@@ -168,21 +165,21 @@ func TestBookingHandler_CreateBooking(t *testing.T) {
 
 	t.Run("falla con 409 Conflict si los asientos solicitados superan el cupo disponible", func(t *testing.T) {
 		mockSvc := new(MockBookingService)
-		router := setupBookingTestRouter(mockSvc, "passenger-123")
+		router := setupBookingTestRouter(mockSvc, passengerID)
 
 		body := adapterHttp.CreateBookingRequest{
-			TripID:         "trip-full",
+			TripID:         tripID.String(),
 			SeatsRequested: 3,
 		}
 		jsonBytes, _ := json.Marshal(body)
 
 		mockSvc.On("CreateBooking", mock.Anything, ports.CreateBookingInput{
-			TripID:         "trip-full",
-			PassengerID:    "passenger-123",
+			TripID:         tripID,
+			PassengerID:    passengerID,
 			SeatsRequested: 3,
 		}).Return(nil, domain.ErrInsufficientSeats)
 
-		req, _ := http.NewRequest(http.MethodPost, "/api/v1/bookings", bytes.NewBuffer(jsonBytes))
+		req, _ := http.NewRequest(http.MethodPost, "/v1/bookings", bytes.NewBuffer(jsonBytes))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer valid-token")
 
@@ -198,21 +195,21 @@ func TestBookingHandler_CreateBooking(t *testing.T) {
 
 	t.Run("falla con 422 Unprocessable Entity si el pasajero ya tiene una reserva activa en el viaje", func(t *testing.T) {
 		mockSvc := new(MockBookingService)
-		router := setupBookingTestRouter(mockSvc, "passenger-123")
+		router := setupBookingTestRouter(mockSvc, passengerID)
 
 		body := adapterHttp.CreateBookingRequest{
-			TripID:         "trip-dup",
+			TripID:         tripID.String(),
 			SeatsRequested: 1,
 		}
 		jsonBytes, _ := json.Marshal(body)
 
 		mockSvc.On("CreateBooking", mock.Anything, ports.CreateBookingInput{
-			TripID:         "trip-dup",
-			PassengerID:    "passenger-123",
+			TripID:         tripID,
+			PassengerID:    passengerID,
 			SeatsRequested: 1,
 		}).Return(nil, domain.ErrOverlappingTripBooking)
 
-		req, _ := http.NewRequest(http.MethodPost, "/api/v1/bookings", bytes.NewBuffer(jsonBytes))
+		req, _ := http.NewRequest(http.MethodPost, "/v1/bookings", bytes.NewBuffer(jsonBytes))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer valid-token")
 
@@ -228,21 +225,21 @@ func TestBookingHandler_CreateBooking(t *testing.T) {
 
 	t.Run("falla con 429 Too Many Requests si el pasajero excede el límite de reservas pendientes activas", func(t *testing.T) {
 		mockSvc := new(MockBookingService)
-		router := setupBookingTestRouter(mockSvc, "passenger-123")
+		router := setupBookingTestRouter(mockSvc, passengerID)
 
 		body := adapterHttp.CreateBookingRequest{
-			TripID:         "trip-rate",
+			TripID:         tripID.String(),
 			SeatsRequested: 1,
 		}
 		jsonBytes, _ := json.Marshal(body)
 
 		mockSvc.On("CreateBooking", mock.Anything, ports.CreateBookingInput{
-			TripID:         "trip-rate",
-			PassengerID:    "passenger-123",
+			TripID:         tripID,
+			PassengerID:    passengerID,
 			SeatsRequested: 1,
 		}).Return(nil, domain.ErrMaxPendingBookingsExceeded)
 
-		req, _ := http.NewRequest(http.MethodPost, "/api/v1/bookings", bytes.NewBuffer(jsonBytes))
+		req, _ := http.NewRequest(http.MethodPost, "/v1/bookings", bytes.NewBuffer(jsonBytes))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer valid-token")
 
@@ -258,39 +255,40 @@ func TestBookingHandler_CreateBooking(t *testing.T) {
 
 	t.Run("crea exitosamente la reserva con 201 Created y orden de pago en pasarela", func(t *testing.T) {
 		mockSvc := new(MockBookingService)
-		router := setupBookingTestRouter(mockSvc, "passenger-123")
-
-		body := adapterHttp.CreateBookingRequest{
-			TripID:         "trip-ok",
-			SeatsRequested: 2,
-		}
-		jsonBytes, _ := json.Marshal(body)
+		router := setupBookingTestRouter(mockSvc, passengerID)
 
 		mockDTO := &ports.BookingDTO{
-			ID:          "booking-999",
-			TripID:      "trip-ok",
-			PassengerID: "passenger-123",
+			ID:          bookingID,
+			TripID:      tripID,
+			PassengerID: passengerID,
 			SeatsBooked: 2,
-			UnitPrice:   domain.Money(150000),
-			TotalPrice:  domain.Money(300000),
+			Currency:    domain.CurrencyARS,
+			UnitPrice:   domain.MoneyFromCents(150000, domain.CurrencyARS),
+			TotalPrice:  domain.MoneyFromCents(300000, domain.CurrencyARS),
 			Status:      domain.BookingStatusPendingPayment,
 			ExpiresAt:   time.Now().Add(15 * time.Minute).Format(time.RFC3339),
 			PaymentIntent: &ports.PaymentIntentResult{
 				GatewayRef:   "pi_mock_12345",
 				ClientSecret: "pi_mock_12345_secret_abc",
-				Amount:       domain.Money(300000),
-				Currency:     "USD",
+				Amount:       domain.MoneyFromCents(300000, domain.CurrencyARS),
+				Currency:     domain.CurrencyARS,
 				Status:       "requires_payment_method",
 			},
 		}
 
 		mockSvc.On("CreateBooking", mock.Anything, ports.CreateBookingInput{
-			TripID:         "trip-ok",
-			PassengerID:    "passenger-123",
+			TripID:         tripID,
+			PassengerID:    passengerID,
 			SeatsRequested: 2,
 		}).Return(mockDTO, nil)
 
-		req, _ := http.NewRequest(http.MethodPost, "/api/v1/bookings", bytes.NewBuffer(jsonBytes))
+		body := adapterHttp.CreateBookingRequest{
+			TripID:         tripID.String(),
+			SeatsRequested: 2,
+		}
+		jsonBytes, _ := json.Marshal(body)
+
+		req, _ := http.NewRequest(http.MethodPost, "/v1/bookings", bytes.NewBuffer(jsonBytes))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer valid-token")
 
@@ -303,29 +301,81 @@ func TestBookingHandler_CreateBooking(t *testing.T) {
 		require.NoError(t, err)
 		assert.Contains(t, resp, "booking")
 		bookingData := resp["booking"].(map[string]any)
-		assert.Equal(t, "booking-999", bookingData["id"])
+		assert.Equal(t, bookingID.String(), bookingData["id"])
 		assert.Equal(t, "PENDING_PAYMENT", bookingData["status"])
-		assert.Equal(t, float64(300000), bookingData["total_price"])
+		assert.Equal(t, map[string]any{
+			"amount":   float64(300000),
+			"currency": "ARS",
+		}, bookingData["total_price"])
+	})
+
+	t.Run("ignora passenger_id inyectado en el cuerpo JSON y usa exclusivamente el del token autenticado", func(t *testing.T) {
+		mockSvc := new(MockBookingService)
+		router := setupBookingTestRouter(mockSvc, passengerID)
+		spoofedVictimID := uuid.MustParse("01960000-0000-7000-8000-000000000991")
+
+		mockDTO := &ports.BookingDTO{
+			ID:          bookingID,
+			TripID:      tripID,
+			PassengerID: passengerID,
+			SeatsBooked: 1,
+			Currency:    domain.CurrencyARS,
+			UnitPrice:   domain.MoneyFromCents(150000, domain.CurrencyARS),
+			TotalPrice:  domain.MoneyFromCents(150000, domain.CurrencyARS),
+			Status:      domain.BookingStatusPendingPayment,
+			ExpiresAt:   time.Now().Add(15 * time.Minute).Format(time.RFC3339),
+		}
+
+		mockSvc.On("CreateBooking", mock.Anything, ports.CreateBookingInput{
+			TripID:         tripID,
+			PassengerID:    passengerID,
+			SeatsRequested: 1,
+		}).Return(mockDTO, nil)
+
+		spoofedPayload, _ := json.Marshal(map[string]any{
+			"trip_id":         tripID.String(),
+			"passenger_id":    spoofedVictimID.String(),
+			"seats_requested": 1,
+		})
+
+		req, _ := http.NewRequest(http.MethodPost, "/v1/bookings", bytes.NewBuffer(spoofedPayload))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer valid-token")
+
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusCreated, w.Code)
+		mockSvc.AssertExpectations(t)
 	})
 }
 
 func TestBookingHandler_ConfirmPayment(t *testing.T) {
+	passengerID := uuid.MustParse("01960000-0000-7000-8000-000000000201")
+	differentPassengerID := uuid.MustParse("01960000-0000-7000-8000-000000000203")
+	tripID := uuid.MustParse("01960000-0000-7000-8000-000000000101")
+	bookingID := uuid.MustParse("01960000-0000-7000-8000-000000000999")
+	expiredBookingID := uuid.MustParse("01960000-0000-7000-8000-000000000998")
+	notFoundBookingID := uuid.MustParse("01960000-0000-7000-8000-000000000997")
+	webhookBookingID := uuid.MustParse("01960000-0000-7000-8000-000000000996")
+
 	t.Run("confirma exitosamente el pago y fondea el Escrow (200 OK)", func(t *testing.T) {
 		mockSvc := new(MockBookingService)
-		router := setupBookingTestRouter(mockSvc, "passenger-123")
+		router := setupBookingTestRouter(mockSvc, passengerID)
 
 		confirmedDTO := &ports.BookingDTO{
-			ID:          "booking-999",
-			TripID:      "trip-ok",
-			PassengerID: "passenger-123",
+			ID:          bookingID,
+			TripID:      tripID,
+			PassengerID: passengerID,
 			SeatsBooked: 2,
-			TotalPrice:  domain.Money(300000),
+			Currency:    domain.CurrencyARS,
+			TotalPrice:  domain.MoneyFromCents(300000, domain.CurrencyARS),
 			Status:      domain.BookingStatusConfirmed,
 		}
 
 		mockSvc.On("ConfirmBookingPayment", mock.Anything, ports.ConfirmBookingPaymentInput{
-			BookingID:         "booking-999",
-			RequestingUserID:  "passenger-123",
+			BookingID:         bookingID,
+			RequestingUserID:  passengerID,
 			PaymentGatewayRef: "pi_mock_12345",
 			IsWebhook:         false,
 		}).Return(confirmedDTO, nil)
@@ -335,7 +385,7 @@ func TestBookingHandler_ConfirmPayment(t *testing.T) {
 		}
 		jsonBytes, _ := json.Marshal(body)
 
-		req, _ := http.NewRequest(http.MethodPost, "/api/v1/bookings/booking-999/confirm-payment", bytes.NewBuffer(jsonBytes))
+		req, _ := http.NewRequest(http.MethodPost, "/v1/bookings/"+bookingID.String()+"/confirm-payment", bytes.NewBuffer(jsonBytes))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer valid-token")
 
@@ -352,11 +402,11 @@ func TestBookingHandler_ConfirmPayment(t *testing.T) {
 
 	t.Run("falla con 403 Forbidden si el usuario autenticado no es el pasajero de la reserva", func(t *testing.T) {
 		mockSvc := new(MockBookingService)
-		router := setupBookingTestRouter(mockSvc, "passenger-different")
+		router := setupBookingTestRouter(mockSvc, differentPassengerID)
 
 		mockSvc.On("ConfirmBookingPayment", mock.Anything, ports.ConfirmBookingPaymentInput{
-			BookingID:         "booking-999",
-			RequestingUserID:  "passenger-different",
+			BookingID:         bookingID,
+			RequestingUserID:  differentPassengerID,
 			PaymentGatewayRef: "pi_mock_12345",
 			IsWebhook:         false,
 		}).Return(nil, domain.ErrUnauthorized)
@@ -366,7 +416,7 @@ func TestBookingHandler_ConfirmPayment(t *testing.T) {
 		}
 		jsonBytes, _ := json.Marshal(body)
 
-		req, _ := http.NewRequest(http.MethodPost, "/api/v1/bookings/booking-999/confirm-payment", bytes.NewBuffer(jsonBytes))
+		req, _ := http.NewRequest(http.MethodPost, "/v1/bookings/"+bookingID.String()+"/confirm-payment", bytes.NewBuffer(jsonBytes))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer valid-token")
 
@@ -382,11 +432,11 @@ func TestBookingHandler_ConfirmPayment(t *testing.T) {
 
 	t.Run("falla con 400 Bad Request si la referencia de pasarela no coincide con el intent de la reserva", func(t *testing.T) {
 		mockSvc := new(MockBookingService)
-		router := setupBookingTestRouter(mockSvc, "passenger-123")
+		router := setupBookingTestRouter(mockSvc, passengerID)
 
 		mockSvc.On("ConfirmBookingPayment", mock.Anything, ports.ConfirmBookingPaymentInput{
-			BookingID:         "booking-999",
-			RequestingUserID:  "passenger-123",
+			BookingID:         bookingID,
+			RequestingUserID:  passengerID,
 			PaymentGatewayRef: "pi_wrong_intent",
 			IsWebhook:         false,
 		}).Return(nil, domain.ErrInvalidPaymentGatewayRef)
@@ -396,7 +446,7 @@ func TestBookingHandler_ConfirmPayment(t *testing.T) {
 		}
 		jsonBytes, _ := json.Marshal(body)
 
-		req, _ := http.NewRequest(http.MethodPost, "/api/v1/bookings/booking-999/confirm-payment", bytes.NewBuffer(jsonBytes))
+		req, _ := http.NewRequest(http.MethodPost, "/v1/bookings/"+bookingID.String()+"/confirm-payment", bytes.NewBuffer(jsonBytes))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer valid-token")
 
@@ -412,11 +462,11 @@ func TestBookingHandler_ConfirmPayment(t *testing.T) {
 
 	t.Run("falla con 410 Gone si la reserva ha expirado por TTL", func(t *testing.T) {
 		mockSvc := new(MockBookingService)
-		router := setupBookingTestRouter(mockSvc, "passenger-123")
+		router := setupBookingTestRouter(mockSvc, passengerID)
 
 		mockSvc.On("ConfirmBookingPayment", mock.Anything, ports.ConfirmBookingPaymentInput{
-			BookingID:         "booking-expired",
-			RequestingUserID:  "passenger-123",
+			BookingID:         expiredBookingID,
+			RequestingUserID:  passengerID,
 			PaymentGatewayRef: "pi_mock_expired",
 			IsWebhook:         false,
 		}).Return(nil, domain.ErrBookingExpired)
@@ -426,7 +476,7 @@ func TestBookingHandler_ConfirmPayment(t *testing.T) {
 		}
 		jsonBytes, _ := json.Marshal(body)
 
-		req, _ := http.NewRequest(http.MethodPost, "/api/v1/bookings/booking-expired/confirm-payment", bytes.NewBuffer(jsonBytes))
+		req, _ := http.NewRequest(http.MethodPost, "/v1/bookings/"+expiredBookingID.String()+"/confirm-payment", bytes.NewBuffer(jsonBytes))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer valid-token")
 
@@ -442,11 +492,11 @@ func TestBookingHandler_ConfirmPayment(t *testing.T) {
 
 	t.Run("falla con 404 Not Found si la reserva no existe", func(t *testing.T) {
 		mockSvc := new(MockBookingService)
-		router := setupBookingTestRouter(mockSvc, "passenger-123")
+		router := setupBookingTestRouter(mockSvc, passengerID)
 
 		mockSvc.On("ConfirmBookingPayment", mock.Anything, ports.ConfirmBookingPaymentInput{
-			BookingID:         "booking-notfound",
-			RequestingUserID:  "passenger-123",
+			BookingID:         notFoundBookingID,
+			RequestingUserID:  passengerID,
 			PaymentGatewayRef: "pi_mock_ref",
 			IsWebhook:         false,
 		}).Return(nil, domain.ErrBookingNotFound)
@@ -456,7 +506,7 @@ func TestBookingHandler_ConfirmPayment(t *testing.T) {
 		}
 		jsonBytes, _ := json.Marshal(body)
 
-		req, _ := http.NewRequest(http.MethodPost, "/api/v1/bookings/booking-notfound/confirm-payment", bytes.NewBuffer(jsonBytes))
+		req, _ := http.NewRequest(http.MethodPost, "/v1/bookings/"+notFoundBookingID.String()+"/confirm-payment", bytes.NewBuffer(jsonBytes))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer valid-token")
 
@@ -468,36 +518,37 @@ func TestBookingHandler_ConfirmPayment(t *testing.T) {
 
 	t.Run("procesa exitosamente confirmación autoritativa vía webhook firmado de pasarela", func(t *testing.T) {
 		mockSvc := new(MockBookingService)
-		router := setupBookingTestRouter(mockSvc, "")
+		router := setupBookingTestRouter(mockSvc, uuid.Nil)
 
 		confirmedDTO := &ports.BookingDTO{
-			ID:          "booking-webhook-ok",
-			TripID:      "trip-1",
-			PassengerID: "passenger-123",
+			ID:          webhookBookingID,
+			TripID:      tripID,
+			PassengerID: passengerID,
 			SeatsBooked: 2,
-			TotalPrice:  domain.Money(300000),
+			Currency:    domain.CurrencyARS,
+			TotalPrice:  domain.MoneyFromCents(300000, domain.CurrencyARS),
 			Status:      domain.BookingStatusConfirmed,
 		}
 
 		mockSvc.On("ConfirmBookingPayment", mock.Anything, ports.ConfirmBookingPaymentInput{
-			BookingID:         "booking-webhook-ok",
+			BookingID:         webhookBookingID,
 			PaymentGatewayRef: "pi_gateway_webhook_ref",
 			IsWebhook:         true,
 		}).Return(confirmedDTO, nil)
 
 		webhookBody := adapterHttp.PaymentWebhookRequest{
 			Event:             "payment_intent.succeeded",
-			BookingID:         "booking-webhook-ok",
+			BookingID:         webhookBookingID.String(),
 			PaymentGatewayRef: "pi_gateway_webhook_ref",
-			Amount:            domain.Money(300000),
-			Currency:          "USD",
+			Amount:            domain.MoneyFromCents(300000, domain.CurrencyARS),
+			Currency:          string(domain.CurrencyARS),
 		}
 		jsonBytes, _ := json.Marshal(webhookBody)
 
-		req, _ := http.NewRequest(http.MethodPost, "/api/v1/payments/webhook", bytes.NewBuffer(jsonBytes))
+		req, _ := http.NewRequest(http.MethodPost, "/v1/payments/webhook", bytes.NewBuffer(jsonBytes))
 		req.Header.Set("Content-Type", "application/json")
 		// Encabezado de autenticación de webhook admitido por WebhookAuthMiddleware
-		req.Header.Set("X-Webhook-Secret", middleware.DefaultWebhookSecret)
+		req.Header.Set("X-Webhook-Secret", testWebhookSecret)
 
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
@@ -511,24 +562,30 @@ func TestBookingHandler_ConfirmPayment(t *testing.T) {
 }
 
 func TestBookingHandler_CancelBooking(t *testing.T) {
+	passengerID := uuid.MustParse("01960000-0000-7000-8000-000000000201")
+	strangerID := uuid.MustParse("01960000-0000-7000-8000-000000000209")
+	bookingID := uuid.MustParse("01960000-0000-7000-8000-000000000901")
+	refundID := uuid.MustParse("01960000-0000-7000-8000-000000000701")
+	escrowID := uuid.MustParse("01960000-0000-7000-8000-000000000601")
+
 	t.Run("cancela la reserva y retorna los datos de liquidación y reembolso (200 OK)", func(t *testing.T) {
 		mockSvc := new(MockBookingService)
-		router := setupBookingTestRouter(mockSvc, "passenger-123")
+		router := setupBookingTestRouter(mockSvc, passengerID)
 
-		mockRefund := &domain.RefundTransaction{
-			ID:                       "ref-001",
-			EscrowTransactionID:      "esc-001",
-			BookingID:                "booking-123",
-			PassengerRefundAmount:    domain.Money(300000),
-			DriverCompensationAmount: domain.Money(0),
+		mockRefund := &ports.RefundDTO{
+			ID:                       refundID,
+			EscrowTransactionID:      escrowID,
+			BookingID:                bookingID,
+			PassengerRefundAmount:    domain.MoneyFromCents(300000, domain.CurrencyARS),
+			DriverCompensationAmount: domain.MoneyFromCents(0, domain.CurrencyARS),
 			RefundType:               domain.RefundTypePassengerEarly,
 			GatewayRefundRef:         "re_mock_12345",
-			ProcessedAt:              time.Now().UTC(),
+			ProcessedAt:              time.Now().UTC().Format(time.RFC3339),
 		}
 
 		mockSvc.On("CancelBooking", mock.Anything, ports.CancelBookingInput{
-			BookingID:        "booking-123",
-			RequestingUserID: "passenger-123",
+			BookingID:        bookingID,
+			RequestingUserID: passengerID,
 			Reason:           "Cambio de itinerario",
 		}).Return(mockRefund, nil)
 
@@ -537,7 +594,7 @@ func TestBookingHandler_CancelBooking(t *testing.T) {
 		}
 		jsonBytes, _ := json.Marshal(body)
 
-		req, _ := http.NewRequest(http.MethodPost, "/api/v1/bookings/booking-123/cancel", bytes.NewBuffer(jsonBytes))
+		req, _ := http.NewRequest(http.MethodPost, "/v1/bookings/"+bookingID.String()+"/cancel", bytes.NewBuffer(jsonBytes))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer valid-token")
 
@@ -554,15 +611,15 @@ func TestBookingHandler_CancelBooking(t *testing.T) {
 
 	t.Run("falla con 403 Forbidden si el solicitante no es ni pasajero ni conductor de la reserva", func(t *testing.T) {
 		mockSvc := new(MockBookingService)
-		router := setupBookingTestRouter(mockSvc, "stranger-999")
+		router := setupBookingTestRouter(mockSvc, strangerID)
 
 		mockSvc.On("CancelBooking", mock.Anything, ports.CancelBookingInput{
-			BookingID:        "booking-123",
-			RequestingUserID: "stranger-999",
+			BookingID:        bookingID,
+			RequestingUserID: strangerID,
 			Reason:           "",
 		}).Return(nil, domain.ErrUnauthorized)
 
-		req, _ := http.NewRequest(http.MethodPost, "/api/v1/bookings/booking-123/cancel", bytes.NewBufferString("{}"))
+		req, _ := http.NewRequest(http.MethodPost, "/v1/bookings/"+bookingID.String()+"/cancel", bytes.NewBufferString("{}"))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer valid-token")
 
@@ -578,22 +635,28 @@ func TestBookingHandler_CancelBooking(t *testing.T) {
 }
 
 func TestBookingHandler_GetBookingByID(t *testing.T) {
+	passengerID := uuid.MustParse("01960000-0000-7000-8000-000000000201")
+	bookingID := uuid.MustParse("01960000-0000-7000-8000-000000000901")
+	notFoundBookingID := uuid.MustParse("01960000-0000-7000-8000-000000000997")
+	tripID := uuid.MustParse("01960000-0000-7000-8000-000000000456")
+
 	t.Run("obtiene exitosamente el detalle de una reserva", func(t *testing.T) {
 		mockSvc := new(MockBookingService)
-		router := setupBookingTestRouter(mockSvc, "passenger-123")
+		router := setupBookingTestRouter(mockSvc, passengerID)
 
 		mockDTO := &ports.BookingDTO{
-			ID:          "booking-123",
-			TripID:      "trip-456",
-			PassengerID: "passenger-123",
+			ID:          bookingID,
+			TripID:      tripID,
+			PassengerID: passengerID,
 			SeatsBooked: 2,
-			TotalPrice:  domain.Money(300000),
+			Currency:    domain.CurrencyARS,
+			TotalPrice:  domain.MoneyFromCents(300000, domain.CurrencyARS),
 			Status:      domain.BookingStatusConfirmed,
 		}
 
-		mockSvc.On("GetBookingByID", mock.Anything, "booking-123", "passenger-123").Return(mockDTO, nil)
+		mockSvc.On("GetBookingByID", mock.Anything, bookingID, passengerID).Return(mockDTO, nil)
 
-		req, _ := http.NewRequest(http.MethodGet, "/api/v1/bookings/booking-123", nil)
+		req, _ := http.NewRequest(http.MethodGet, "/v1/bookings/"+bookingID.String(), nil)
 		req.Header.Set("Authorization", "Bearer valid-token")
 
 		w := httptest.NewRecorder()
@@ -608,11 +671,11 @@ func TestBookingHandler_GetBookingByID(t *testing.T) {
 
 	t.Run("retorna 404 si la reserva no existe", func(t *testing.T) {
 		mockSvc := new(MockBookingService)
-		router := setupBookingTestRouter(mockSvc, "passenger-123")
+		router := setupBookingTestRouter(mockSvc, passengerID)
 
-		mockSvc.On("GetBookingByID", mock.Anything, "booking-notfound", "passenger-123").Return(nil, domain.ErrBookingNotFound)
+		mockSvc.On("GetBookingByID", mock.Anything, notFoundBookingID, passengerID).Return(nil, domain.ErrBookingNotFound)
 
-		req, _ := http.NewRequest(http.MethodGet, "/api/v1/bookings/booking-notfound", nil)
+		req, _ := http.NewRequest(http.MethodGet, "/v1/bookings/"+notFoundBookingID.String(), nil)
 		req.Header.Set("Authorization", "Bearer valid-token")
 
 		w := httptest.NewRecorder()
@@ -623,32 +686,40 @@ func TestBookingHandler_GetBookingByID(t *testing.T) {
 }
 
 func TestBookingHandler_MyBookings(t *testing.T) {
+	passengerID := uuid.MustParse("01960000-0000-7000-8000-000000000201")
+	bookingID1 := uuid.MustParse("01960000-0000-7000-8000-000000000901")
+	bookingID2 := uuid.MustParse("01960000-0000-7000-8000-000000000902")
+	tripID10 := uuid.MustParse("01960000-0000-7000-8000-000000000110")
+	tripID20 := uuid.MustParse("01960000-0000-7000-8000-000000000120")
+
 	t.Run("retorna el historial paginado de reservas del pasajero", func(t *testing.T) {
 		mockSvc := new(MockBookingService)
-		router := setupBookingTestRouter(mockSvc, "passenger-123")
+		router := setupBookingTestRouter(mockSvc, passengerID)
 
 		mockList := []*ports.BookingDTO{
 			{
-				ID:          "booking-1",
-				TripID:      "trip-10",
-				PassengerID: "passenger-123",
+				ID:          bookingID1,
+				TripID:      tripID10,
+				PassengerID: passengerID,
 				SeatsBooked: 1,
-				TotalPrice:  domain.Money(150000),
+				Currency:    domain.CurrencyARS,
+				TotalPrice:  domain.MoneyFromCents(150000, domain.CurrencyARS),
 				Status:      domain.BookingStatusConfirmed,
 			},
 			{
-				ID:          "booking-2",
-				TripID:      "trip-20",
-				PassengerID: "passenger-123",
+				ID:          bookingID2,
+				TripID:      tripID20,
+				PassengerID: passengerID,
 				SeatsBooked: 2,
-				TotalPrice:  domain.Money(300000),
+				Currency:    domain.CurrencyARS,
+				TotalPrice:  domain.MoneyFromCents(300000, domain.CurrencyARS),
 				Status:      domain.BookingStatusPendingPayment,
 			},
 		}
 
-		mockSvc.On("ListPassengerBookings", mock.Anything, "passenger-123", 20, 0).Return(mockList, nil)
+		mockSvc.On("ListPassengerBookings", mock.Anything, passengerID, 20, 0).Return(mockList, nil)
 
-		req, _ := http.NewRequest(http.MethodGet, "/api/v1/bookings/my-bookings", nil)
+		req, _ := http.NewRequest(http.MethodGet, "/v1/bookings/my-bookings", nil)
 		req.Header.Set("Authorization", "Bearer valid-token")
 
 		w := httptest.NewRecorder()
@@ -664,11 +735,17 @@ func TestBookingHandler_MyBookings(t *testing.T) {
 }
 
 func TestBookingHandler_GetContactLink(t *testing.T) {
+	passengerID := uuid.MustParse("01960000-0000-7000-8000-000000000201")
+	differentPassengerID := uuid.MustParse("01960000-0000-7000-8000-000000000203")
+	bookingID := uuid.MustParse("01960000-0000-7000-8000-000000000901")
+	notFoundBookingID := uuid.MustParse("01960000-0000-7000-8000-000000000997")
+
 	t.Run("falla con 401 si no se provee token de autenticación", func(t *testing.T) {
 		mockSvc := new(MockBookingService)
-		router := setupBookingTestRouter(mockSvc, "passenger-123")
+		mockContactSvc := new(MockContactLinkService)
+		router := setupBookingTestRouter(mockSvc, passengerID, mockContactSvc)
 
-		req, _ := http.NewRequest(http.MethodGet, "/api/v1/bookings/booking-1/contact-link", nil)
+		req, _ := http.NewRequest(http.MethodGet, "/v1/bookings/"+bookingID.String()+"/contact-link", nil)
 		// Sin header Authorization
 
 		w := httptest.NewRecorder()
@@ -679,12 +756,13 @@ func TestBookingHandler_GetContactLink(t *testing.T) {
 
 	t.Run("falla con 403 si la reserva no pertenece al usuario solicitante", func(t *testing.T) {
 		mockSvc := new(MockBookingService)
-		router := setupBookingTestRouter(mockSvc, "passenger-different")
+		mockContactSvc := new(MockContactLinkService)
+		router := setupBookingTestRouter(mockSvc, differentPassengerID, mockContactSvc)
 
-		mockSvc.On("GetContactLink", mock.Anything, "booking-1", "passenger-different").
+		mockContactSvc.On("GetContactLink", mock.Anything, bookingID, differentPassengerID).
 			Return(nil, domain.ErrUnauthorized)
 
-		req, _ := http.NewRequest(http.MethodGet, "/api/v1/bookings/booking-1/contact-link", nil)
+		req, _ := http.NewRequest(http.MethodGet, "/v1/bookings/"+bookingID.String()+"/contact-link", nil)
 		req.Header.Set("Authorization", "Bearer valid-token")
 
 		w := httptest.NewRecorder()
@@ -699,12 +777,13 @@ func TestBookingHandler_GetContactLink(t *testing.T) {
 
 	t.Run("falla con 404 si la reserva no existe", func(t *testing.T) {
 		mockSvc := new(MockBookingService)
-		router := setupBookingTestRouter(mockSvc, "passenger-123")
+		mockContactSvc := new(MockContactLinkService)
+		router := setupBookingTestRouter(mockSvc, passengerID, mockContactSvc)
 
-		mockSvc.On("GetContactLink", mock.Anything, "booking-notfound", "passenger-123").
+		mockContactSvc.On("GetContactLink", mock.Anything, notFoundBookingID, passengerID).
 			Return(nil, domain.ErrBookingNotFound)
 
-		req, _ := http.NewRequest(http.MethodGet, "/api/v1/bookings/booking-notfound/contact-link", nil)
+		req, _ := http.NewRequest(http.MethodGet, "/v1/bookings/"+notFoundBookingID.String()+"/contact-link", nil)
 		req.Header.Set("Authorization", "Bearer valid-token")
 
 		w := httptest.NewRecorder()
@@ -719,17 +798,18 @@ func TestBookingHandler_GetContactLink(t *testing.T) {
 
 	t.Run("retorna 200 OK con whatsapp_url y driver_phone para el pasajero autenticado", func(t *testing.T) {
 		mockSvc := new(MockBookingService)
-		router := setupBookingTestRouter(mockSvc, "passenger-123")
+		mockContactSvc := new(MockContactLinkService)
+		router := setupBookingTestRouter(mockSvc, passengerID, mockContactSvc)
 
 		expectedDTO := &ports.ContactLinkDTO{
 			WhatsAppURL: "https://wa.me/5491112345678?text=%C2%A1Hola%21+Te+escribo+por+el+viaje+de+hoy...",
 			DriverPhone: "+54 9 11 1234-5678",
 		}
 
-		mockSvc.On("GetContactLink", mock.Anything, "booking-1", "passenger-123").
+		mockContactSvc.On("GetContactLink", mock.Anything, bookingID, passengerID).
 			Return(expectedDTO, nil)
 
-		req, _ := http.NewRequest(http.MethodGet, "/api/v1/bookings/booking-1/contact-link", nil)
+		req, _ := http.NewRequest(http.MethodGet, "/v1/bookings/"+bookingID.String()+"/contact-link", nil)
 		req.Header.Set("Authorization", "Bearer valid-token")
 
 		w := httptest.NewRecorder()
@@ -745,12 +825,13 @@ func TestBookingHandler_GetContactLink(t *testing.T) {
 
 	t.Run("retorna 422 Unprocessable Entity si el conductor no posee teléfono registrado", func(t *testing.T) {
 		mockSvc := new(MockBookingService)
-		router := setupBookingTestRouter(mockSvc, "passenger-123")
+		mockContactSvc := new(MockContactLinkService)
+		router := setupBookingTestRouter(mockSvc, passengerID, mockContactSvc)
 
-		mockSvc.On("GetContactLink", mock.Anything, "booking-1", "passenger-123").
+		mockContactSvc.On("GetContactLink", mock.Anything, bookingID, passengerID).
 			Return(nil, domain.ErrDriverPhoneRequired)
 
-		req, _ := http.NewRequest(http.MethodGet, "/api/v1/bookings/booking-1/contact-link", nil)
+		req, _ := http.NewRequest(http.MethodGet, "/v1/bookings/"+bookingID.String()+"/contact-link", nil)
 		req.Header.Set("Authorization", "Bearer valid-token")
 
 		w := httptest.NewRecorder()

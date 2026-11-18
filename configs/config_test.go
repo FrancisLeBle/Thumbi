@@ -9,77 +9,205 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestConfig_ProductionValidation_FailsOnMissingJWTSecret(t *testing.T) {
-	// Limpiar variables de entorno para la prueba
-	os.Unsetenv("JWT_SECRET")
-	os.Setenv("ENV", "production")
-	os.Setenv("DATABASE_URL", "postgres://user:pass@db:5432/mydb")
-	os.Setenv("WEBHOOK_SECRET", "this-is-a-valid-webhook-secret-at-least-32-chars")
-	defer func() {
-		os.Unsetenv("ENV")
-		os.Unsetenv("DATABASE_URL")
-		os.Unsetenv("WEBHOOK_SECRET")
-	}()
-
-	cfg, err := LoadConfigWithEnvFile("")
-	assert.Error(t, err)
-	assert.Nil(t, cfg)
-	assert.Contains(t, err.Error(), "JWT_SECRET")
+func setValidProdEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("ENV", "production")
+	t.Setenv("DATABASE_URL", "postgres://produser:StrongRdsSecret#928@db.internal:5432/thumbi?sslmode=require")
+	t.Setenv("WEBHOOK_SECRET", "super-secure-webhook-secret-key-with-at-least-32-chars")
+	t.Setenv("REDIS_ADDR", "redis.internal:6379")
+	t.Setenv("GOOGLE_CLIENT_ID", "1234567890-abc.apps.googleusercontent.com")
+	t.Setenv("APPLE_CLIENT_ID", "app.thumbi.carpooling.client")
+	t.Setenv("OSRM_BASE_URL", DefaultOSRMBaseURL)
 }
 
-func TestConfig_ProductionValidation_FailsOnShortJWTSecret(t *testing.T) {
-	os.Setenv("ENV", "production")
-	os.Setenv("JWT_SECRET", "too-short-secret") // < 32 bytes
-	os.Setenv("DATABASE_URL", "postgres://user:pass@db:5432/mydb")
-	os.Setenv("WEBHOOK_SECRET", "this-is-a-valid-webhook-secret-at-least-32-chars")
-	defer func() {
-		os.Unsetenv("ENV")
-		os.Unsetenv("JWT_SECRET")
-		os.Unsetenv("DATABASE_URL")
-		os.Unsetenv("WEBHOOK_SECRET")
-	}()
+func clearConfigEnv(t *testing.T) {
+	t.Helper()
+	for _, k := range []string{
+		"ENV",
+		"DATABASE_URL",
+		"DATABASE_URL_FILE",
+		"WEBHOOK_SECRET",
+		"WEBHOOK_SECRET_FILE",
+		"REDIS_ADDR",
+		"REDIS_URL",
+		"REDIS_URL_FILE",
+		"GOOGLE_CLIENT_ID",
+		"APPLE_CLIENT_ID",
+		"OSRM_BASE_URL",
+	} {
+		t.Setenv(k, "")
+		_ = os.Unsetenv(k)
+	}
+}
+
+func TestConfig_FailFastOnMissingEnv(t *testing.T) {
+	clearConfigEnv(t)
 
 	cfg, err := LoadConfigWithEnvFile("")
 	assert.Error(t, err)
 	assert.Nil(t, cfg)
-	assert.Contains(t, err.Error(), "debe tener al menos 32 bytes")
+	assert.Contains(t, err.Error(), "ENV")
+}
+
+func TestConfig_ProductionValidation_FailsOnMissingSecretsOrDeps(t *testing.T) {
+	t.Run("falla sin DATABASE_URL", func(t *testing.T) {
+		setValidProdEnv(t)
+		_ = os.Unsetenv("DATABASE_URL")
+
+		cfg, err := LoadConfigWithEnvFile("")
+		assert.Error(t, err)
+		assert.Nil(t, cfg)
+		assert.Contains(t, err.Error(), "DATABASE_URL")
+	})
+
+	t.Run("falla con sslmode=disable en production", func(t *testing.T) {
+		setValidProdEnv(t)
+		t.Setenv("DATABASE_URL", "postgres://produser:StrongRdsSecret#928@db.internal:5432/thumbi?sslmode=disable")
+
+		cfg, err := LoadConfigWithEnvFile("")
+		assert.Error(t, err)
+		assert.Nil(t, cfg)
+		assert.Contains(t, err.Error(), "sslmode=disable")
+	})
+
+	t.Run("falla sin WEBHOOK_SECRET", func(t *testing.T) {
+		setValidProdEnv(t)
+		_ = os.Unsetenv("WEBHOOK_SECRET")
+
+		cfg, err := LoadConfigWithEnvFile("")
+		assert.Error(t, err)
+		assert.Nil(t, cfg)
+		assert.Contains(t, err.Error(), "WEBHOOK_SECRET")
+	})
+
+	t.Run("falla con WEBHOOK_SECRET demasiado corto", func(t *testing.T) {
+		setValidProdEnv(t)
+		t.Setenv("WEBHOOK_SECRET", "short-secret")
+
+		cfg, err := LoadConfigWithEnvFile("")
+		assert.Error(t, err)
+		assert.Nil(t, cfg)
+		assert.Contains(t, err.Error(), "32")
+	})
+
+	t.Run("falla sin REDIS_ADDR ni REDIS_URL", func(t *testing.T) {
+		setValidProdEnv(t)
+		_ = os.Unsetenv("REDIS_ADDR")
+		_ = os.Unsetenv("REDIS_URL")
+
+		cfg, err := LoadConfigWithEnvFile("")
+		assert.Error(t, err)
+		assert.Nil(t, cfg)
+		assert.Contains(t, err.Error(), "REDIS")
+	})
+
+	t.Run("falla sin GOOGLE_CLIENT_ID o APPLE_CLIENT_ID", func(t *testing.T) {
+		setValidProdEnv(t)
+		_ = os.Unsetenv("GOOGLE_CLIENT_ID")
+
+		cfg, err := LoadConfigWithEnvFile("")
+		assert.Error(t, err)
+		assert.Nil(t, cfg)
+		assert.Contains(t, err.Error(), "GOOGLE_CLIENT_ID")
+
+		setValidProdEnv(t)
+		_ = os.Unsetenv("APPLE_CLIENT_ID")
+
+		cfg, err = LoadConfigWithEnvFile("")
+		assert.Error(t, err)
+		assert.Nil(t, cfg)
+		assert.Contains(t, err.Error(), "APPLE_CLIENT_ID")
+	})
+
+	t.Run("falla sin OSRM_BASE_URL en production", func(t *testing.T) {
+		setValidProdEnv(t)
+		_ = os.Unsetenv("OSRM_BASE_URL")
+
+		cfg, err := LoadConfigWithEnvFile("")
+		assert.Error(t, err)
+		assert.Nil(t, cfg)
+		assert.Contains(t, err.Error(), "OSRM_BASE_URL")
+	})
+
+	t.Run("entorno desconocido distinto a local/development aplica fail-fast estricto", func(t *testing.T) {
+		clearConfigEnv(t)
+		t.Setenv("ENV", "staging")
+
+		cfg, err := LoadConfigWithEnvFile("")
+		assert.Error(t, err)
+		assert.Nil(t, cfg)
+		assert.Contains(t, err.Error(), "DATABASE_URL")
+	})
 }
 
 func TestConfig_ProductionValidation_SuccessWhenValid(t *testing.T) {
-	os.Setenv("ENV", "production")
-	os.Setenv("JWT_SECRET", "super-secure-production-jwt-key-with-at-least-32-chars")
-	os.Setenv("DATABASE_URL", "postgres://user:pass@db:5432/mydb")
-	os.Setenv("WEBHOOK_SECRET", "super-secure-webhook-secret-key-with-at-least-32-chars")
-	defer func() {
-		os.Unsetenv("ENV")
-		os.Unsetenv("JWT_SECRET")
-		os.Unsetenv("DATABASE_URL")
-		os.Unsetenv("WEBHOOK_SECRET")
-	}()
+	clearConfigEnv(t)
+	setValidProdEnv(t)
 
 	cfg, err := LoadConfigWithEnvFile("")
 	require.NoError(t, err)
 	assert.NotNil(t, cfg)
 	assert.Equal(t, "production", cfg.Environment)
-	assert.Equal(t, "super-secure-production-jwt-key-with-at-least-32-chars", cfg.JWTSecret)
+	assert.True(t, cfg.IsProduction())
+	assert.False(t, cfg.IsLocalOrDev())
+	assert.Equal(t, DefaultOSRMBaseURL, cfg.OSRMBaseURL)
 }
 
-func TestConfig_DevelopmentMode_AllowsDefaults(t *testing.T) {
-	os.Setenv("ENV", "development")
-	os.Unsetenv("JWT_SECRET")
-	os.Unsetenv("DATABASE_URL")
-	os.Unsetenv("WEBHOOK_SECRET")
-	defer func() {
-		os.Unsetenv("ENV")
-	}()
+func TestConfig_DevelopmentAndLocalMode_RequireDotEnv_NoHardcodedFallbacks(t *testing.T) {
+	t.Run("development sin DATABASE_URL ni WEBHOOK_SECRET falla sin usar fallbacks hardcodeados", func(t *testing.T) {
+		clearConfigEnv(t)
+		t.Setenv("ENV", "development")
+
+		cfg, err := LoadConfigWithEnvFile("")
+		assert.Error(t, err)
+		assert.Nil(t, cfg)
+		assert.Contains(t, err.Error(), "DATABASE_URL")
+	})
+
+	t.Run("local y development cargan credenciales desde archivo .env local", func(t *testing.T) {
+		for _, envName := range []string{"local", "development"} {
+			clearConfigEnv(t)
+			tempDir := t.TempDir()
+			envPath := filepath.Join(tempDir, ".env")
+
+			content := []byte("ENV=" + envName + "\n" +
+				"DATABASE_URL=postgres://devuser:localpass@localhost:5432/thumbi_dev?sslmode=disable\n" +
+				"WEBHOOK_SECRET=local-dev-webhook-secret-from-dotenv-file\n" +
+				"REDIS_ADDR=localhost:6379\n")
+			require.NoError(t, os.WriteFile(envPath, content, 0600))
+
+			cfg, err := LoadConfigWithEnvFile(envPath)
+			require.NoError(t, err)
+			assert.NotNil(t, cfg)
+			assert.True(t, cfg.IsLocalOrDev())
+			assert.Equal(t, envName, cfg.Environment)
+			assert.Equal(t, int64(1200), int64(cfg.SessionTTL.Seconds()))
+			assert.Equal(t, DefaultOSRMBaseURL, cfg.OSRMBaseURL)
+		}
+	})
+}
+
+func TestConfig_SecretFilesInjection(t *testing.T) {
+	clearConfigEnv(t)
+	tempDir := t.TempDir()
+
+	dbFile := filepath.Join(tempDir, "db_url")
+	webhookFile := filepath.Join(tempDir, "webhook_secret")
+	require.NoError(t, os.WriteFile(dbFile, []byte("postgres://prod:SecFile#99@db.internal:5432/thumbi?sslmode=require\n"), 0600))
+	require.NoError(t, os.WriteFile(webhookFile, []byte("file-mounted-webhook-secret-at-least-32-chars\n"), 0600))
+
+	t.Setenv("ENV", "production")
+	t.Setenv("DATABASE_URL_FILE", dbFile)
+	t.Setenv("WEBHOOK_SECRET_FILE", webhookFile)
+	t.Setenv("REDIS_URL", "redis://redis.internal:6379")
+	t.Setenv("GOOGLE_CLIENT_ID", "1234567890-abc.apps.googleusercontent.com")
+	t.Setenv("APPLE_CLIENT_ID", "app.thumbi.carpooling.client")
+	t.Setenv("OSRM_BASE_URL", DefaultOSRMBaseURL)
 
 	cfg, err := LoadConfigWithEnvFile("")
 	require.NoError(t, err)
-	assert.NotNil(t, cfg)
-	assert.Equal(t, "development", cfg.Environment)
-	assert.NotEmpty(t, cfg.JWTSecret)
-	assert.GreaterOrEqual(t, len(cfg.JWTSecret), 32)
-	assert.NotEmpty(t, cfg.DatabaseURL)
+	assert.Equal(t, "file-mounted-webhook-secret-at-least-32-chars", cfg.WebhookSecret)
+	assert.Equal(t, "redis://redis.internal:6379", cfg.RedisAddr)
 }
 
 func TestConfig_LoadDotEnvFile(t *testing.T) {
@@ -94,11 +222,11 @@ TEST_EXPORTED_VAR=unquoted_value
 	err := os.WriteFile(envPath, content, 0600)
 	require.NoError(t, err)
 
-	os.Unsetenv("TEST_CUSTOM_VAR")
-	os.Unsetenv("TEST_EXPORTED_VAR")
+	_ = os.Unsetenv("TEST_CUSTOM_VAR")
+	_ = os.Unsetenv("TEST_EXPORTED_VAR")
 	defer func() {
-		os.Unsetenv("TEST_CUSTOM_VAR")
-		os.Unsetenv("TEST_EXPORTED_VAR")
+		_ = os.Unsetenv("TEST_CUSTOM_VAR")
+		_ = os.Unsetenv("TEST_EXPORTED_VAR")
 	}()
 
 	err = loadDotEnv(envPath)
@@ -106,26 +234,6 @@ TEST_EXPORTED_VAR=unquoted_value
 
 	assert.Equal(t, "loaded_from_file", os.Getenv("TEST_CUSTOM_VAR"))
 	assert.Equal(t, "unquoted_value", os.Getenv("TEST_EXPORTED_VAR"))
-}
-
-func TestConfig_OSRMValidation_DefaultsToHTTPS(t *testing.T) {
-	os.Setenv("ENV", "production")
-	os.Setenv("JWT_SECRET", "super-secure-production-jwt-key-with-at-least-32-chars")
-	os.Setenv("DATABASE_URL", "postgres://user:pass@db:5432/mydb")
-	os.Setenv("WEBHOOK_SECRET", "super-secure-webhook-secret-key-with-at-least-32-chars")
-	os.Unsetenv("OSRM_BASE_URL")
-	defer func() {
-		os.Unsetenv("ENV")
-		os.Unsetenv("JWT_SECRET")
-		os.Unsetenv("DATABASE_URL")
-		os.Unsetenv("WEBHOOK_SECRET")
-		os.Unsetenv("OSRM_BASE_URL")
-	}()
-
-	cfg, err := LoadConfigWithEnvFile("")
-	require.NoError(t, err)
-	assert.Equal(t, DefaultOSRMBaseURL, cfg.OSRMBaseURL)
-	assert.True(t, len(cfg.OSRMBaseURL) > 8 && cfg.OSRMBaseURL[:8] == "https://")
 }
 
 func TestConfig_OSRMValidation_RejectsPlainHTTPPublicServer(t *testing.T) {
@@ -152,4 +260,3 @@ func TestConfig_OSRMValidation_AllowsHTTPSAndInternalSelfHostedOSRM(t *testing.T
 		assert.NoError(t, validateOSRMURL(rawURL, false), "expected valid URL: %s", rawURL)
 	}
 }
-

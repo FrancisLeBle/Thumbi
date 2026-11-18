@@ -1,20 +1,28 @@
 package http
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/thumbi/auth-kyc-service/internal/adapters/handlers/http/middleware"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
+	"github.com/google/uuid"
+	"github.com/thumbi/backend/internal/adapters/handlers/http/middleware"
+	"github.com/thumbi/backend/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/ports"
 )
 
-type KYCHandler struct {
-	kycService ports.KYCService
+// KYCService define el contrato mínimo requerido por KYCHandler (SOLID · ISP).
+type KYCService interface {
+	SubmitVerification(ctx context.Context, input ports.KYCSubmissionInput) (*ports.KYCDTO, error)
+	GetStatus(ctx context.Context, userID uuid.UUID) (*ports.KYCDTO, error)
 }
 
-func NewKYCHandler(kycService ports.KYCService) *KYCHandler {
+type KYCHandler struct {
+	kycService KYCService
+}
+
+func NewKYCHandler(kycService KYCService) *KYCHandler {
 	return &KYCHandler{kycService: kycService}
 }
 
@@ -31,21 +39,13 @@ type KYCSubmissionRequest struct {
 func (h *KYCHandler) Submit(c *gin.Context) {
 	userID, exists := middleware.GetUserID(c)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error":      "usuario no autenticado",
-			"code":       "UNAUTHORIZED",
-			"request_id": middleware.GetRequestID(c),
-		})
+		RespondUnauthorized(c, "usuario no autenticado", "UNAUTHORIZED")
 		return
 	}
 
 	var req KYCSubmissionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":      "datos de verificación biométrica incompletos o inválidos",
-			"code":       "INVALID_KYC_PAYLOAD",
-			"request_id": middleware.GetRequestID(c),
-		})
+		RespondBadRequest(c, "datos de verificación biométrica incompletos o inválidos", "INVALID_KYC_PAYLOAD")
 		return
 	}
 
@@ -103,13 +103,14 @@ func (h *KYCHandler) Submit(c *gin.Context) {
 			rejectionReason := "Prueba de vida insuficiente"
 			status := domain.KYCStatusRejected
 			canRetry := true
+			remaining := domain.MaxKYCRetries - retryCount
 			if kyc != nil {
 				retryCount = kyc.RetryCount
 				rejectionReason = kyc.RejectionReason
 				status = kyc.Status
-				canRetry = kyc.CanRetry()
+				canRetry = kyc.CanRetry
+				remaining = kyc.RemainingRetries
 			}
-			remaining := domain.MaxKYCRetries - retryCount
 			c.JSON(http.StatusUnprocessableEntity, gin.H{
 				"error":             "La validación biométrica no fue satisfactoria.",
 				"code":              "LIVENESS_CHECK_FAILED",
@@ -123,7 +124,7 @@ func (h *KYCHandler) Submit(c *gin.Context) {
 			return
 
 		default:
-			HandleError(c, err)
+			respondError(c, err)
 			return
 		}
 	}
@@ -142,11 +143,7 @@ func (h *KYCHandler) Submit(c *gin.Context) {
 func (h *KYCHandler) Status(c *gin.Context) {
 	userID, exists := middleware.GetUserID(c)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error":      "usuario no autenticado",
-			"code":       "UNAUTHORIZED",
-			"request_id": middleware.GetRequestID(c),
-		})
+		RespondUnauthorized(c, "usuario no autenticado", "UNAUTHORIZED")
 		return
 	}
 
@@ -159,21 +156,16 @@ func (h *KYCHandler) Status(c *gin.Context) {
 			})
 			return
 		}
-		HandleError(c, err)
+		respondError(c, err)
 		return
-	}
-
-	remaining := domain.MaxKYCRetries - kyc.RetryCount
-	if remaining < 0 {
-		remaining = 0
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"kyc_id":            kyc.ID,
 		"status":            kyc.Status,
 		"retry_count":       kyc.RetryCount,
-		"remaining_retries": remaining,
-		"can_retry":         kyc.CanRetry(),
+		"remaining_retries": kyc.RemainingRetries,
+		"can_retry":         kyc.CanRetry,
 		"rejection_reason":  kyc.RejectionReason,
 		"updated_at":        kyc.UpdatedAt,
 	})

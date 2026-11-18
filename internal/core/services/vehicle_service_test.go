@@ -4,11 +4,12 @@ import (
 	"context"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
-	"github.com/thumbi/auth-kyc-service/internal/core/services"
+	"github.com/thumbi/backend/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/ports"
+	"github.com/thumbi/backend/internal/core/services"
 )
 
 func TestVehicleService_RegisterVehicle_RequiresKYC(t *testing.T) {
@@ -19,14 +20,15 @@ func TestVehicleService_RegisterVehicle_RequiresKYC(t *testing.T) {
 
 	service := services.NewVehicleService(userRepo, vehicleRepo, notifier)
 
+	userID := uuid.MustParse("01960000-0000-7000-8000-000000000001")
 	// Usuario sin KYC aprobado
-	user := domain.NewUser("usr-1", "user@example.com", "Laura", "Diaz", "", domain.ProviderGoogle, "g-2")
+	user := domain.NewUser(userID, "user@example.com", "Laura", "Diaz", "", domain.ProviderGoogle, "g-2")
 	user.KYCStatus = domain.KYCStatusPending // No aprobado
 
-	userRepo.On("GetByID", ctx, "usr-1").Return(user, nil)
+	userRepo.On("GetByID", ctx, userID).Return(user, nil)
 
 	_, err := service.RegisterVehicle(ctx, ports.VehicleRegistrationInput{
-		UserID:       "usr-1",
+		UserID:       userID,
 		Brand:        "Toyota",
 		Model:        "Yaris",
 		Year:         2021,
@@ -45,13 +47,16 @@ func TestVehicleService_ProcessAsyncResolution_Approved(t *testing.T) {
 
 	service := services.NewVehicleService(userRepo, vehicleRepo, notifier)
 
-	user := domain.NewUser("usr-1", "user@example.com", "Laura", "Diaz", "", domain.ProviderGoogle, "g-2")
+	userID := uuid.MustParse("01960000-0000-7000-8000-000000000001")
+	vehicleID := uuid.MustParse("01960000-0000-7000-8000-000000000100")
+
+	user := domain.NewUser(userID, "user@example.com", "Laura", "Diaz", "", domain.ProviderGoogle, "g-2")
 	user.KYCStatus = domain.KYCStatusApproved
 
-	vehicle := domain.NewVehicle("veh-100", "usr-1", "Toyota", "Yaris", 2021, "AD123EF", "Gris", 4, "lic.jpg", "ced.jpg")
+	vehicle := domain.NewVehicle(vehicleID, userID, "Toyota", "Yaris", 2021, "AD123EF", "Gris", 4, "lic.jpg", "ced.jpg")
 
-	vehicleRepo.On("GetByID", ctx, "veh-100").Return(vehicle, nil)
-	userRepo.On("GetByID", ctx, "usr-1").Return(user, nil)
+	vehicleRepo.On("GetByID", ctx, vehicleID).Return(vehicle, nil)
+	userRepo.On("GetByID", ctx, userID).Return(user, nil)
 	vehicleRepo.On("Update", ctx, mock.MatchedBy(func(v *domain.Vehicle) bool {
 		return v.Status == domain.VehicleStatusApproved
 	})).Return(nil)
@@ -60,7 +65,7 @@ func TestVehicleService_ProcessAsyncResolution_Approved(t *testing.T) {
 	})).Return(nil)
 	notifier.On("SendResolutionNotification", ctx, mock.Anything).Return(nil)
 
-	err := service.ProcessAsyncResolution(ctx, "veh-100", true, "")
+	err := service.ProcessAsyncResolution(ctx, vehicleID, true, "")
 
 	assert.NoError(t, err)
 	assert.Equal(t, domain.VehicleStatusApproved, vehicle.Status, "RF-12: Estado actualizado a APPROVED")
@@ -76,13 +81,16 @@ func TestVehicleService_ProcessAsyncResolution_Rejected_RetainsPassenger(t *test
 
 	service := services.NewVehicleService(userRepo, vehicleRepo, notifier)
 
-	user := domain.NewUser("usr-1", "user@example.com", "Laura", "Diaz", "", domain.ProviderGoogle, "g-2")
+	userID := uuid.MustParse("01960000-0000-7000-8000-000000000001")
+	vehicleID := uuid.MustParse("01960000-0000-7000-8000-000000000100")
+
+	user := domain.NewUser(userID, "user@example.com", "Laura", "Diaz", "", domain.ProviderGoogle, "g-2")
 	user.KYCStatus = domain.KYCStatusApproved
 
-	vehicle := domain.NewVehicle("veh-100", "usr-1", "Toyota", "Yaris", 2021, "AD123EF", "Gris", 4, "lic.jpg", "ced.jpg")
+	vehicle := domain.NewVehicle(vehicleID, userID, "Toyota", "Yaris", 2021, "AD123EF", "Gris", 4, "lic.jpg", "ced.jpg")
 
-	vehicleRepo.On("GetByID", ctx, "veh-100").Return(vehicle, nil)
-	userRepo.On("GetByID", ctx, "usr-1").Return(user, nil)
+	vehicleRepo.On("GetByID", ctx, vehicleID).Return(vehicle, nil)
+	userRepo.On("GetByID", ctx, userID).Return(user, nil)
 	vehicleRepo.On("Update", ctx, mock.MatchedBy(func(v *domain.Vehicle) bool {
 		return v.Status == domain.VehicleStatusRejected && v.RejectionReason == "Licencia vencida"
 	})).Return(nil)
@@ -91,7 +99,7 @@ func TestVehicleService_ProcessAsyncResolution_Rejected_RetainsPassenger(t *test
 	})).Return(nil)
 	notifier.On("SendResolutionNotification", ctx, mock.Anything).Return(nil)
 
-	err := service.ProcessAsyncResolution(ctx, "veh-100", false, "Licencia vencida")
+	err := service.ProcessAsyncResolution(ctx, vehicleID, false, "Licencia vencida")
 
 	assert.NoError(t, err)
 	assert.Equal(t, domain.VehicleStatusRejected, vehicle.Status)

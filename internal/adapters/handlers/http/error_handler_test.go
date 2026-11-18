@@ -3,6 +3,7 @@ package http_test
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,9 +11,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	adapterHttp "github.com/thumbi/auth-kyc-service/internal/adapters/handlers/http"
-	"github.com/thumbi/auth-kyc-service/internal/adapters/handlers/http/middleware"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
+	adapterHttp "github.com/thumbi/backend/internal/adapters/handlers/http"
+	"github.com/thumbi/backend/internal/adapters/handlers/http/middleware"
+	"github.com/thumbi/backend/internal/core/domain"
 )
 
 func TestHandleError_DomainErrors(t *testing.T) {
@@ -65,6 +66,30 @@ func TestHandleError_DomainErrors(t *testing.T) {
 			inputErr:       domain.ErrRateLimitExceeded,
 			expectedStatus: http.StatusTooManyRequests,
 			expectedCode:   "RATE_LIMIT_EXCEEDED",
+		},
+		{
+			name:           "Wrapped ErrPaymentFailed maps to 502 PAYMENT_GATEWAY_ERROR",
+			inputErr:       fmt.Errorf("stripe timeout: %w", domain.ErrPaymentFailed),
+			expectedStatus: http.StatusBadGateway,
+			expectedCode:   "PAYMENT_GATEWAY_ERROR",
+		},
+		{
+			name:           "ErrLivenessCheckFailed maps to 422 LIVENESS_CHECK_FAILED",
+			inputErr:       domain.ErrLivenessCheckFailed,
+			expectedStatus: http.StatusUnprocessableEntity,
+			expectedCode:   "LIVENESS_CHECK_FAILED",
+		},
+		{
+			name:           "ErrInvalidRefundAmount maps to 400 INVALID_REFUND_AMOUNT",
+			inputErr:       domain.ErrInvalidRefundAmount,
+			expectedStatus: http.StatusBadRequest,
+			expectedCode:   "INVALID_REFUND_AMOUNT",
+		},
+		{
+			name:           "ErrConcurrentModification maps to 409 CONCURRENT_MODIFICATION",
+			inputErr:       domain.ErrConcurrentModification,
+			expectedStatus: http.StatusConflict,
+			expectedCode:   "CONCURRENT_MODIFICATION",
 		},
 	}
 

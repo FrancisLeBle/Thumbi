@@ -1,21 +1,30 @@
 package http
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/thumbi/auth-kyc-service/internal/adapters/handlers/http/middleware"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
+	"github.com/google/uuid"
+	"github.com/thumbi/backend/internal/adapters/handlers/http/middleware"
+	"github.com/thumbi/backend/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/ports"
 )
 
-type VehicleHandler struct {
-	vehicleService ports.VehicleService
+// VehicleService define el contrato mínimo requerido por VehicleHandler (SOLID · ISP).
+type VehicleService interface {
+	RegisterVehicle(ctx context.Context, input ports.VehicleRegistrationInput) (*ports.VehicleDTO, error)
+	GetVehicleStatus(ctx context.Context, userID uuid.UUID) (*ports.VehicleDTO, error)
+	ProcessAsyncResolution(ctx context.Context, vehicleID uuid.UUID, approved bool, reason string) error
 }
 
-func NewVehicleHandler(vehicleService ports.VehicleService) *VehicleHandler {
+type VehicleHandler struct {
+	vehicleService VehicleService
+}
+
+func NewVehicleHandler(vehicleService VehicleService) *VehicleHandler {
 	return &VehicleHandler{vehicleService: vehicleService}
 }
 
@@ -36,26 +45,62 @@ type AsyncResolutionRequest struct {
 	Reason   string `json:"reason"`
 }
 
+// VehicleResponse DTO HTTP con la proyección pública de un vehículo registrado
+type VehicleResponse struct {
+	ID                 uuid.UUID            `json:"id"`
+	UserID             uuid.UUID            `json:"user_id"`
+	Brand              string               `json:"brand"`
+	Model              string               `json:"model"`
+	Year               int                  `json:"year"`
+	PlateNumber        string               `json:"plate_number"`
+	Color              string               `json:"color"`
+	SeatCapacity       int                  `json:"seat_capacity"`
+	DriverLicenseURL   string               `json:"driver_license_url"`
+	VehicleCedulaURL   string               `json:"vehicle_cedula_url"`
+	InsurancePolicyURL string               `json:"insurance_policy_url,omitempty"`
+	Status             domain.VehicleStatus `json:"status"`
+	RejectionReason    string               `json:"rejection_reason,omitempty"`
+	VerifiedAt         *string              `json:"verified_at,omitempty"`
+	CreatedAt          string               `json:"created_at"`
+	UpdatedAt          string               `json:"updated_at"`
+}
+
+func toVehicleResponse(v *ports.VehicleDTO) *VehicleResponse {
+	if v == nil {
+		return nil
+	}
+	return &VehicleResponse{
+		ID:                 v.ID,
+		UserID:             v.UserID,
+		Brand:              v.Brand,
+		Model:              v.Model,
+		Year:               v.Year,
+		PlateNumber:        v.PlateNumber,
+		Color:              v.Color,
+		SeatCapacity:       v.SeatCapacity,
+		DriverLicenseURL:   v.DriverLicenseURL,
+		VehicleCedulaURL:   v.VehicleCedulaURL,
+		InsurancePolicyURL: v.InsurancePolicyURL,
+		Status:             v.Status,
+		RejectionReason:    v.RejectionReason,
+		VerifiedAt:         v.VerifiedAt,
+		CreatedAt:          v.CreatedAt,
+		UpdatedAt:          v.UpdatedAt,
+	}
+}
+
 // Register registra el vehículo en estado PENDING_VERIFICATION (RF-10, RF-11)
 // POST /v1/vehicles/register
 func (h *VehicleHandler) Register(c *gin.Context) {
 	userID, exists := middleware.GetUserID(c)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error":      "usuario no autenticado",
-			"code":       "UNAUTHORIZED",
-			"request_id": middleware.GetRequestID(c),
-		})
+		RespondUnauthorized(c, "usuario no autenticado", "UNAUTHORIZED")
 		return
 	}
 
 	var req VehicleRegistrationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":      "datos del vehículo o documentación incompletos",
-			"code":       "INVALID_VEHICLE_PAYLOAD",
-			"request_id": middleware.GetRequestID(c),
-		})
+		RespondBadRequest(c, "datos del vehículo o documentación incompletos", "INVALID_VEHICLE_PAYLOAD")
 		return
 	}
 
@@ -71,37 +116,9 @@ func (h *VehicleHandler) Register(c *gin.Context) {
 		VehicleCedulaBase64: req.VehicleCedulaBase64,
 		InsuranceBase64:     req.InsuranceBase64,
 	})
-
 	if err != nil {
-		switch {
-		case errors.Is(err, domain.ErrDriverKYCRequired):
-			c.JSON(http.StatusForbidden, gin.H{
-				"error":      "Es obligatorio completar y aprobar la verificación de identidad biométrica (DNI y selfie 3D) antes de dar de alta un vehículo.",
-				"code":       "DRIVER_KYC_REQUIRED",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-
-		case errors.Is(err, domain.ErrVehicleAlreadyVerified):
-			c.JSON(http.StatusConflict, gin.H{
-				"error":      "El dominio/patente especificado ya se encuentra registrado y verificado en la plataforma.",
-				"code":       "VEHICLE_ALREADY_VERIFIED",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-
-		case errors.Is(err, domain.ErrInvalidVehicleData):
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error":      "Los datos del vehículo ingresados son inválidos.",
-				"code":       "INVALID_VEHICLE_DATA",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-
-		default:
-			HandleError(c, err)
-			return
-		}
+		respondError(c, err)
+		return
 	}
 
 	// RF-11: Se registra en estado PENDING_VERIFICATION para proceso asíncrono
@@ -125,11 +142,7 @@ func (h *VehicleHandler) Register(c *gin.Context) {
 func (h *VehicleHandler) Status(c *gin.Context) {
 	userID, exists := middleware.GetUserID(c)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error":      "usuario no autenticado",
-			"code":       "UNAUTHORIZED",
-			"request_id": middleware.GetRequestID(c),
-		})
+		RespondUnauthorized(c, "usuario no autenticado", "UNAUTHORIZED")
 		return
 	}
 
@@ -142,36 +155,33 @@ func (h *VehicleHandler) Status(c *gin.Context) {
 			})
 			return
 		}
-		HandleError(c, err)
+		respondError(c, err)
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"has_vehicle": true,
-		"vehicle":     vehicle,
+		"vehicle":     toVehicleResponse(vehicle),
 	})
 }
 
 // ProcessResolution simula o recibe la resolución asíncrona del trámite (RF-12, RF-13)
 // POST /v1/vehicles/:id/resolution (protegido por WebhookAuthMiddleware)
 func (h *VehicleHandler) ProcessResolution(c *gin.Context) {
-	vehicleID := strings.TrimSpace(c.Param("id"))
-	if vehicleID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":      "id de vehículo requerido",
-			"code":       "MISSING_VEHICLE_ID",
-			"request_id": middleware.GetRequestID(c),
-		})
+	rawVehicleID := strings.TrimSpace(c.Param("id"))
+	if rawVehicleID == "" {
+		RespondBadRequest(c, "id de vehículo requerido", "MISSING_VEHICLE_ID")
+		return
+	}
+	vehicleID, err := domain.ParseUUID(rawVehicleID)
+	if err != nil {
+		RespondBadRequest(c, "id de vehículo con formato UUID inválido", "INVALID_VEHICLE_ID")
 		return
 	}
 
 	var req AsyncResolutionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":      "cuerpo de resolución inválido",
-			"code":       "INVALID_RESOLUTION_PAYLOAD",
-			"request_id": middleware.GetRequestID(c),
-		})
+		RespondBadRequest(c, "cuerpo de resolución inválido", "INVALID_RESOLUTION_PAYLOAD")
 		return
 	}
 
@@ -180,17 +190,8 @@ func (h *VehicleHandler) ProcessResolution(c *gin.Context) {
 		reason = "Documentación no aprobada en trámite de validación vehicular"
 	}
 
-	err := h.vehicleService.ProcessAsyncResolution(c.Request.Context(), vehicleID, req.Approved, reason)
-	if err != nil {
-		if errors.Is(err, domain.ErrVehicleNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{
-				"error":      "vehículo no encontrado",
-				"code":       "VEHICLE_NOT_FOUND",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-		}
-		HandleError(c, err)
+	if err := h.vehicleService.ProcessAsyncResolution(c.Request.Context(), vehicleID, req.Approved, reason); err != nil {
+		respondError(c, err)
 		return
 	}
 

@@ -6,16 +6,34 @@ on:
   pull_request:
     branches: [ main, master ]
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
-  GO_VERSION: '1.24'
+  GO_VERSION: '1.25'
   CGO_ENABLED: '0'
 
 jobs:
-  # 1. Job de Linting y Análisis Estático de Código
+  # 0. Job de Auditoría de Secretos y Seguridad Estática
+  secret-scan:
+    name: Secret Scan (Gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code (Full History)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks Secret Scanner
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # 1. Job de Linting, Análisis Estático y Vulnerabilidades
   lint:
     name: Code Quality & Linting
     runs-on: ubuntu-latest
@@ -37,31 +55,22 @@ jobs:
       - name: Run go vet
         run: go vet ./...
 
+      - name: Run govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
           version: latest
           args: --timeout=5m
 
-  # 2. Job de Pruebas Unitarias y de Integración con Cobertura
+  # 2. Job de Pruebas Unitarias y de Integración con Credenciales Efímeras/Secretos CI
   test:
     name: Automated Tests & Coverage
+    needs: [secret-scan]
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgis/postgis:16-3.4-alpine
-        env:
-          POSTGRES_USER: thumbi
-          POSTGRES_PASSWORD: thumbi_secret
-          POSTGRES_DB: thumbi_carpooling
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U thumbi -d thumbi_carpooling"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
     steps:
       - name: Checkout Source Code
         uses: actions/checkout@v4
@@ -75,20 +84,54 @@ jobs:
       - name: Download Go Dependencies
         run: go mod download
 
-      - name: Run Tests with Coverage (go test -v -cover ./...)
+      - name: Generate Ephemeral Per-Run Secrets & Start PostGIS Test Database
+        id: ephemeral
+        run: |
+          # Generar credenciales aleatorias por ejecución (sin contraseñas literales en YAML)
+          # Si CI_POSTGRES_PASSWORD está definido en Repository Secrets, se usa; si no, se genera uno efímero.
+          PG_PASS="${CI_POSTGRES_PASSWORD:-$(openssl rand -hex 24)}"
+          WEBHOOK_SEC="$(openssl rand -hex 32)"
+          echo "::add-mask::${PG_PASS}"
+          echo "::add-mask::${WEBHOOK_SEC}"
+
+          PG_USER="thumbi_ci"
+          PG_DB="thumbi_carpooling_test"
+
+          docker run -d --name ci-postgres \
+            -e POSTGRES_USER="${PG_USER}" \
+            -e POSTGRES_PASSWORD="${PG_PASS}" \
+            -e POSTGRES_DB="${PG_DB}" \
+            -p 5432:5432 \
+            postgis/postgis:16-3.4-alpine
+
+          echo "Waiting for PostGIS readiness..."
+          for i in $(seq 1 30); do
+            if docker exec ci-postgres pg_isready -U "${PG_USER}" -d "${PG_DB}" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+
+          echo "ENV=development" >> "$GITHUB_ENV"
+          echo "DATABASE_URL=postgres://${PG_USER}:${PG_PASS}@localhost:5432/${PG_DB}?sslmode=disable" >> "$GITHUB_ENV"
+          echo "WEBHOOK_SECRET=${WEBHOOK_SEC}" >> "$GITHUB_ENV"
+          echo "REDIS_ADDR=localhost:6379" >> "$GITHUB_ENV"
+          echo "SESSION_TTL=20m" >> "$GITHUB_ENV"
         env:
-          DATABASE_URL: postgres://thumbi:thumbi_secret@localhost:5432/thumbi_carpooling?sslmode=disable
-          JWT_SECRET: thumbi-super-secure-production-ready-jwt-secret-key-32-chars
-          JWT_ISSUER: thumbi-auth-service
-          SESSION_TTL: 20m
+          CI_POSTGRES_PASSWORD: ${{ secrets.CI_POSTGRES_PASSWORD }}
+
+      - name: Run Tests with Coverage (go test -v -race -cover ./...)
         run: |
           go test -v -race -covermode=atomic -coverprofile=coverage.out ./...
+
+      - name: Stop Ephemeral PostGIS Container
+        if: always()
+        run: docker rm -f ci-postgres || true
 
       - name: Calculate and Verify Minimum Test Coverage (>= 80%)
         run: |
           COVERAGE=$(go tool cover -func=coverage.out | grep "total:" | awk '{print substr($3, 1, length($3)-1)}')
           echo "Total Coverage: ${COVERAGE}%"
-          # Validar que la cobertura total sea adecuada para producción
           awk -v cov="$COVERAGE" 'BEGIN {
             if (cov < 80.0) {
               print "WARNING: Test coverage (" cov "%) is below the 80% target."
@@ -104,7 +147,7 @@ jobs:
           path: coverage.out
           retention-days: 7
 
-  # 3. Job de Validación de Compilación del Binario y Contenedor Docker
+  # 3. Job de Validación de Compilación del Binario y Contenedor Docker (sin secretos en capas)
   build:
     name: Binary & Docker Build Validation
     needs: [lint, test]

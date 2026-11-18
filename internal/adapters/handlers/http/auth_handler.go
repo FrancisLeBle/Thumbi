@@ -1,26 +1,35 @@
 package http
 
 import (
-	"errors"
+	"context"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/thumbi/auth-kyc-service/internal/adapters/handlers/http/middleware"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
+	"github.com/google/uuid"
+	"github.com/thumbi/backend/internal/adapters/handlers/http/middleware"
+	"github.com/thumbi/backend/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/ports"
 )
 
+// AuthService define el contrato mínimo de autenticación requerido por AuthHandler (SOLID · ISP).
+type AuthService interface {
+	LoginWithSocial(ctx context.Context, input ports.SocialAuthInput) (*ports.AuthResult, error)
+	RefreshSession(ctx context.Context, currentToken string, userAgent, clientIP string) (*ports.AuthResult, error)
+	InvalidateSessionByToken(ctx context.Context, token string) error
+	GetCurrentUser(ctx context.Context, userID uuid.UUID) (*ports.UserDTO, error)
+}
+
+// AuthHandler gestiona los endpoints HTTP de autenticación y perfil vigente,
+// dependiendo exclusivamente de su interfaz mínima AuthService (SOLID · DIP/ISP).
 type AuthHandler struct {
-	authService ports.AuthService
-	userRepo    ports.UserRepository
+	authService AuthService
 }
 
 // NewAuthHandler construye el controlador de autenticación HTTP
-func NewAuthHandler(authService ports.AuthService, userRepo ports.UserRepository) *AuthHandler {
+func NewAuthHandler(authService AuthService) *AuthHandler {
 	return &AuthHandler{
 		authService: authService,
-		userRepo:    userRepo,
 	}
 }
 
@@ -33,16 +42,87 @@ type RefreshTokenRequest struct {
 	Token string `json:"token"`
 }
 
+type AuthUserResponse struct {
+	ID             uuid.UUID           `json:"id"`
+	Email          string              `json:"email"`
+	FirstName      string              `json:"first_name"`
+	LastName       string              `json:"last_name"`
+	Phone          string              `json:"phone,omitempty"`
+	AvatarURL      string              `json:"avatar_url,omitempty"`
+	Provider       domain.AuthProvider `json:"provider,omitempty"`
+	Role           domain.UserRole     `json:"role"`
+	KYCStatus      domain.KYCStatus    `json:"kyc_status"`
+	IsDriverActive bool                `json:"is_driver_active"`
+	RatingAvg      float64             `json:"rating_avg"`
+	RatingCount    int                 `json:"rating_count"`
+	CreatedAt      string              `json:"created_at,omitempty"`
+	UpdatedAt      string              `json:"updated_at,omitempty"`
+}
+
+type SocialLoginResponse struct {
+	Message     string            `json:"message"`
+	AccessToken string            `json:"access_token"`
+	TokenType   string            `json:"token_type"`
+	ExpiresIn   int64             `json:"expires_in"`
+	IsNewUser   bool              `json:"is_new_user"`
+	User        *AuthUserResponse `json:"user"`
+}
+
+type RefreshSessionResponse struct {
+	Message     string            `json:"message"`
+	AccessToken string            `json:"access_token"`
+	TokenType   string            `json:"token_type"`
+	ExpiresIn   int64             `json:"expires_in"`
+	User        *AuthUserResponse `json:"user"`
+}
+
+type AuthCapabilitiesResponse struct {
+	CanBookRides    bool `json:"can_book_rides"`
+	CanPublishRides bool `json:"can_publish_rides"`
+}
+
+type AuthMeResponse struct {
+	User         *AuthUserResponse        `json:"user"`
+	Capabilities AuthCapabilitiesResponse `json:"capabilities"`
+}
+
+type LogoutResponse struct {
+	Message string `json:"message"`
+}
+
+func toAuthUserResponse(user *ports.UserDTO) *AuthUserResponse {
+	if user == nil {
+		return nil
+	}
+	return &AuthUserResponse{
+		ID:             user.ID,
+		Email:          user.Email,
+		FirstName:      user.FirstName,
+		LastName:       user.LastName,
+		Phone:          user.Phone,
+		AvatarURL:      user.AvatarURL,
+		Provider:       user.Provider,
+		Role:           user.Role,
+		KYCStatus:      user.KYCStatus,
+		IsDriverActive: user.IsDriverActive,
+		RatingAvg:      user.RatingAvg,
+		RatingCount:    user.RatingCount,
+		CreatedAt:      user.CreatedAt,
+		UpdatedAt:      user.UpdatedAt,
+	}
+}
+
 // SocialLogin maneja la autenticación social con Google y Apple (RF-01, RF-02, RF-03, RF-04)
 // POST /v1/auth/social-login
 func (h *AuthHandler) SocialLogin(c *gin.Context) {
 	var req SocialLoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":      "parámetros inválidos en la solicitud",
-			"code":       "INVALID_REQUEST_PARAMETERS",
-			"request_id": middleware.GetRequestID(c),
-		})
+		RespondBadRequest(c, "parámetros inválidos en la solicitud", "INVALID_REQUEST_PARAMETERS")
+		return
+	}
+
+	if !req.Provider.IsValid() {
+		RespondBadRequest(c, "proveedor de autenticación inválido", "INVALID_PROVIDER")
 		return
 	}
 
@@ -53,7 +133,7 @@ func (h *AuthHandler) SocialLogin(c *gin.Context) {
 		ClientIP:  c.ClientIP(),
 	})
 	if err != nil {
-		HandleError(c, err)
+		respondError(c, err)
 		return
 	}
 
@@ -62,22 +142,13 @@ func (h *AuthHandler) SocialLogin(c *gin.Context) {
 		statusCode = http.StatusCreated
 	}
 
-	c.JSON(statusCode, gin.H{
-		"message":      "autenticación exitosa",
-		"access_token": result.AccessToken,
-		"token_type":   "Bearer",
-		"expires_in":   result.ExpiresIn, // 1200 segundos = 20 minutos
-		"is_new_user":  result.IsNewUser,
-		"user": gin.H{
-			"id":               result.User.ID,
-			"email":            result.User.Email,
-			"first_name":       result.User.FirstName,
-			"last_name":        result.User.LastName,
-			"avatar_url":       result.User.AvatarURL,
-			"role":             result.User.Role, // PASSENGER por defecto (RF-02)
-			"kyc_status":       result.User.KYCStatus,
-			"is_driver_active": result.User.IsDriverActive,
-		},
+	c.JSON(statusCode, SocialLoginResponse{
+		Message:     "autenticación exitosa",
+		AccessToken: result.AccessToken,
+		TokenType:   "Bearer",
+		ExpiresIn:   result.ExpiresIn, // 1200 segundos = 20 minutos
+		IsNewUser:   result.IsNewUser,
+		User:        toAuthUserResponse(result.User),
 	})
 }
 
@@ -98,79 +169,60 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	}
 
 	if currentToken == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":      "debe proporcionar el token actual a renovar",
-			"code":       "MISSING_TOKEN",
-			"request_id": middleware.GetRequestID(c),
-		})
+		RespondBadRequest(c, "debe proporcionar el token actual a renovar", "MISSING_TOKEN")
 		return
 	}
 
 	result, err := h.authService.RefreshSession(c.Request.Context(), currentToken, c.Request.UserAgent(), c.ClientIP())
 	if err != nil {
-		HandleError(c, err)
+		respondError(c, err)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"message":      "sesión extendida exitosamente",
-		"access_token": result.AccessToken,
-		"token_type":   "Bearer",
-		"expires_in":   result.ExpiresIn,
-		"user":         result.User,
+	c.JSON(http.StatusOK, RefreshSessionResponse{
+		Message:     "sesión extendida exitosamente",
+		AccessToken: result.AccessToken,
+		TokenType:   "Bearer",
+		ExpiresIn:   result.ExpiresIn,
+		User:        toAuthUserResponse(result.User),
 	})
 }
 
-// Me obtiene el perfil del usuario autenticado y su estado KYC (RF-13)
+// Me obtiene el perfil del usuario autenticado y su estado KYC a través de AuthService (RF-13)
 // GET /v1/auth/me
 func (h *AuthHandler) Me(c *gin.Context) {
 	userID, exists := middleware.GetUserID(c)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error":      "no autenticado",
-			"code":       "UNAUTHORIZED",
-			"request_id": middleware.GetRequestID(c),
-		})
+		RespondUnauthorized(c, "no autenticado", "UNAUTHORIZED")
 		return
 	}
 
-	user, err := h.userRepo.GetByID(c.Request.Context(), userID)
+	user, err := h.authService.GetCurrentUser(c.Request.Context(), userID)
 	if err != nil {
-		if errors.Is(err, domain.ErrUserNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{
-				"error":      "usuario no encontrado",
-				"code":       "USER_NOT_FOUND",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-		}
-		HandleError(c, err)
+		respondError(c, err)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"user": user,
-		"capabilities": gin.H{
-			"can_book_rides":    user.CanBookRides(),    // Siempre true (RF-13)
-			"can_publish_rides": user.CanPublishRides(), // Solo con rol DRIVER y KYC aprobado
+	c.JSON(http.StatusOK, AuthMeResponse{
+		User: toAuthUserResponse(user),
+		Capabilities: AuthCapabilitiesResponse{
+			CanBookRides:    user.CanBookRides,    // Siempre true (RF-13)
+			CanPublishRides: user.CanPublishRides, // Solo con rol DRIVER y KYC aprobado
 		},
 	})
 }
 
-// Logout destruye la sesión activa
+// Logout destruye la sesión activa de forma inmediata por token opaco
 // POST /v1/auth/logout
 func (h *AuthHandler) Logout(c *gin.Context) {
 	authHeader := c.GetHeader("Authorization")
 	parts := strings.SplitN(authHeader, " ", 2)
-	if len(parts) == 2 {
+	if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") && h.authService != nil {
 		token := strings.TrimSpace(parts[1])
-		claims, err := h.authService.ValidateToken(c.Request.Context(), token)
-		if err == nil && claims != nil {
-			_ = h.authService.InvalidateSession(c.Request.Context(), claims.UserID)
-		}
+		_ = h.authService.InvalidateSessionByToken(c.Request.Context(), token)
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "sesión cerrada exitosamente",
+	c.JSON(http.StatusOK, LogoutResponse{
+		Message: "sesión cerrada exitosamente",
 	})
 }

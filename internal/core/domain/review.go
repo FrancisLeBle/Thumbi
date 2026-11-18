@@ -3,6 +3,8 @@ package domain
 import (
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // MinRating y MaxRating definen los límites de puntuación del sistema reputacional
@@ -13,11 +15,11 @@ const (
 
 // ReviewParams agrupa los datos necesarios para instanciar y validar una calificación
 type ReviewParams struct {
-	ID            string
-	TripID        string
-	BookingID     string
-	ReviewerID    string
-	RevieweeID    string
+	ID            uuid.UUID
+	TripID        uuid.UUID
+	BookingID     uuid.UUID
+	ReviewerID    uuid.UUID
+	RevieweeID    uuid.UUID
 	Rating        int
 	Comment       string
 	TripStatus    TripStatus
@@ -26,11 +28,11 @@ type ReviewParams struct {
 
 // Review representa una evaluación reputacional emitida tras la finalización de un viaje
 type Review struct {
-	ID         string    `json:"id"`
-	TripID     string    `json:"trip_id"`
-	BookingID  string    `json:"booking_id"`
-	ReviewerID string    `json:"reviewer_id"`
-	RevieweeID string    `json:"reviewee_id"`
+	ID         uuid.UUID `json:"id"`
+	TripID     uuid.UUID `json:"trip_id"`
+	BookingID  uuid.UUID `json:"booking_id"`
+	ReviewerID uuid.UUID `json:"reviewer_id"`
+	RevieweeID uuid.UUID `json:"reviewee_id"`
 	Rating     int       `json:"rating"`
 	Comment    string    `json:"comment,omitempty"`
 	CreatedAt  time.Time `json:"created_at"`
@@ -39,11 +41,11 @@ type Review struct {
 
 // NewReview construye y valida una nueva calificación aplicando las reglas e invariantes de negocio
 func NewReview(params ReviewParams) (*Review, error) {
-	if strings.TrimSpace(params.ID) == "" ||
-		strings.TrimSpace(params.TripID) == "" ||
-		strings.TrimSpace(params.BookingID) == "" ||
-		strings.TrimSpace(params.ReviewerID) == "" ||
-		strings.TrimSpace(params.RevieweeID) == "" {
+	if params.ID == uuid.Nil ||
+		params.TripID == uuid.Nil ||
+		params.BookingID == uuid.Nil ||
+		params.ReviewerID == uuid.Nil ||
+		params.RevieweeID == uuid.Nil {
 		return nil, ErrInvalidDisputeData
 	}
 
@@ -55,6 +57,10 @@ func NewReview(params ReviewParams) (*Review, error) {
 	// RF-07 / RF-08: Invariante - Calificación debe ser un entero entre 1 y 5
 	if !IsValidRating(params.Rating) {
 		return nil, ErrInvalidRating
+	}
+
+	if !params.TripStatus.IsValid() || !params.BookingStatus.IsValid() {
+		return nil, ErrInvalidStatus
 	}
 
 	// RF-06: Invariante - Solo permitida tras la finalización del viaje y de la reserva

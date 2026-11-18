@@ -1,32 +1,97 @@
 package http
 
 import (
-	"errors"
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/thumbi/auth-kyc-service/internal/adapters/handlers/http/middleware"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
+	"github.com/google/uuid"
+	"github.com/thumbi/backend/internal/adapters/handlers/http/middleware"
+	"github.com/thumbi/backend/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/ports"
 )
+
+// ReputationService define el contrato mínimo requerido por ReviewHandler (SOLID · ISP).
+type ReputationService interface {
+	CreateReview(ctx context.Context, input ports.CreateReviewInput) (*ports.ReviewDTO, error)
+	GetUserReviews(ctx context.Context, userID uuid.UUID, limit, offset int) (*ports.UserReputationDTO, error)
+}
 
 // ReviewHandler gestiona las peticiones HTTP relativas a calificaciones y reputación
 type ReviewHandler struct {
-	reputationService ports.ReputationService
+	reputationService ReputationService
 }
 
 // NewReviewHandler crea un nuevo handler para el subsistema de reputación
-func NewReviewHandler(reputationService ports.ReputationService) *ReviewHandler {
+func NewReviewHandler(reputationService ReputationService) *ReviewHandler {
 	return &ReviewHandler{reputationService: reputationService}
 }
 
-// CreateReviewRequest payload para emitir una calificación
+// CreateReviewRequest payload para emitir una calificación (reviewer_id se extrae exclusivamente del token)
 type CreateReviewRequest struct {
 	BookingID string `json:"booking_id" binding:"required"`
 	Rating    int    `json:"rating" binding:"required,min=1,max=5"`
 	Comment   string `json:"comment"`
+}
+
+// ReviewResponse DTO HTTP para la respuesta de una reseña
+type ReviewResponse struct {
+	ID                uuid.UUID `json:"id"`
+	TripID            uuid.UUID `json:"trip_id"`
+	BookingID         uuid.UUID `json:"booking_id"`
+	ReviewerID        uuid.UUID `json:"reviewer_id"`
+	ReviewerFirstName string    `json:"reviewer_first_name,omitempty"`
+	ReviewerLastName  string    `json:"reviewer_last_name,omitempty"`
+	ReviewerAvatarURL string    `json:"reviewer_avatar_url,omitempty"`
+	RevieweeID        uuid.UUID `json:"reviewee_id"`
+	Rating            int       `json:"rating"`
+	Comment           string    `json:"comment"`
+	CreatedAt         string    `json:"created_at"`
+}
+
+// UserReputationResponse DTO HTTP para el perfil reputacional de un usuario
+type UserReputationResponse struct {
+	UserID      uuid.UUID         `json:"user_id"`
+	RatingAvg   float64           `json:"rating_avg"`
+	RatingCount int               `json:"rating_count"`
+	Reviews     []*ReviewResponse `json:"reviews"`
+}
+
+func toReviewResponse(dto *ports.ReviewDTO) *ReviewResponse {
+	if dto == nil {
+		return nil
+	}
+	return &ReviewResponse{
+		ID:                dto.ID,
+		TripID:            dto.TripID,
+		BookingID:         dto.BookingID,
+		ReviewerID:        dto.ReviewerID,
+		ReviewerFirstName: dto.ReviewerFirstName,
+		ReviewerLastName:  dto.ReviewerLastName,
+		ReviewerAvatarURL: dto.ReviewerAvatarURL,
+		RevieweeID:        dto.RevieweeID,
+		Rating:            dto.Rating,
+		Comment:           dto.Comment,
+		CreatedAt:         dto.CreatedAt,
+	}
+}
+
+func toUserReputationResponse(dto *ports.UserReputationDTO) *UserReputationResponse {
+	if dto == nil {
+		return nil
+	}
+	reviews := make([]*ReviewResponse, 0, len(dto.Reviews))
+	for _, r := range dto.Reviews {
+		reviews = append(reviews, toReviewResponse(r))
+	}
+	return &UserReputationResponse{
+		UserID:      dto.UserID,
+		RatingAvg:   dto.RatingAvg,
+		RatingCount: dto.RatingCount,
+		Reviews:     reviews,
+	}
 }
 
 // CreateReview procesa la creación de una nueva reseña reputacional
@@ -34,25 +99,24 @@ type CreateReviewRequest struct {
 func (h *ReviewHandler) CreateReview(c *gin.Context) {
 	reviewerID, exists := middleware.GetUserID(c)
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "usuario no autenticado",
-			"code":  "UNAUTHORIZED",
-		})
+		RespondUnauthorized(c, "usuario no autenticado", "UNAUTHORIZED")
 		return
 	}
 
 	var req CreateReviewRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":      "cuerpo de solicitud inválido o incompleto",
-			"code":       "INVALID_REQUEST_BODY",
-			"request_id": middleware.GetRequestID(c),
-		})
+		RespondBadRequest(c, "cuerpo de solicitud inválido o incompleto", "INVALID_REQUEST_BODY")
+		return
+	}
+
+	bookingID, err := domain.ParseUUID(req.BookingID)
+	if err != nil {
+		RespondBadRequest(c, "ID de reserva con formato UUID inválido", "INVALID_BOOKING_ID")
 		return
 	}
 
 	input := ports.CreateReviewInput{
-		BookingID:  req.BookingID,
+		BookingID:  bookingID,
 		ReviewerID: reviewerID,
 		Rating:     req.Rating,
 		Comment:    req.Comment,
@@ -60,82 +124,24 @@ func (h *ReviewHandler) CreateReview(c *gin.Context) {
 
 	review, err := h.reputationService.CreateReview(c.Request.Context(), input)
 	if err != nil {
-		switch {
-		case errors.Is(err, domain.ErrTripNotCompletedForReview):
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error":      "Solo se pueden calificar viajes y reservas completadas",
-				"code":       "TRIP_NOT_COMPLETED_FOR_REVIEW",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-
-		case errors.Is(err, domain.ErrInvalidRating):
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error":      "La calificación debe ser un valor entero entre 1 y 5 estrellas",
-				"code":       "INVALID_RATING",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-
-		case errors.Is(err, domain.ErrReviewSelfNotAllowed):
-			c.JSON(http.StatusUnprocessableEntity, gin.H{
-				"error":      "No está permitido calificarse a sí mismo",
-				"code":       "SELF_REVIEW_NOT_ALLOWED",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-
-		case errors.Is(err, domain.ErrDuplicateReview):
-			c.JSON(http.StatusConflict, gin.H{
-				"error":      "Ya has emitido una calificación previa para esta reserva",
-				"code":       "DUPLICATE_REVIEW",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-
-		case errors.Is(err, domain.ErrBookingNotFound):
-			c.JSON(http.StatusNotFound, gin.H{
-				"error":      "Reserva no encontrada",
-				"code":       "BOOKING_NOT_FOUND",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-
-		case errors.Is(err, domain.ErrTripNotFound):
-			c.JSON(http.StatusNotFound, gin.H{
-				"error":      "Viaje no encontrado",
-				"code":       "TRIP_NOT_FOUND",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-
-		case errors.Is(err, domain.ErrUnauthorized):
-			c.JSON(http.StatusForbidden, gin.H{
-				"error":      "No estás autorizado para calificar esta reserva",
-				"code":       "FORBIDDEN",
-				"request_id": middleware.GetRequestID(c),
-			})
-			return
-
-		default:
-			HandleError(c, err)
-			return
-		}
+		respondError(c, err)
+		return
 	}
 
-	c.JSON(http.StatusCreated, review)
+	c.JSON(http.StatusCreated, toReviewResponse(review))
 }
 
 // GetUserReviews consulta las opiniones y el puntaje reputacional acumulado de un usuario
 // GET /v1/users/:user_id/reviews ó GET /api/v1/users/:user_id/reviews
 func (h *ReviewHandler) GetUserReviews(c *gin.Context) {
-	userID := strings.TrimSpace(c.Param("user_id"))
-	if userID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":      "ID de usuario no especificado",
-			"code":       "MISSING_USER_ID",
-			"request_id": middleware.GetRequestID(c),
-		})
+	rawUserID := strings.TrimSpace(c.Param("user_id"))
+	if rawUserID == "" {
+		RespondBadRequest(c, "ID de usuario no especificado", "MISSING_USER_ID")
+		return
+	}
+	userID, err := domain.ParseUUID(rawUserID)
+	if err != nil {
+		RespondBadRequest(c, "ID de usuario con formato UUID inválido", "INVALID_USER_ID")
 		return
 	}
 
@@ -155,9 +161,9 @@ func (h *ReviewHandler) GetUserReviews(c *gin.Context) {
 
 	profile, err := h.reputationService.GetUserReviews(c.Request.Context(), userID, limit, offset)
 	if err != nil {
-		HandleError(c, err)
+		respondError(c, err)
 		return
 	}
 
-	c.JSON(http.StatusOK, profile)
+	c.JSON(http.StatusOK, toUserReputationResponse(profile))
 }

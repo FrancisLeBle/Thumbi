@@ -2,9 +2,11 @@ package domain
 
 import (
 	"time"
+
+	"github.com/google/uuid"
 )
 
-// SessionTTL define el tiempo de vida estricto del access_token (RF-04: exactamente 20 minutos)
+// SessionTTL define el tiempo de vida estricto del token de sesión opaco (RF-04: exactamente 20 minutos)
 const SessionTTL = 20 * time.Minute
 
 // RefreshThreshold define la ventana de tiempo para notificar al usuario antes de la expiración (RF-05)
@@ -12,8 +14,8 @@ const RefreshThreshold = 5 * time.Minute
 
 // Session representa la entidad de sesión activa de un usuario en el sistema
 type Session struct {
-	ID        string    `json:"id"`
-	UserID    string    `json:"user_id"`
+	ID        uuid.UUID `json:"id"`
+	UserID    uuid.UUID `json:"user_id"`
 	Token     string    `json:"token"`
 	UserAgent string    `json:"user_agent,omitempty"`
 	ClientIP  string    `json:"client_ip,omitempty"`
@@ -22,7 +24,7 @@ type Session struct {
 }
 
 // NewSession instancia una nueva sesión con exactamente 20 minutos de TTL (RF-04)
-func NewSession(id, userID, token, userAgent, clientIP string) *Session {
+func NewSession(id, userID uuid.UUID, token, userAgent, clientIP string) *Session {
 	now := time.Now().UTC()
 	return &Session{
 		ID:        id,
@@ -46,17 +48,18 @@ func (s *Session) NeedsRefreshWarning() bool {
 	return remaining > 0 && remaining <= RefreshThreshold
 }
 
-// UserClaims estructura los datos de identidad que viajan de forma segura dentro del JWT
+// UserClaims representa el principal autenticado con su estado vigente resuelto dinámicamente desde sesión/base de datos
 type UserClaims struct {
-	UserID    string   `json:"user_id"`
-	Email     string   `json:"email"`
-	Role      UserRole `json:"role"`
+	UserID    uuid.UUID `json:"user_id"`
+	SessionID uuid.UUID `json:"session_id,omitempty"`
+	Email     string    `json:"email"`
+	Role      UserRole  `json:"role"`
 	KYCStatus KYCStatus `json:"kyc_status"`
-	IssuedAt  int64    `json:"iat"`
-	ExpiresAt int64    `json:"exp"`
+	IssuedAt  int64     `json:"iat"`
+	ExpiresAt int64     `json:"exp"`
 }
 
-// NewUserClaims genera los claims respetando el TTL de 20 minutos
+// NewUserClaims genera los claims hidratados a partir del estado vigente del usuario
 func NewUserClaims(user *User) UserClaims {
 	now := time.Now().UTC()
 	return UserClaims{

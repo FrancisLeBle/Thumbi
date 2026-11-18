@@ -5,6 +5,9 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build-apk:
     runs-on: ubuntu-latest
@@ -17,6 +20,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: 'npm'
 
       - name: Setup Java JDK 21
         uses: actions/setup-java@v5
@@ -25,9 +29,12 @@ jobs:
           java-version: '21'
 
       - name: Install npm dependencies
-        run: npm install
+        run: npm ci
 
-      - name: Build Web Application
+      - name: Build Web Application (Public Build Config Only)
+        env:
+          # Solo variables públicas VITE_* (nunca secretos de backend ni API keys privadas)
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL || 'https://api.thumbi.app' }}
         run: npm run build
 
       - name: Sync Capacitor Android
@@ -37,15 +44,53 @@ jobs:
           fi
           npx cap sync android
 
-      - name: Build APK with Gradle
+      - name: Audit Web & APK Assets for Leaked Secrets
+        run: |
+          if grep -rnE "WEBHOOK_SECRET|DATABASE_URL|POSTGRES_PASSWORD|GEMINI_API_KEY|BEGIN [A-Z ]*PRIVATE KEY|thumbi_secret|thumbi-dev-only" dist/ android/app/src/main/assets/; then
+            echo "ERROR: Sensitive secret material detected in compiled client bundle or Capacitor assets!"
+            exit 1
+          fi
+          echo "OK: No private backend or third-party secret patterns found in client bundle."
+
+      - name: Build Debug APK with Gradle
         run: |
           cd android
           chmod +x ./gradlew
           ./gradlew assembleDebug --no-daemon --stacktrace
 
-      - name: Upload APK Artifact
+      - name: Build Signed Release APK (when keystore secrets are configured)
+        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          echo "${KEYSTORE_B64}" | base64 -d > android/app/release-keystore.jks
+          cd android
+          chmod +x ./gradlew
+          ./gradlew assembleRelease \
+            -Pandroid.injected.signing.store.file="$(pwd)/app/release-keystore.jks" \
+            -Pandroid.injected.signing.store.password="${KEYSTORE_PASS}" \
+            -Pandroid.injected.signing.key.alias="${KEY_ALIAS}" \
+            -Pandroid.injected.signing.key.password="${KEY_PASS}" \
+            --no-daemon --stacktrace
+
+      - name: Clean Up Ephemeral Keystore
+        if: always()
+        run: rm -f android/app/release-keystore.jks
+
+      - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: thumbi-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
+          retention-days: 14
+
+      - name: Upload Signed Release APK Artifact
+        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: thumbi-release-apk
+          path: android/app/build/outputs/apk/release/*.apk
           retention-days: 14

@@ -6,25 +6,38 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
+	"github.com/thumbi/backend/internal/core/ports"
 )
 
-// DBExecutor define la interfaz mínima compatible con *pgxpool.Pool, *pgx.Conn o pgx.Tx
+// DBExecutor define la interfaz mínima compatible con *pgxpool.Pool, *pgx.Conn o pgx.Tx.
 type DBExecutor interface {
 	Exec(ctx context.Context, sql string, arguments ...any) (commandTag pgconn.CommandTag, err error)
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
-// TxBeginner define la capacidad de iniciar una transacción pgx.Tx (implementado por *pgxpool.Pool y *pgx.Conn)
+// TxBeginner define la capacidad de iniciar una transacción pgx.Tx (implementado por *pgxpool.Pool y *pgx.Conn).
 type TxBeginner interface {
 	Begin(ctx context.Context) (pgx.Tx, error)
 }
 
+// DBPool combina ejecución SQL e inicio explícito de transacciones ACID.
+type DBPool interface {
+	DBExecutor
+	TxBeginner
+}
+
+// TxUnitOfWork extiende el puerto ports.UnitOfWork para la capa de persistencia PostgreSQL/pgx,
+// exponiendo WithTx(ctx, func(tx pgx.Tx) error) respaldado por pgx.BeginFunc.
+type TxUnitOfWork interface {
+	ports.UnitOfWork
+	WithTx(ctx context.Context, fn func(tx pgx.Tx) error) error
+}
+
 type txContextKey struct{}
 
-// WithTx inyecta una transacción pgx.Tx activa en el contexto para coordinar múltiples repositorios atómicamente.
-func WithTx(ctx context.Context, tx pgx.Tx) context.Context {
+// ContextWithTx inyecta una transacción pgx.Tx activa en el contexto para coordinar múltiples repositorios atómicamente.
+func ContextWithTx(ctx context.Context, tx pgx.Tx) context.Context {
 	return context.WithValue(ctx, txContextKey{}, tx)
 }
 
@@ -44,49 +57,71 @@ func executor(ctx context.Context, fallback DBExecutor) DBExecutor {
 	return fallback
 }
 
+// WithTx ejecuta fn dentro de una única transacción pgx.Tx utilizando pgx.BeginFunc.
+// Si ctx ya transporta una transacción activa (por ejemplo desde UnitOfWork.WithinTransaction),
+// la reutiliza preservando la atomicidad. Nunca degrada silenciosamente a ejecución no transaccional.
+func WithTx(ctx context.Context, beginner TxBeginner, fn func(tx pgx.Tx) error) error {
+	if fn == nil {
+		return fmt.Errorf("error iniciando transacción: función transaccional nula")
+	}
+	if existingTx := txFromContext(ctx); existingTx != nil {
+		return fn(existingTx)
+	}
+	if beginner == nil {
+		return fmt.Errorf("error iniciando transacción: TxBeginner no configurado")
+	}
+	return pgx.BeginFunc(ctx, beginner, fn)
+}
+
 type pgxTransactionManager struct {
 	beginner TxBeginner
 }
 
-// NewTransactionManager construye un gestor de transacciones ACID respaldado por PostgreSQL/pgx.
-func NewTransactionManager(beginner TxBeginner) ports.TransactionManager {
+// NewUnitOfWork construye la implementación PostgreSQL de TxUnitOfWork / ports.UnitOfWork.
+func NewUnitOfWork(beginner TxBeginner) TxUnitOfWork {
 	return &pgxTransactionManager{beginner: beginner}
 }
 
-// NewUnitOfWork construye una implementación PostgreSQL del puerto ports.UnitOfWork.
-func NewUnitOfWork(beginner TxBeginner) ports.UnitOfWork {
-	return NewTransactionManager(beginner)
+// NewTransactionManager construye un gestor de transacciones ACID respaldado por PostgreSQL/pgx.
+func NewTransactionManager(beginner TxBeginner) ports.TransactionManager {
+	return NewUnitOfWork(beginner)
 }
 
-// WithinTransaction ejecuta fn dentro de una única transacción pgx.Tx, realizando Rollback automático ante errores o panics.
+// WithTx ejecuta fn dentro de una transacción pgx.Tx gestionada por pgx.BeginFunc.
+func (m *pgxTransactionManager) WithTx(ctx context.Context, fn func(tx pgx.Tx) error) error {
+	return WithTx(ctx, m.beginner, fn)
+}
+
+// WithinTransaction ejecuta fn dentro de una única transacción pgx.Tx propagada en el contexto,
+// realizando Rollback automático ante errores o panics mediante pgx.BeginFunc.
 func (m *pgxTransactionManager) WithinTransaction(ctx context.Context, fn func(txCtx context.Context) error) error {
-	if txFromContext(ctx) != nil {
-		return fn(ctx)
+	if fn == nil {
+		return fmt.Errorf("error iniciando transacción: callback nulo")
 	}
-	if m.beginner == nil {
-		return fmt.Errorf("error iniciando transacción: TxBeginner no configurado")
-	}
+	return m.WithTx(ctx, func(tx pgx.Tx) error {
+		return fn(ContextWithTx(ctx, tx))
+	})
+}
 
-	tx, err := m.beginner.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("error iniciando transacción de base de datos: %w", err)
+func resolveTxUnitOfWork(db DBExecutor, optionalUOW ...TxUnitOfWork) TxUnitOfWork {
+	if len(optionalUOW) > 0 && optionalUOW[0] != nil {
+		return optionalUOW[0]
 	}
-
-	defer func() {
-		if tx != nil {
-			_ = tx.Rollback(ctx)
-		}
-	}()
-
-	txCtx := WithTx(ctx, tx)
-	if err := fn(txCtx); err != nil {
-		return err
+	if beginner, ok := db.(TxBeginner); ok && beginner != nil {
+		return NewUnitOfWork(beginner)
 	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("error confirmando transacción de base de datos: %w", err)
-	}
-	tx = nil
 	return nil
 }
 
+func runInRepoTx(ctx context.Context, uow TxUnitOfWork, fn func(tx pgx.Tx) error) error {
+	if fn == nil {
+		return fmt.Errorf("error ejecutando operación transaccional: callback nulo")
+	}
+	if existingTx := txFromContext(ctx); existingTx != nil {
+		return fn(existingTx)
+	}
+	if uow == nil {
+		return fmt.Errorf("error de integridad transaccional: UnitOfWork/TxBeginner no configurado")
+	}
+	return uow.WithTx(ctx, fn)
+}

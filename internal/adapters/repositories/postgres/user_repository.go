@@ -5,9 +5,10 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
+	"github.com/thumbi/backend/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/ports"
 )
 
 type userRepository struct {
@@ -20,6 +21,10 @@ func NewUserRepository(db DBExecutor) ports.UserRepository {
 }
 
 func (r *userRepository) Create(ctx context.Context, user *domain.User) error {
+	if !user.Provider.IsValid() || !user.Role.IsValid() || !user.KYCStatus.IsValid() {
+		return fmt.Errorf("%w: atributos de proveedor, rol o estado KYC inválidos", domain.ErrInvalidStatus)
+	}
+
 	query := `
 		INSERT INTO users (
 			id, email, first_name, last_name, avatar_url,
@@ -33,10 +38,10 @@ func (r *userRepository) Create(ctx context.Context, user *domain.User) error {
 		user.FirstName,
 		user.LastName,
 		user.AvatarURL,
-		string(user.Provider),
+		user.Provider.String(),
 		user.ProviderID,
-		string(user.Role),
-		string(user.KYCStatus),
+		user.Role.String(),
+		user.KYCStatus.String(),
 		user.IsDriverActive,
 		user.CreatedAt,
 		user.UpdatedAt,
@@ -47,7 +52,10 @@ func (r *userRepository) Create(ctx context.Context, user *domain.User) error {
 	return nil
 }
 
-func (r *userRepository) GetByID(ctx context.Context, id string) (*domain.User, error) {
+func (r *userRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.User, error) {
+	if id == uuid.Nil {
+		return nil, domain.ErrUserNotFound
+	}
 	query := `
 		SELECT id, email, first_name, last_name, avatar_url,
 		       provider, provider_id, role, kyc_status, is_driver_active,
@@ -70,6 +78,9 @@ func (r *userRepository) GetByEmail(ctx context.Context, email string) (*domain.
 }
 
 func (r *userRepository) GetByProvider(ctx context.Context, provider domain.AuthProvider, providerID string) (*domain.User, error) {
+	if !provider.IsValid() {
+		return nil, fmt.Errorf("%w: proveedor %s", domain.ErrInvalidStatus, provider)
+	}
 	query := `
 		SELECT id, email, first_name, last_name, avatar_url,
 		       provider, provider_id, role, kyc_status, is_driver_active,
@@ -77,10 +88,13 @@ func (r *userRepository) GetByProvider(ctx context.Context, provider domain.Auth
 		FROM users
 		WHERE provider = $1 AND provider_id = $2
 	`
-	return r.scanUser(r.db.QueryRow(ctx, query, string(provider), providerID))
+	return r.scanUser(r.db.QueryRow(ctx, query, provider.String(), providerID))
 }
 
 func (r *userRepository) Update(ctx context.Context, user *domain.User) error {
+	if !user.Role.IsValid() || !user.KYCStatus.IsValid() {
+		return fmt.Errorf("%w: rol o estado KYC inválido", domain.ErrInvalidStatus)
+	}
 	query := `
 		UPDATE users
 		SET email = $2,
@@ -99,8 +113,8 @@ func (r *userRepository) Update(ctx context.Context, user *domain.User) error {
 		user.FirstName,
 		user.LastName,
 		user.AvatarURL,
-		string(user.Role),
-		string(user.KYCStatus),
+		user.Role.String(),
+		user.KYCStatus.String(),
 		user.IsDriverActive,
 		user.UpdatedAt,
 	)
@@ -115,10 +129,10 @@ func (r *userRepository) Update(ctx context.Context, user *domain.User) error {
 
 func (r *userRepository) scanUser(row pgx.Row) (*domain.User, error) {
 	var (
-		u              domain.User
-		providerStr    string
-		roleStr        string
-		kycStatusStr   string
+		u            domain.User
+		providerStr  string
+		roleStr      string
+		kycStatusStr string
 	)
 
 	err := row.Scan(
@@ -145,6 +159,9 @@ func (r *userRepository) scanUser(row pgx.Row) (*domain.User, error) {
 	u.Provider = domain.AuthProvider(providerStr)
 	u.Role = domain.UserRole(roleStr)
 	u.KYCStatus = domain.KYCStatus(kycStatusStr)
+	if !u.Provider.IsValid() || !u.Role.IsValid() || !u.KYCStatus.IsValid() {
+		return nil, fmt.Errorf("%w: datos de proveedor, rol o estado KYC inválidos en base de datos", domain.ErrInvalidStatus)
+	}
 
 	return &u, nil
 }

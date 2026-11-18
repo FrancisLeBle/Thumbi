@@ -6,9 +6,10 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
+	"github.com/thumbi/backend/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/ports"
 )
 
 type kycRepository struct {
@@ -21,6 +22,9 @@ func NewKYCRepository(db DBExecutor) ports.KYCRepository {
 }
 
 func (r *kycRepository) Create(ctx context.Context, kyc *domain.KYCVerification) error {
+	if !kyc.Status.IsValid() {
+		return fmt.Errorf("%w: estado KYC %s", domain.ErrInvalidStatus, kyc.Status)
+	}
 	query := `
 		INSERT INTO kyc_verifications (
 			id, user_id, document_type, document_number,
@@ -44,7 +48,7 @@ func (r *kycRepository) Create(ctx context.Context, kyc *domain.KYCVerification)
 		kyc.Selfie3DURL,
 		kyc.LivenessScore,
 		kyc.RetryCount,
-		string(kyc.Status),
+		kyc.Status.String(),
 		rejectionReason,
 		kyc.CreatedAt,
 		kyc.UpdatedAt,
@@ -55,7 +59,10 @@ func (r *kycRepository) Create(ctx context.Context, kyc *domain.KYCVerification)
 	return nil
 }
 
-func (r *kycRepository) GetByID(ctx context.Context, id string) (*domain.KYCVerification, error) {
+func (r *kycRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.KYCVerification, error) {
+	if id == uuid.Nil {
+		return nil, domain.ErrUserNotFound
+	}
 	query := `
 		SELECT id, user_id, document_type, document_number,
 		       front_image_url, back_image_url, selfie_3d_url,
@@ -67,7 +74,10 @@ func (r *kycRepository) GetByID(ctx context.Context, id string) (*domain.KYCVeri
 	return r.scanKYC(r.db.QueryRow(ctx, query, id))
 }
 
-func (r *kycRepository) GetLatestByUserID(ctx context.Context, userID string) (*domain.KYCVerification, error) {
+func (r *kycRepository) GetLatestByUserID(ctx context.Context, userID uuid.UUID) (*domain.KYCVerification, error) {
+	if userID == uuid.Nil {
+		return nil, domain.ErrUserNotFound
+	}
 	query := `
 		SELECT id, user_id, document_type, document_number,
 		       front_image_url, back_image_url, selfie_3d_url,
@@ -82,6 +92,9 @@ func (r *kycRepository) GetLatestByUserID(ctx context.Context, userID string) (*
 }
 
 func (r *kycRepository) Update(ctx context.Context, kyc *domain.KYCVerification) error {
+	if !kyc.Status.IsValid() {
+		return fmt.Errorf("%w: estado KYC %s", domain.ErrInvalidStatus, kyc.Status)
+	}
 	query := `
 		UPDATE kyc_verifications
 		SET liveness_score = $2,
@@ -100,7 +113,7 @@ func (r *kycRepository) Update(ctx context.Context, kyc *domain.KYCVerification)
 		kyc.ID,
 		kyc.LivenessScore,
 		kyc.RetryCount,
-		string(kyc.Status),
+		kyc.Status.String(),
 		rejectionReason,
 		kyc.UpdatedAt,
 	)
@@ -143,6 +156,9 @@ func (r *kycRepository) scanKYC(row pgx.Row) (*domain.KYCVerification, error) {
 	}
 
 	k.Status = domain.KYCStatus(statusStr)
+	if !k.Status.IsValid() {
+		return nil, fmt.Errorf("%w: estado KYC inválido %s", domain.ErrInvalidStatus, statusStr)
+	}
 	if rejectionReason.Valid {
 		k.RejectionReason = rejectionReason.String
 	}

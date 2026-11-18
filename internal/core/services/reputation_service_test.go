@@ -5,28 +5,38 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
-	"github.com/thumbi/auth-kyc-service/internal/core/services"
+	"github.com/thumbi/backend/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/ports"
+	"github.com/thumbi/backend/internal/core/services"
 )
 
 func TestReputationService_CreateReview(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
 
+	tripID := uuid.MustParse("01960000-0000-7000-8000-000000000999")
+	driverID := uuid.MustParse("01960000-0000-7000-8000-000000000001")
+	passengerID := uuid.MustParse("01960000-0000-7000-8000-000000000002")
+	intruderID := uuid.MustParse("01960000-0000-7000-8000-000000000003")
+	bookingID := uuid.MustParse("01960000-0000-7000-8000-000000000888")
+	missingBookingID := uuid.MustParse("01960000-0000-7000-8000-000000000899")
+	pendingBookingID := uuid.MustParse("01960000-0000-7000-8000-000000000877")
+	reviewID := uuid.MustParse("01960000-0000-7000-8000-000000000777")
+
 	completedTrip := &domain.Trip{
-		ID:       "trip-999",
-		DriverID: "driver-1",
+		ID:       tripID,
+		DriverID: driverID,
 		Status:   domain.TripStatusCompleted,
 	}
 
 	completedBooking := &domain.Booking{
-		ID:          "booking-888",
-		TripID:      "trip-999",
-		PassengerID: "passenger-1",
+		ID:          bookingID,
+		TripID:      tripID,
+		PassengerID: passengerID,
 		Status:      domain.BookingStatusCompleted,
 	}
 
@@ -35,12 +45,12 @@ func TestReputationService_CreateReview(t *testing.T) {
 		mockBookingRepo := new(MockBookingRepository)
 		mockTripRepo := new(MockTripRepository)
 
-		mockBookingRepo.On("FindByID", ctx, "booking-nonexistent").Return(nil, domain.ErrBookingNotFound)
+		mockBookingRepo.On("FindByID", ctx, missingBookingID).Return(nil, domain.ErrBookingNotFound)
 
 		svc := services.NewReputationService(mockReviewRepo, mockBookingRepo, mockTripRepo, nil)
 		res, err := svc.CreateReview(ctx, ports.CreateReviewInput{
-			BookingID:  "booking-nonexistent",
-			ReviewerID: "passenger-1",
+			BookingID:  missingBookingID,
+			ReviewerID: passengerID,
 			Rating:     5,
 			Comment:    "Todo ok",
 		})
@@ -55,17 +65,17 @@ func TestReputationService_CreateReview(t *testing.T) {
 		mockTripRepo := new(MockTripRepository)
 
 		pendingBooking := &domain.Booking{
-			ID:          "booking-pending",
-			TripID:      "trip-999",
-			PassengerID: "passenger-1",
+			ID:          pendingBookingID,
+			TripID:      tripID,
+			PassengerID: passengerID,
 			Status:      domain.BookingStatusConfirmed, // No completada aún
 		}
-		mockBookingRepo.On("FindByID", ctx, "booking-pending").Return(pendingBooking, nil)
+		mockBookingRepo.On("FindByID", ctx, pendingBookingID).Return(pendingBooking, nil)
 
 		svc := services.NewReputationService(mockReviewRepo, mockBookingRepo, mockTripRepo, nil)
 		res, err := svc.CreateReview(ctx, ports.CreateReviewInput{
-			BookingID:  "booking-pending",
-			ReviewerID: "passenger-1",
+			BookingID:  pendingBookingID,
+			ReviewerID: passengerID,
 			Rating:     5,
 			Comment:    "Viaje aún no concluido",
 		})
@@ -79,13 +89,13 @@ func TestReputationService_CreateReview(t *testing.T) {
 		mockBookingRepo := new(MockBookingRepository)
 		mockTripRepo := new(MockTripRepository)
 
-		mockBookingRepo.On("FindByID", ctx, "booking-888").Return(completedBooking, nil)
-		mockTripRepo.On("FindByID", ctx, "trip-999").Return(completedTrip, nil)
+		mockBookingRepo.On("FindByID", ctx, bookingID).Return(completedBooking, nil)
+		mockTripRepo.On("FindByID", ctx, tripID).Return(completedTrip, nil)
 
 		svc := services.NewReputationService(mockReviewRepo, mockBookingRepo, mockTripRepo, nil)
 		res, err := svc.CreateReview(ctx, ports.CreateReviewInput{
-			BookingID:  "booking-888",
-			ReviewerID: "intruder-user",
+			BookingID:  bookingID,
+			ReviewerID: intruderID,
 			Rating:     5,
 		})
 
@@ -98,21 +108,21 @@ func TestReputationService_CreateReview(t *testing.T) {
 		mockBookingRepo := new(MockBookingRepository)
 		mockTripRepo := new(MockTripRepository)
 
-		mockBookingRepo.On("FindByID", ctx, "booking-888").Return(completedBooking, nil)
-		mockTripRepo.On("FindByID", ctx, "trip-999").Return(completedTrip, nil)
+		mockBookingRepo.On("FindByID", ctx, bookingID).Return(completedBooking, nil)
+		mockTripRepo.On("FindByID", ctx, tripID).Return(completedTrip, nil)
 
 		existingReview := &domain.Review{
-			ID:         "rev-prev",
-			BookingID:  "booking-888",
-			ReviewerID: "passenger-1",
+			ID:         reviewID,
+			BookingID:  bookingID,
+			ReviewerID: passengerID,
 			Rating:     4,
 		}
-		mockReviewRepo.On("FindByBookingAndReviewer", ctx, "booking-888", "passenger-1").Return(existingReview, nil)
+		mockReviewRepo.On("FindByBookingAndReviewer", ctx, bookingID, passengerID).Return(existingReview, nil)
 
 		svc := services.NewReputationService(mockReviewRepo, mockBookingRepo, mockTripRepo, nil)
 		res, err := svc.CreateReview(ctx, ports.CreateReviewInput{
-			BookingID:  "booking-888",
-			ReviewerID: "passenger-1",
+			BookingID:  bookingID,
+			ReviewerID: passengerID,
 			Rating:     5,
 		})
 
@@ -127,8 +137,8 @@ func TestReputationService_CreateReview(t *testing.T) {
 
 		svc := services.NewReputationService(mockReviewRepo, mockBookingRepo, mockTripRepo, nil)
 		res, err := svc.CreateReview(ctx, ports.CreateReviewInput{
-			BookingID:  "booking-888",
-			ReviewerID: "passenger-1",
+			BookingID:  bookingID,
+			ReviewerID: passengerID,
 			Rating:     6, // Inválido
 		})
 
@@ -142,23 +152,23 @@ func TestReputationService_CreateReview(t *testing.T) {
 		mockTripRepo := new(MockTripRepository)
 		mockUserRepo := new(MockUserRepository)
 
-		mockBookingRepo.On("FindByID", ctx, "booking-888").Return(completedBooking, nil)
-		mockTripRepo.On("FindByID", ctx, "trip-999").Return(completedTrip, nil)
-		mockReviewRepo.On("FindByBookingAndReviewer", ctx, "booking-888", "passenger-1").Return(nil, nil)
+		mockBookingRepo.On("FindByID", ctx, bookingID).Return(completedBooking, nil)
+		mockTripRepo.On("FindByID", ctx, tripID).Return(completedTrip, nil)
+		mockReviewRepo.On("FindByBookingAndReviewer", ctx, bookingID, passengerID).Return(nil, nil)
 		mockReviewRepo.On("Save", ctx, mock.AnythingOfType("*domain.Review")).Return(nil)
 
 		passengerUser := &domain.User{
-			ID:        "passenger-1",
+			ID:        passengerID,
 			FirstName: "Carlos",
 			LastName:  "Mendez",
 			AvatarURL: "https://avatar.com/carlos.jpg",
 		}
-		mockUserRepo.On("GetByID", ctx, "passenger-1").Return(passengerUser, nil)
+		mockUserRepo.On("GetByID", ctx, passengerID).Return(passengerUser, nil)
 
 		svc := services.NewReputationService(mockReviewRepo, mockBookingRepo, mockTripRepo, mockUserRepo)
 		res, err := svc.CreateReview(ctx, ports.CreateReviewInput{
-			BookingID:  "booking-888",
-			ReviewerID: "passenger-1",
+			BookingID:  bookingID,
+			ReviewerID: passengerID,
 			Rating:     5,
 			Comment:    "Conductor muy educado y viaje muy cómodo.",
 		})
@@ -166,8 +176,8 @@ func TestReputationService_CreateReview(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotNil(t, res)
 		assert.Equal(t, 5, res.Rating)
-		assert.Equal(t, "driver-1", res.RevieweeID)
-		assert.Equal(t, "passenger-1", res.ReviewerID)
+		assert.Equal(t, driverID, res.RevieweeID)
+		assert.Equal(t, passengerID, res.ReviewerID)
 		assert.Equal(t, "Carlos", res.ReviewerFirstName)
 		assert.Equal(t, "Conductor muy educado y viaje muy cómodo.", res.Comment)
 
@@ -180,22 +190,22 @@ func TestReputationService_CreateReview(t *testing.T) {
 		mockTripRepo := new(MockTripRepository)
 		mockUserRepo := new(MockUserRepository)
 
-		mockBookingRepo.On("FindByID", ctx, "booking-888").Return(completedBooking, nil)
-		mockTripRepo.On("FindByID", ctx, "trip-999").Return(completedTrip, nil)
-		mockReviewRepo.On("FindByBookingAndReviewer", ctx, "booking-888", "driver-1").Return(nil, nil)
+		mockBookingRepo.On("FindByID", ctx, bookingID).Return(completedBooking, nil)
+		mockTripRepo.On("FindByID", ctx, tripID).Return(completedTrip, nil)
+		mockReviewRepo.On("FindByBookingAndReviewer", ctx, bookingID, driverID).Return(nil, nil)
 		mockReviewRepo.On("Save", ctx, mock.AnythingOfType("*domain.Review")).Return(nil)
 
 		driverUser := &domain.User{
-			ID:        "driver-1",
+			ID:        driverID,
 			FirstName: "Mariana",
 			LastName:  "Lopez",
 		}
-		mockUserRepo.On("GetByID", ctx, "driver-1").Return(driverUser, nil)
+		mockUserRepo.On("GetByID", ctx, driverID).Return(driverUser, nil)
 
 		svc := services.NewReputationService(mockReviewRepo, mockBookingRepo, mockTripRepo, mockUserRepo)
 		res, err := svc.CreateReview(ctx, ports.CreateReviewInput{
-			BookingID:  "booking-888",
-			ReviewerID: "driver-1",
+			BookingID:  bookingID,
+			ReviewerID: driverID,
 			Rating:     5,
 			Comment:    "Excelente pasajero, muy puntual.",
 		})
@@ -203,8 +213,8 @@ func TestReputationService_CreateReview(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotNil(t, res)
 		assert.Equal(t, 5, res.Rating)
-		assert.Equal(t, "passenger-1", res.RevieweeID)
-		assert.Equal(t, "driver-1", res.ReviewerID)
+		assert.Equal(t, passengerID, res.RevieweeID)
+		assert.Equal(t, driverID, res.ReviewerID)
 		assert.Equal(t, "Mariana", res.ReviewerFirstName)
 
 		mockReviewRepo.AssertExpectations(t)
@@ -216,8 +226,15 @@ func TestReputationService_CreateReview(t *testing.T) {
 func TestReputationService_GetUserReviews(t *testing.T) {
 	ctx := context.Background()
 
+	targetUserID := uuid.MustParse("01960000-0000-7000-8000-000000000601")
+	unknownUserID := uuid.MustParse("01960000-0000-7000-8000-000000000699")
+	reviewerUserID := uuid.MustParse("01960000-0000-7000-8000-000000000602")
+	revID := uuid.MustParse("01960000-0000-7000-8000-000000000603")
+	tripID := uuid.MustParse("01960000-0000-7000-8000-000000000604")
+	bookID := uuid.MustParse("01960000-0000-7000-8000-000000000605")
+
 	targetUser := &domain.User{
-		ID:          "target-user-1",
+		ID:          targetUserID,
 		FirstName:   "Sofia",
 		LastName:    "Perez",
 		RatingAvg:   4.85,
@@ -228,10 +245,10 @@ func TestReputationService_GetUserReviews(t *testing.T) {
 		mockReviewRepo := new(MockReviewRepository)
 		mockUserRepo := new(MockUserRepository)
 
-		mockUserRepo.On("GetByID", ctx, "unknown").Return(nil, domain.ErrUserNotFound)
+		mockUserRepo.On("GetByID", ctx, unknownUserID).Return(nil, domain.ErrUserNotFound)
 
 		svc := services.NewReputationService(mockReviewRepo, nil, nil, mockUserRepo)
-		res, err := svc.GetUserReviews(ctx, "unknown", 10, 0)
+		res, err := svc.GetUserReviews(ctx, unknownUserID, 10, 0)
 
 		assert.ErrorIs(t, err, domain.ErrUserNotFound)
 		assert.Nil(t, res)
@@ -241,34 +258,34 @@ func TestReputationService_GetUserReviews(t *testing.T) {
 		mockReviewRepo := new(MockReviewRepository)
 		mockUserRepo := new(MockUserRepository)
 
-		mockUserRepo.On("GetByID", ctx, "target-user-1").Return(targetUser, nil)
+		mockUserRepo.On("GetByID", ctx, targetUserID).Return(targetUser, nil)
 
 		rev1 := &domain.Review{
-			ID:         "rev-1",
-			TripID:     "trip-1",
-			BookingID:  "book-1",
-			ReviewerID: "rev-user-1",
-			RevieweeID: "target-user-1",
+			ID:         revID,
+			TripID:     tripID,
+			BookingID:  bookID,
+			ReviewerID: reviewerUserID,
+			RevieweeID: targetUserID,
 			Rating:     5,
 			Comment:    "Todo perfecto",
 			CreatedAt:  time.Now().UTC(),
 		}
-		mockReviewRepo.On("ListByUserID", ctx, "target-user-1", 20, 0).Return([]*domain.Review{rev1}, nil)
-		mockReviewRepo.On("GetAverageRating", ctx, "target-user-1").Return(4.85, 12, nil)
+		mockReviewRepo.On("ListByUserID", ctx, targetUserID, 20, 0).Return([]*domain.Review{rev1}, nil)
+		mockReviewRepo.On("GetAverageRating", ctx, targetUserID).Return(4.85, 12, nil)
 
 		reviewer := &domain.User{
-			ID:        "rev-user-1",
+			ID:        reviewerUserID,
 			FirstName: "Lucas",
 			LastName:  "Gomez",
 		}
-		mockUserRepo.On("GetByID", ctx, "rev-user-1").Return(reviewer, nil)
+		mockUserRepo.On("GetByID", ctx, reviewerUserID).Return(reviewer, nil)
 
 		svc := services.NewReputationService(mockReviewRepo, nil, nil, mockUserRepo)
-		res, err := svc.GetUserReviews(ctx, "target-user-1", 0, 0)
+		res, err := svc.GetUserReviews(ctx, targetUserID, 0, 0)
 
 		require.NoError(t, err)
 		assert.NotNil(t, res)
-		assert.Equal(t, "target-user-1", res.UserID)
+		assert.Equal(t, targetUserID, res.UserID)
 		assert.Equal(t, 4.85, res.RatingAvg)
 		assert.Equal(t, 12, res.RatingCount)
 		assert.Len(t, res.Reviews, 1)

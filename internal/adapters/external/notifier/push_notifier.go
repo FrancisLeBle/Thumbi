@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
+	"github.com/thumbi/backend/internal/core/ports"
 )
 
 type DispatchedNotification struct {

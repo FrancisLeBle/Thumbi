@@ -4,9 +4,11 @@ import (
 	"context"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
+	"github.com/thumbi/backend/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/ports"
+	"github.com/thumbi/backend/internal/core/services"
 )
 
 // MockUserRepository
@@ -19,7 +21,7 @@ func (m *MockUserRepository) Create(ctx context.Context, user *domain.User) erro
 	return args.Error(0)
 }
 
-func (m *MockUserRepository) GetByID(ctx context.Context, id string) (*domain.User, error) {
+func (m *MockUserRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.User, error) {
 	args := m.Called(ctx, id)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -58,7 +60,7 @@ func (m *MockIdentityRepository) Create(ctx context.Context, identity *domain.Us
 	return args.Error(0)
 }
 
-func (m *MockIdentityRepository) GetByID(ctx context.Context, id string) (*domain.UserIdentity, error) {
+func (m *MockIdentityRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.UserIdentity, error) {
 	args := m.Called(ctx, id)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -74,7 +76,7 @@ func (m *MockIdentityRepository) GetByProviderAndID(ctx context.Context, provide
 	return args.Get(0).(*domain.UserIdentity), args.Error(1)
 }
 
-func (m *MockIdentityRepository) ListByUserID(ctx context.Context, userID string) ([]*domain.UserIdentity, error) {
+func (m *MockIdentityRepository) ListByUserID(ctx context.Context, userID uuid.UUID) ([]*domain.UserIdentity, error) {
 	args := m.Called(ctx, userID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -82,7 +84,7 @@ func (m *MockIdentityRepository) ListByUserID(ctx context.Context, userID string
 	return args.Get(0).([]*domain.UserIdentity), args.Error(1)
 }
 
-func (m *MockIdentityRepository) Delete(ctx context.Context, id string) error {
+func (m *MockIdentityRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	args := m.Called(ctx, id)
 	return args.Error(0)
 }
@@ -97,14 +99,6 @@ func (m *MockSessionRepository) Save(ctx context.Context, session *domain.Sessio
 	return args.Error(0)
 }
 
-func (m *MockSessionRepository) GetByID(ctx context.Context, sessionID string) (*domain.Session, error) {
-	args := m.Called(ctx, sessionID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*domain.Session), args.Error(1)
-}
-
 func (m *MockSessionRepository) GetByToken(ctx context.Context, token string) (*domain.Session, error) {
 	args := m.Called(ctx, token)
 	if args.Get(0) == nil {
@@ -113,13 +107,8 @@ func (m *MockSessionRepository) GetByToken(ctx context.Context, token string) (*
 	return args.Get(0).(*domain.Session), args.Error(1)
 }
 
-func (m *MockSessionRepository) Delete(ctx context.Context, sessionID string) error {
+func (m *MockSessionRepository) Delete(ctx context.Context, sessionID uuid.UUID) error {
 	args := m.Called(ctx, sessionID)
-	return args.Error(0)
-}
-
-func (m *MockSessionRepository) DeleteByUserID(ctx context.Context, userID string) error {
-	args := m.Called(ctx, userID)
 	return args.Error(0)
 }
 
@@ -141,24 +130,6 @@ func (m *MockOAuthProvider) GetProviderName() domain.AuthProvider {
 	return m.ProviderName
 }
 
-// MockTokenProvider
-type MockTokenProvider struct {
-	mock.Mock
-}
-
-func (m *MockTokenProvider) GenerateToken(user *domain.User) (string, error) {
-	args := m.Called(user)
-	return args.String(0), args.Error(1)
-}
-
-func (m *MockTokenProvider) ValidateToken(tokenString string) (*domain.UserClaims, error) {
-	args := m.Called(tokenString)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*domain.UserClaims), args.Error(1)
-}
-
 // MockKYCRepository
 type MockKYCRepository struct {
 	mock.Mock
@@ -169,7 +140,7 @@ func (m *MockKYCRepository) Create(ctx context.Context, kyc *domain.KYCVerificat
 	return args.Error(0)
 }
 
-func (m *MockKYCRepository) GetByID(ctx context.Context, id string) (*domain.KYCVerification, error) {
+func (m *MockKYCRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.KYCVerification, error) {
 	args := m.Called(ctx, id)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -177,7 +148,7 @@ func (m *MockKYCRepository) GetByID(ctx context.Context, id string) (*domain.KYC
 	return args.Get(0).(*domain.KYCVerification), args.Error(1)
 }
 
-func (m *MockKYCRepository) GetLatestByUserID(ctx context.Context, userID string) (*domain.KYCVerification, error) {
+func (m *MockKYCRepository) GetLatestByUserID(ctx context.Context, userID uuid.UUID) (*domain.KYCVerification, error) {
 	args := m.Called(ctx, userID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -213,7 +184,7 @@ func (m *MockVehicleRepository) Create(ctx context.Context, vehicle *domain.Vehi
 	return args.Error(0)
 }
 
-func (m *MockVehicleRepository) GetByID(ctx context.Context, id string) (*domain.Vehicle, error) {
+func (m *MockVehicleRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Vehicle, error) {
 	args := m.Called(ctx, id)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -221,7 +192,7 @@ func (m *MockVehicleRepository) GetByID(ctx context.Context, id string) (*domain
 	return args.Get(0).(*domain.Vehicle), args.Error(1)
 }
 
-func (m *MockVehicleRepository) GetByUserID(ctx context.Context, userID string) (*domain.Vehicle, error) {
+func (m *MockVehicleRepository) GetByUserID(ctx context.Context, userID uuid.UUID) (*domain.Vehicle, error) {
 	args := m.Called(ctx, userID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -240,14 +211,6 @@ func (m *MockVehicleRepository) GetByPlateNumber(ctx context.Context, plateNumbe
 func (m *MockVehicleRepository) Update(ctx context.Context, vehicle *domain.Vehicle) error {
 	args := m.Called(ctx, vehicle)
 	return args.Error(0)
-}
-
-func (m *MockVehicleRepository) ListPendingVerification(ctx context.Context, limit, offset int) ([]*domain.Vehicle, error) {
-	args := m.Called(ctx, limit, offset)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]*domain.Vehicle), args.Error(1)
 }
 
 // MockNotifier
@@ -270,12 +233,20 @@ func (m *MockTripRepository) Save(ctx context.Context, trip *domain.Trip) error 
 	return args.Error(0)
 }
 
-func (m *MockTripRepository) FindByID(ctx context.Context, id string) (*domain.Trip, error) {
+func (m *MockTripRepository) FindByID(ctx context.Context, id uuid.UUID) (*domain.Trip, error) {
 	args := m.Called(ctx, id)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*domain.Trip), args.Error(1)
+}
+
+func (m *MockTripRepository) FindByIDsForUpdate(ctx context.Context, ids []uuid.UUID) ([]*domain.Trip, error) {
+	args := m.Called(ctx, ids)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*domain.Trip), args.Error(1)
 }
 
 func (m *MockTripRepository) SearchMatchingTrips(ctx context.Context, params ports.SearchTripsParams) ([]ports.MatchedTripRecord, error) {
@@ -286,22 +257,24 @@ func (m *MockTripRepository) SearchMatchingTrips(ctx context.Context, params por
 	return args.Get(0).([]ports.MatchedTripRecord), args.Error(1)
 }
 
-func (m *MockTripRepository) UpdateStatus(ctx context.Context, tripID string, newStatus domain.TripStatus) error {
+func (m *MockTripRepository) UpdateStatus(ctx context.Context, tripID uuid.UUID, newStatus domain.TripStatus) error {
 	args := m.Called(ctx, tripID, newStatus)
 	return args.Error(0)
 }
 
-func (m *MockTripRepository) ReleaseSeats(ctx context.Context, tripID string, seats int) error {
-	args := m.Called(ctx, tripID, seats)
-	return args.Error(0)
+func (m *MockTripRepository) ReleaseSeats(ctx context.Context, transition domain.SeatTransition) (bool, error) {
+	args := m.Called(ctx, transition)
+	return args.Bool(0), args.Error(1)
 }
 
-func (m *MockTripRepository) ListByDriverID(ctx context.Context, driverID string, limit, offset int) ([]*domain.Trip, error) {
-	args := m.Called(ctx, driverID, limit, offset)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]*domain.Trip), args.Error(1)
+func (m *MockTripRepository) ApplySeatTransitionsBatch(ctx context.Context, transitions []domain.SeatTransition, updatedAt time.Time) (int, error) {
+	args := m.Called(ctx, transitions, updatedAt)
+	return args.Int(0), args.Error(1)
+}
+
+func (m *MockTripRepository) CalculateRouteDistanceKm(ctx context.Context, routePath domain.LineString) (float64, error) {
+	args := m.Called(ctx, routePath)
+	return args.Get(0).(float64), args.Error(1)
 }
 
 // MockRoutingProvider
@@ -322,12 +295,12 @@ type MockBookingRepository struct {
 	mock.Mock
 }
 
-func (m *MockBookingRepository) CreateWithHold(ctx context.Context, booking *domain.Booking) error {
-	args := m.Called(ctx, booking)
-	return args.Error(0)
+func (m *MockBookingRepository) CreateWithHold(ctx context.Context, booking *domain.Booking, seatHold domain.SeatTransition) (bool, error) {
+	args := m.Called(ctx, booking, seatHold)
+	return args.Bool(0), args.Error(1)
 }
 
-func (m *MockBookingRepository) FindByID(ctx context.Context, id string) (*domain.Booking, error) {
+func (m *MockBookingRepository) FindByID(ctx context.Context, id uuid.UUID) (*domain.Booking, error) {
 	args := m.Called(ctx, id)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -348,12 +321,12 @@ func (m *MockBookingRepository) FindByPaymentIntentID(ctx context.Context, inten
 	return nil, nil
 }
 
-func (m *MockBookingRepository) UpdateStatus(ctx context.Context, bookingID string, newStatus domain.BookingStatus, reason *string) error {
+func (m *MockBookingRepository) UpdateStatus(ctx context.Context, bookingID uuid.UUID, newStatus domain.BookingStatus, reason *string) error {
 	args := m.Called(ctx, bookingID, newStatus, reason)
 	return args.Error(0)
 }
 
-func (m *MockBookingRepository) UpdatePaymentIntent(ctx context.Context, bookingID, intentID string) error {
+func (m *MockBookingRepository) UpdatePaymentIntent(ctx context.Context, bookingID uuid.UUID, intentID string) error {
 	for _, call := range m.ExpectedCalls {
 		if call.Method == "UpdatePaymentIntent" {
 			args := m.Called(ctx, bookingID, intentID)
@@ -363,7 +336,7 @@ func (m *MockBookingRepository) UpdatePaymentIntent(ctx context.Context, booking
 	return nil
 }
 
-func (m *MockBookingRepository) GetActiveBookingsByTrip(ctx context.Context, tripID string) ([]*domain.Booking, error) {
+func (m *MockBookingRepository) GetActiveBookingsByTrip(ctx context.Context, tripID uuid.UUID) ([]*domain.Booking, error) {
 	args := m.Called(ctx, tripID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -371,7 +344,7 @@ func (m *MockBookingRepository) GetActiveBookingsByTrip(ctx context.Context, tri
 	return args.Get(0).([]*domain.Booking), args.Error(1)
 }
 
-func (m *MockBookingRepository) GetPassengerBookings(ctx context.Context, passengerID string, limit, offset int) ([]*domain.Booking, error) {
+func (m *MockBookingRepository) GetPassengerBookings(ctx context.Context, passengerID uuid.UUID, limit, offset int) ([]*domain.Booking, error) {
 	args := m.Called(ctx, passengerID, limit, offset)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -379,13 +352,21 @@ func (m *MockBookingRepository) GetPassengerBookings(ctx context.Context, passen
 	return args.Get(0).([]*domain.Booking), args.Error(1)
 }
 
-func (m *MockBookingRepository) CheckPassengerBookingConstraints(ctx context.Context, passengerID, targetTripID string, departureTime, estimatedArrival, now time.Time) (bool, int, error) {
+func (m *MockBookingRepository) CheckPassengerBookingConstraints(ctx context.Context, passengerID, targetTripID uuid.UUID, departureTime, estimatedArrival, now time.Time) (bool, int, error) {
 	args := m.Called(ctx, passengerID, targetTripID, departureTime, estimatedArrival, now)
 	return args.Bool(0), args.Int(1), args.Error(2)
 }
 
-func (m *MockBookingRepository) ExpirePendingBookings(ctx context.Context, now time.Time) (int, error) {
-	args := m.Called(ctx, now)
+func (m *MockBookingRepository) LockExpiredPendingBookings(ctx context.Context, status domain.BookingStatus, overdueAt time.Time, limit int) ([]*domain.Booking, error) {
+	args := m.Called(ctx, status, overdueAt, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*domain.Booking), args.Error(1)
+}
+
+func (m *MockBookingRepository) MarkBookingsExpiredBatch(ctx context.Context, bookingIDs []uuid.UUID, expectedStatus, newStatus domain.BookingStatus, updatedAt time.Time) (int, error) {
+	args := m.Called(ctx, bookingIDs, expectedStatus, newStatus, updatedAt)
 	return args.Int(0), args.Error(1)
 }
 
@@ -399,7 +380,7 @@ func (m *MockEscrowRepository) CreateEscrow(ctx context.Context, escrow *domain.
 	return args.Error(0)
 }
 
-func (m *MockEscrowRepository) FindByBookingID(ctx context.Context, bookingID string) (*domain.EscrowTransaction, error) {
+func (m *MockEscrowRepository) FindByBookingID(ctx context.Context, bookingID uuid.UUID) (*domain.EscrowTransaction, error) {
 	args := m.Called(ctx, bookingID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -407,7 +388,7 @@ func (m *MockEscrowRepository) FindByBookingID(ctx context.Context, bookingID st
 	return args.Get(0).(*domain.EscrowTransaction), args.Error(1)
 }
 
-func (m *MockEscrowRepository) UpdateEscrowStatus(ctx context.Context, escrowID string, newStatus domain.EscrowStatus) error {
+func (m *MockEscrowRepository) UpdateEscrowStatus(ctx context.Context, escrowID uuid.UUID, newStatus domain.EscrowStatus) error {
 	args := m.Called(ctx, escrowID, newStatus)
 	return args.Error(0)
 }
@@ -422,8 +403,8 @@ type MockPaymentGateway struct {
 	mock.Mock
 }
 
-func (m *MockPaymentGateway) CreatePaymentIntent(ctx context.Context, bookingID string, amount domain.Money, currency string) (*ports.PaymentIntentResult, error) {
-	args := m.Called(ctx, bookingID, amount, currency)
+func (m *MockPaymentGateway) CreatePaymentIntent(ctx context.Context, bookingID uuid.UUID, amount domain.Money) (*ports.PaymentIntentResult, error) {
+	args := m.Called(ctx, bookingID, amount)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -453,7 +434,7 @@ func (m *MockReviewRepository) Save(ctx context.Context, review *domain.Review) 
 	return args.Error(0)
 }
 
-func (m *MockReviewRepository) FindByID(ctx context.Context, id string) (*domain.Review, error) {
+func (m *MockReviewRepository) FindByID(ctx context.Context, id uuid.UUID) (*domain.Review, error) {
 	args := m.Called(ctx, id)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -461,7 +442,7 @@ func (m *MockReviewRepository) FindByID(ctx context.Context, id string) (*domain
 	return args.Get(0).(*domain.Review), args.Error(1)
 }
 
-func (m *MockReviewRepository) FindByBookingAndReviewer(ctx context.Context, bookingID, reviewerID string) (*domain.Review, error) {
+func (m *MockReviewRepository) FindByBookingAndReviewer(ctx context.Context, bookingID, reviewerID uuid.UUID) (*domain.Review, error) {
 	args := m.Called(ctx, bookingID, reviewerID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -469,7 +450,7 @@ func (m *MockReviewRepository) FindByBookingAndReviewer(ctx context.Context, boo
 	return args.Get(0).(*domain.Review), args.Error(1)
 }
 
-func (m *MockReviewRepository) ListByUserID(ctx context.Context, userID string, limit, offset int) ([]*domain.Review, error) {
+func (m *MockReviewRepository) ListByUserID(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*domain.Review, error) {
 	args := m.Called(ctx, userID, limit, offset)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -477,7 +458,7 @@ func (m *MockReviewRepository) ListByUserID(ctx context.Context, userID string, 
 	return args.Get(0).([]*domain.Review), args.Error(1)
 }
 
-func (m *MockReviewRepository) GetAverageRating(ctx context.Context, userID string) (float64, int, error) {
+func (m *MockReviewRepository) GetAverageRating(ctx context.Context, userID uuid.UUID) (float64, int, error) {
 	args := m.Called(ctx, userID)
 	return args.Get(0).(float64), args.Int(1), args.Error(2)
 }
@@ -492,7 +473,7 @@ func (m *MockDisputeRepository) Save(ctx context.Context, dispute *domain.Disput
 	return args.Error(0)
 }
 
-func (m *MockDisputeRepository) FindByID(ctx context.Context, id string) (*domain.Dispute, error) {
+func (m *MockDisputeRepository) FindByID(ctx context.Context, id uuid.UUID) (*domain.Dispute, error) {
 	args := m.Called(ctx, id)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -500,7 +481,7 @@ func (m *MockDisputeRepository) FindByID(ctx context.Context, id string) (*domai
 	return args.Get(0).(*domain.Dispute), args.Error(1)
 }
 
-func (m *MockDisputeRepository) FindByEscrowID(ctx context.Context, escrowID string) (*domain.Dispute, error) {
+func (m *MockDisputeRepository) FindByEscrowID(ctx context.Context, escrowID uuid.UUID) (*domain.Dispute, error) {
 	args := m.Called(ctx, escrowID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -534,7 +515,7 @@ func (m *MockReputationService) CreateReview(ctx context.Context, input ports.Cr
 	return args.Get(0).(*ports.ReviewDTO), args.Error(1)
 }
 
-func (m *MockReputationService) GetUserReviews(ctx context.Context, userID string, limit, offset int) (*ports.UserReputationDTO, error) {
+func (m *MockReputationService) GetUserReviews(ctx context.Context, userID uuid.UUID, limit, offset int) (*ports.UserReputationDTO, error) {
 	args := m.Called(ctx, userID, limit, offset)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -563,7 +544,7 @@ func (m *MockDisputeService) ResolveDispute(ctx context.Context, input ports.Res
 	return args.Get(0).(*ports.DisputeDTO), args.Error(1)
 }
 
-func (m *MockDisputeService) GetDisputeByID(ctx context.Context, disputeID string) (*ports.DisputeDTO, error) {
+func (m *MockDisputeService) GetDisputeByID(ctx context.Context, disputeID uuid.UUID) (*ports.DisputeDTO, error) {
 	args := m.Called(ctx, disputeID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -593,5 +574,80 @@ func (m *MockTransactionManager) WithinTransaction(ctx context.Context, fn func(
 	}
 	txCtx := context.WithValue(ctx, mockTxCtxKey{}, true)
 	return fn(txCtx)
+}
+
+// MockSettlementService simula las interfaces consumidoras de liquidación en pruebas unitarias de servicios.
+type MockSettlementService struct {
+	mock.Mock
+}
+
+func (m *MockSettlementService) CreatePaymentIntent(ctx context.Context, bookingID uuid.UUID, amount domain.Money) (*ports.PaymentIntentResult, error) {
+	args := m.Called(ctx, bookingID, amount)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*ports.PaymentIntentResult), args.Error(1)
+}
+
+func (m *MockSettlementService) ConfirmPayment(ctx context.Context, gatewayRef string) error {
+	args := m.Called(ctx, gatewayRef)
+	return args.Error(0)
+}
+
+func (m *MockSettlementService) HoldEscrow(ctx context.Context, input services.HoldEscrowInput) (*domain.EscrowTransaction, error) {
+	args := m.Called(ctx, input)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.EscrowTransaction), args.Error(1)
+}
+
+func (m *MockSettlementService) GetEscrowByBookingID(ctx context.Context, bookingID uuid.UUID) (*domain.EscrowTransaction, error) {
+	args := m.Called(ctx, bookingID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.EscrowTransaction), args.Error(1)
+}
+
+func (m *MockSettlementService) FreezeEscrowForDispute(ctx context.Context, escrow *domain.EscrowTransaction) error {
+	args := m.Called(ctx, escrow)
+	return args.Error(0)
+}
+
+func (m *MockSettlementService) ReleaseEscrow(ctx context.Context, escrow *domain.EscrowTransaction) error {
+	args := m.Called(ctx, escrow)
+	return args.Error(0)
+}
+
+func (m *MockSettlementService) RestoreEscrowHeld(ctx context.Context, escrow *domain.EscrowTransaction) error {
+	args := m.Called(ctx, escrow)
+	return args.Error(0)
+}
+
+func (m *MockSettlementService) SettleCancellationRefund(ctx context.Context, input services.CancellationRefundInput) (*domain.RefundTransaction, error) {
+	args := m.Called(ctx, input)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.RefundTransaction), args.Error(1)
+}
+
+func (m *MockSettlementService) SettleDisputeRefund(ctx context.Context, input services.DisputeRefundInput, withinTxHooks ...func(txCtx context.Context) error) (*domain.RefundTransaction, error) {
+	args := m.Called(ctx, input)
+	if err := args.Error(1); err != nil {
+		return nil, err
+	}
+	for _, hook := range withinTxHooks {
+		if hook != nil {
+			if err := hook(ctx); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if args.Get(0) == nil {
+		return nil, nil
+	}
+	return args.Get(0).(*domain.RefundTransaction), nil
 }
 

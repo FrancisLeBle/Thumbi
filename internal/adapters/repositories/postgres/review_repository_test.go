@@ -7,29 +7,39 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	"github.com/thumbi/auth-kyc-service/internal/adapters/repositories/postgres"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
+	"github.com/thumbi/backend/internal/adapters/repositories/postgres"
+	"github.com/thumbi/backend/internal/core/domain"
 )
 
 func TestReviewRepository_Save(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
+	revID := uuid.MustParse("01933e3d-0000-7000-8000-000000000001")
+	rev2ID := uuid.MustParse("01933e3d-0000-7000-8000-000000000002")
+	revDupID := uuid.MustParse("01933e3d-0000-7000-8000-000000000003")
+	revErrID := uuid.MustParse("01933e3d-0000-7000-8000-000000000004")
+	tripID := uuid.MustParse("01933e3d-0000-7000-8000-000000000011")
+	booking1ID := uuid.MustParse("01933e3d-0000-7000-8000-000000000021")
+	booking2ID := uuid.MustParse("01933e3d-0000-7000-8000-000000000022")
+	passengerID := uuid.MustParse("01933e3d-0000-7000-8000-000000000031")
+	driverID := uuid.MustParse("01933e3d-0000-7000-8000-000000000041")
 
 	t.Run("inserta reseña exitosamente con comentario", func(t *testing.T) {
 		mockDB := new(MockDBExecutor)
 		repo := postgres.NewReviewRepository(mockDB)
 
 		review := &domain.Review{
-			ID:         "rev-1",
-			TripID:     "trip-1",
-			BookingID:  "booking-1",
-			ReviewerID: "user-passenger",
-			RevieweeID: "user-driver",
+			ID:         revID,
+			TripID:     tripID,
+			BookingID:  booking1ID,
+			ReviewerID: passengerID,
+			RevieweeID: driverID,
 			Rating:     5,
 			Comment:    "Excelente viaje, muy puntual y seguro.",
 			CreatedAt:  now,
@@ -42,11 +52,11 @@ func TestReviewRepository_Save(t *testing.T) {
 				strings.Contains(sql, "reviewee_id")
 		}), mock.MatchedBy(func(args []any) bool {
 			return len(args) == 9 &&
-				args[0] == "rev-1" &&
-				args[1] == "trip-1" &&
-				args[2] == "booking-1" &&
-				args[3] == "user-passenger" &&
-				args[4] == "user-driver" &&
+				args[0] == revID &&
+				args[1] == tripID &&
+				args[2] == booking1ID &&
+				args[3] == passengerID &&
+				args[4] == driverID &&
 				args[5] == 5 &&
 				args[6] != nil && *args[6].(*string) == "Excelente viaje, muy puntual y seguro."
 		})).Return(pgconn.NewCommandTag("INSERT 0 1"), nil)
@@ -61,11 +71,11 @@ func TestReviewRepository_Save(t *testing.T) {
 		repo := postgres.NewReviewRepository(mockDB)
 
 		review := &domain.Review{
-			ID:         "rev-2",
-			TripID:     "trip-1",
-			BookingID:  "booking-2",
-			ReviewerID: "user-passenger",
-			RevieweeID: "user-driver",
+			ID:         rev2ID,
+			TripID:     tripID,
+			BookingID:  booking2ID,
+			ReviewerID: passengerID,
+			RevieweeID: driverID,
 			Rating:     4,
 			Comment:    "",
 			CreatedAt:  now,
@@ -76,7 +86,7 @@ func TestReviewRepository_Save(t *testing.T) {
 			return strings.Contains(sql, "INSERT INTO reviews")
 		}), mock.MatchedBy(func(args []any) bool {
 			return len(args) == 9 &&
-				args[0] == "rev-2" &&
+				args[0] == rev2ID &&
 				args[6] == (*string)(nil)
 		})).Return(pgconn.NewCommandTag("INSERT 0 1"), nil)
 
@@ -90,11 +100,11 @@ func TestReviewRepository_Save(t *testing.T) {
 		repo := postgres.NewReviewRepository(mockDB)
 
 		review := &domain.Review{
-			ID:         "rev-dup",
-			TripID:     "trip-1",
-			BookingID:  "booking-1",
-			ReviewerID: "user-passenger",
-			RevieweeID: "user-driver",
+			ID:         revDupID,
+			TripID:     tripID,
+			BookingID:  booking1ID,
+			ReviewerID: passengerID,
+			RevieweeID: driverID,
 			Rating:     5,
 			CreatedAt:  now,
 			UpdatedAt:  now,
@@ -113,11 +123,11 @@ func TestReviewRepository_Save(t *testing.T) {
 		repo := postgres.NewReviewRepository(mockDB)
 
 		review := &domain.Review{
-			ID:         "rev-err",
-			TripID:     "trip-1",
-			BookingID:  "booking-1",
-			ReviewerID: "user-passenger",
-			RevieweeID: "user-driver",
+			ID:         revErrID,
+			TripID:     tripID,
+			BookingID:  booking1ID,
+			ReviewerID: passengerID,
+			RevieweeID: driverID,
 			Rating:     5,
 			CreatedAt:  now,
 			UpdatedAt:  now,
@@ -135,6 +145,12 @@ func TestReviewRepository_Save(t *testing.T) {
 func TestReviewRepository_FindByID(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
+	revID := uuid.MustParse("01933e3d-0000-7000-8000-000000000101")
+	tripID := uuid.MustParse("01933e3d-0000-7000-8000-000000000202")
+	bookingID := uuid.MustParse("01933e3d-0000-7000-8000-000000000303")
+	reviewerID := uuid.MustParse("01933e3d-0000-7000-8000-000000000401")
+	revieweeID := uuid.MustParse("01933e3d-0000-7000-8000-000000000402")
+	missingID := uuid.MustParse("01933e3d-0000-7000-8000-000000000404")
 
 	t.Run("recupera reseña existente correctamente", func(t *testing.T) {
 		mockDB := new(MockDBExecutor)
@@ -143,13 +159,13 @@ func TestReviewRepository_FindByID(t *testing.T) {
 		comment := "Muy buen viaje"
 		mockDB.On("QueryRow", ctx, mock.MatchedBy(func(sql string) bool {
 			return strings.Contains(sql, "FROM reviews") && strings.Contains(sql, "WHERE id = $1")
-		}), []any{"rev-101"}).Return(&MockRow{
+		}), []any{revID}).Return(&MockRow{
 			scanFn: func(dest ...any) error {
-				*dest[0].(*string) = "rev-101"
-				*dest[1].(*string) = "trip-202"
-				*dest[2].(*string) = "booking-303"
-				*dest[3].(*string) = "reviewer-1"
-				*dest[4].(*string) = "reviewee-2"
+				*dest[0].(*uuid.UUID) = revID
+				*dest[1].(*uuid.UUID) = tripID
+				*dest[2].(*uuid.UUID) = bookingID
+				*dest[3].(*uuid.UUID) = reviewerID
+				*dest[4].(*uuid.UUID) = revieweeID
 				*dest[5].(*int) = 5
 				*dest[6].(**string) = &comment
 				*dest[7].(*time.Time) = now
@@ -158,14 +174,14 @@ func TestReviewRepository_FindByID(t *testing.T) {
 			},
 		})
 
-		rev, err := repo.FindByID(ctx, "rev-101")
+		rev, err := repo.FindByID(ctx, revID)
 		require.NoError(t, err)
 		assert.NotNil(t, rev)
-		assert.Equal(t, "rev-101", rev.ID)
-		assert.Equal(t, "trip-202", rev.TripID)
-		assert.Equal(t, "booking-303", rev.BookingID)
-		assert.Equal(t, "reviewer-1", rev.ReviewerID)
-		assert.Equal(t, "reviewee-2", rev.RevieweeID)
+		assert.Equal(t, revID, rev.ID)
+		assert.Equal(t, tripID, rev.TripID)
+		assert.Equal(t, bookingID, rev.BookingID)
+		assert.Equal(t, reviewerID, rev.ReviewerID)
+		assert.Equal(t, revieweeID, rev.RevieweeID)
 		assert.Equal(t, 5, rev.Rating)
 		assert.Equal(t, "Muy buen viaje", rev.Comment)
 		mockDB.AssertExpectations(t)
@@ -175,13 +191,13 @@ func TestReviewRepository_FindByID(t *testing.T) {
 		mockDB := new(MockDBExecutor)
 		repo := postgres.NewReviewRepository(mockDB)
 
-		mockDB.On("QueryRow", ctx, mock.Anything, []any{"non-existent"}).Return(&MockRow{
+		mockDB.On("QueryRow", ctx, mock.Anything, []any{missingID}).Return(&MockRow{
 			scanFn: func(dest ...any) error {
 				return pgx.ErrNoRows
 			},
 		})
 
-		rev, err := repo.FindByID(ctx, "non-existent")
+		rev, err := repo.FindByID(ctx, missingID)
 		assert.ErrorIs(t, err, domain.ErrReviewNotFound)
 		assert.Nil(t, rev)
 		mockDB.AssertExpectations(t)
@@ -191,6 +207,11 @@ func TestReviewRepository_FindByID(t *testing.T) {
 func TestReviewRepository_FindByBookingAndReviewer(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
+	revID := uuid.MustParse("01933e3d-0000-7000-8000-000000000001")
+	tripID := uuid.MustParse("01933e3d-0000-7000-8000-000000000002")
+	bookingID := uuid.MustParse("01933e3d-0000-7000-8000-000000000003")
+	userID := uuid.MustParse("01933e3d-0000-7000-8000-000000000004")
+	driverID := uuid.MustParse("01933e3d-0000-7000-8000-000000000005")
 
 	t.Run("recupera calificación por reserva y evaluador", func(t *testing.T) {
 		mockDB := new(MockDBExecutor)
@@ -201,13 +222,13 @@ func TestReviewRepository_FindByBookingAndReviewer(t *testing.T) {
 			return strings.Contains(sql, "FROM reviews") &&
 				strings.Contains(sql, "booking_id = $1") &&
 				strings.Contains(sql, "reviewer_id = $2")
-		}), []any{"booking-1", "user-1"}).Return(&MockRow{
+		}), []any{bookingID, userID}).Return(&MockRow{
 			scanFn: func(dest ...any) error {
-				*dest[0].(*string) = "rev-1"
-				*dest[1].(*string) = "trip-1"
-				*dest[2].(*string) = "booking-1"
-				*dest[3].(*string) = "user-1"
-				*dest[4].(*string) = "driver-1"
+				*dest[0].(*uuid.UUID) = revID
+				*dest[1].(*uuid.UUID) = tripID
+				*dest[2].(*uuid.UUID) = bookingID
+				*dest[3].(*uuid.UUID) = userID
+				*dest[4].(*uuid.UUID) = driverID
 				*dest[5].(*int) = 4
 				*dest[6].(**string) = &comment
 				*dest[7].(*time.Time) = now
@@ -216,10 +237,10 @@ func TestReviewRepository_FindByBookingAndReviewer(t *testing.T) {
 			},
 		})
 
-		rev, err := repo.FindByBookingAndReviewer(ctx, "booking-1", "user-1")
+		rev, err := repo.FindByBookingAndReviewer(ctx, bookingID, userID)
 		require.NoError(t, err)
 		assert.NotNil(t, rev)
-		assert.Equal(t, "rev-1", rev.ID)
+		assert.Equal(t, revID, rev.ID)
 		assert.Equal(t, 4, rev.Rating)
 		mockDB.AssertExpectations(t)
 	})
@@ -228,13 +249,13 @@ func TestReviewRepository_FindByBookingAndReviewer(t *testing.T) {
 		mockDB := new(MockDBExecutor)
 		repo := postgres.NewReviewRepository(mockDB)
 
-		mockDB.On("QueryRow", ctx, mock.Anything, []any{"booking-1", "user-1"}).Return(&MockRow{
+		mockDB.On("QueryRow", ctx, mock.Anything, []any{bookingID, userID}).Return(&MockRow{
 			scanFn: func(dest ...any) error {
 				return pgx.ErrNoRows
 			},
 		})
 
-		rev, err := repo.FindByBookingAndReviewer(ctx, "booking-1", "user-1")
+		rev, err := repo.FindByBookingAndReviewer(ctx, bookingID, userID)
 		assert.ErrorIs(t, err, domain.ErrReviewNotFound)
 		assert.Nil(t, rev)
 		mockDB.AssertExpectations(t)
@@ -244,6 +265,16 @@ func TestReviewRepository_FindByBookingAndReviewer(t *testing.T) {
 func TestReviewRepository_ListByUserID(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
+	rev1ID := uuid.MustParse("01933e3d-0000-7000-8000-000000000001")
+	rev2ID := uuid.MustParse("01933e3d-0000-7000-8000-000000000002")
+	trip1ID := uuid.MustParse("01933e3d-0000-7000-8000-000000000011")
+	trip2ID := uuid.MustParse("01933e3d-0000-7000-8000-000000000012")
+	b1ID := uuid.MustParse("01933e3d-0000-7000-8000-000000000021")
+	b2ID := uuid.MustParse("01933e3d-0000-7000-8000-000000000022")
+	reviewer1ID := uuid.MustParse("01933e3d-0000-7000-8000-000000000031")
+	reviewer2ID := uuid.MustParse("01933e3d-0000-7000-8000-000000000032")
+	targetUserID := uuid.MustParse("01933e3d-0000-7000-8000-000000000099")
+	newUserID := uuid.MustParse("01933e3d-0000-7000-8000-000000000100")
 
 	t.Run("retorna lista paginada de reseñas recibidas", func(t *testing.T) {
 		mockDB := new(MockDBExecutor)
@@ -251,8 +282,8 @@ func TestReviewRepository_ListByUserID(t *testing.T) {
 
 		comment := "Excelente acompañante"
 		mockRows := NewMockRows([][]any{
-			{"rev-1", "trip-1", "b-1", "reviewer-1", "target-user", 5, &comment, now, now},
-			{"rev-2", "trip-2", "b-2", "reviewer-2", "target-user", 4, nil, now, now},
+			{rev1ID, trip1ID, b1ID, reviewer1ID, targetUserID, 5, &comment, now, now},
+			{rev2ID, trip2ID, b2ID, reviewer2ID, targetUserID, 4, nil, now, now},
 		})
 
 		mockDB.On("Query", ctx, mock.MatchedBy(func(sql string) bool {
@@ -260,14 +291,14 @@ func TestReviewRepository_ListByUserID(t *testing.T) {
 				strings.Contains(sql, "WHERE reviewee_id = $1") &&
 				strings.Contains(sql, "ORDER BY created_at DESC") &&
 				strings.Contains(sql, "LIMIT $2 OFFSET $3")
-		}), []any{"target-user", 10, 0}).Return(mockRows, nil)
+		}), []any{targetUserID, 10, 0}).Return(mockRows, nil)
 
-		reviews, err := repo.ListByUserID(ctx, "target-user", 10, 0)
+		reviews, err := repo.ListByUserID(ctx, targetUserID, 10, 0)
 		require.NoError(t, err)
 		assert.Len(t, reviews, 2)
-		assert.Equal(t, "rev-1", reviews[0].ID)
+		assert.Equal(t, rev1ID, reviews[0].ID)
 		assert.Equal(t, "Excelente acompañante", reviews[0].Comment)
-		assert.Equal(t, "rev-2", reviews[1].ID)
+		assert.Equal(t, rev2ID, reviews[1].ID)
 		assert.Equal(t, "", reviews[1].Comment)
 		mockDB.AssertExpectations(t)
 	})
@@ -277,9 +308,9 @@ func TestReviewRepository_ListByUserID(t *testing.T) {
 		repo := postgres.NewReviewRepository(mockDB)
 
 		mockRows := NewMockRows([][]any{})
-		mockDB.On("Query", ctx, mock.Anything, []any{"new-user", 10, 0}).Return(mockRows, nil)
+		mockDB.On("Query", ctx, mock.Anything, []any{newUserID, 10, 0}).Return(mockRows, nil)
 
-		reviews, err := repo.ListByUserID(ctx, "new-user", 10, 0)
+		reviews, err := repo.ListByUserID(ctx, newUserID, 10, 0)
 		require.NoError(t, err)
 		assert.Empty(t, reviews)
 		mockDB.AssertExpectations(t)
@@ -288,6 +319,8 @@ func TestReviewRepository_ListByUserID(t *testing.T) {
 
 func TestReviewRepository_GetAverageRating(t *testing.T) {
 	ctx := context.Background()
+	activeUserID := uuid.MustParse("01933e3d-0000-7000-8000-000000000501")
+	newUserID := uuid.MustParse("01933e3d-0000-7000-8000-000000000502")
 
 	t.Run("calcula promedio y conteo para usuario con reseñas", func(t *testing.T) {
 		mockDB := new(MockDBExecutor)
@@ -297,7 +330,7 @@ func TestReviewRepository_GetAverageRating(t *testing.T) {
 			return strings.Contains(sql, "AVG(rating)") &&
 				strings.Contains(sql, "COUNT(*)") &&
 				strings.Contains(sql, "WHERE reviewee_id = $1")
-		}), []any{"user-active"}).Return(&MockRow{
+		}), []any{activeUserID}).Return(&MockRow{
 			scanFn: func(dest ...any) error {
 				*dest[0].(*float64) = 4.85
 				*dest[1].(*int) = 14
@@ -305,7 +338,7 @@ func TestReviewRepository_GetAverageRating(t *testing.T) {
 			},
 		})
 
-		avg, count, err := repo.GetAverageRating(ctx, "user-active")
+		avg, count, err := repo.GetAverageRating(ctx, activeUserID)
 		require.NoError(t, err)
 		assert.Equal(t, 4.85, avg)
 		assert.Equal(t, 14, count)
@@ -316,7 +349,7 @@ func TestReviewRepository_GetAverageRating(t *testing.T) {
 		mockDB := new(MockDBExecutor)
 		repo := postgres.NewReviewRepository(mockDB)
 
-		mockDB.On("QueryRow", ctx, mock.Anything, []any{"user-new"}).Return(&MockRow{
+		mockDB.On("QueryRow", ctx, mock.Anything, []any{newUserID}).Return(&MockRow{
 			scanFn: func(dest ...any) error {
 				*dest[0].(*float64) = 5.00
 				*dest[1].(*int) = 0
@@ -324,7 +357,7 @@ func TestReviewRepository_GetAverageRating(t *testing.T) {
 			},
 		})
 
-		avg, count, err := repo.GetAverageRating(ctx, "user-new")
+		avg, count, err := repo.GetAverageRating(ctx, newUserID)
 		require.NoError(t, err)
 		assert.Equal(t, 5.00, avg)
 		assert.Equal(t, 0, count)

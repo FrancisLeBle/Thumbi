@@ -8,37 +8,45 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
+	"github.com/thumbi/backend/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/ports"
 )
 
-// DisputeService implementa los casos de uso para apertura, consulta y arbitraje de disputas
-type DisputeService struct {
-	disputeRepo    ports.DisputeRepository
-	escrowRepo     ports.EscrowRepository
-	bookingRepo    ports.BookingRepository
-	tripRepo       ports.TripRepository
-	paymentGateway ports.PaymentGateway
-	txManager      ports.TransactionManager
-	clock          func() time.Time
+// DisputeSettlementService define el subconjunto de operaciones financieras de custodia y reembolso
+// requeridas por la gestión y arbitraje de disputas (SOLID · ISP).
+type DisputeSettlementService interface {
+	GetEscrowByBookingID(ctx context.Context, bookingID uuid.UUID) (*domain.EscrowTransaction, error)
+	FreezeEscrowForDispute(ctx context.Context, escrow *domain.EscrowTransaction) error
+	ReleaseEscrow(ctx context.Context, escrow *domain.EscrowTransaction) error
+	RestoreEscrowHeld(ctx context.Context, escrow *domain.EscrowTransaction) error
+	SettleDisputeRefund(ctx context.Context, input DisputeRefundInput, withinTxHooks ...func(txCtx context.Context) error) (*domain.RefundTransaction, error)
 }
 
-// NewDisputeService crea una instancia de DisputeService con soporte opcional de TransactionManager
+// DisputeService implementa los casos de uso para apertura, consulta y arbitraje de disputas,
+// delegando toda la lógica de custodia y reembolsos en SettlementService.
+type DisputeService struct {
+	disputeRepo ports.DisputeRepository
+	bookingRepo ports.BookingRepository
+	tripRepo    ports.TripRepository
+	settlement  DisputeSettlementService
+	txManager   ports.TransactionManager
+	clock       func() time.Time
+}
+
+// NewDisputeService crea una instancia de DisputeService con soporte opcional de TransactionManager.
 func NewDisputeService(
 	disputeRepo ports.DisputeRepository,
-	escrowRepo ports.EscrowRepository,
 	bookingRepo ports.BookingRepository,
 	tripRepo ports.TripRepository,
-	paymentGateway ports.PaymentGateway,
+	settlement DisputeSettlementService,
 	optionalDeps ...any,
-) ports.DisputeService {
+) *DisputeService {
 	svc := &DisputeService{
-		disputeRepo:    disputeRepo,
-		escrowRepo:     escrowRepo,
-		bookingRepo:    bookingRepo,
-		tripRepo:       tripRepo,
-		paymentGateway: paymentGateway,
-		clock:          time.Now,
+		disputeRepo: disputeRepo,
+		bookingRepo: bookingRepo,
+		tripRepo:    tripRepo,
+		settlement:  settlement,
+		clock:       time.Now,
 	}
 	for _, opt := range optionalDeps {
 		if tm, ok := opt.(ports.TransactionManager); ok {
@@ -55,10 +63,10 @@ func (s *DisputeService) runInTx(ctx context.Context, fn func(txCtx context.Cont
 	return fn(ctx)
 }
 
-// OpenDispute valida la legitimidad del reclamo, congela el escrow en DISPUTED y persiste la disputa en una transacción
+// OpenDispute valida la legitimidad del reclamo, congela el escrow en DISPUTED y persiste la disputa en una transacción.
 func (s *DisputeService) OpenDispute(ctx context.Context, input ports.OpenDisputeInput) (*ports.DisputeDTO, error) {
-	if strings.TrimSpace(input.BookingID) == "" ||
-		strings.TrimSpace(input.ReporterID) == "" ||
+	if input.BookingID == uuid.Nil ||
+		input.ReporterID == uuid.Nil ||
 		strings.TrimSpace(input.Description) == "" {
 		return nil, domain.ErrInvalidDisputeData
 	}
@@ -73,7 +81,7 @@ func (s *DisputeService) OpenDispute(ctx context.Context, input ports.OpenDisput
 		return nil, err
 	}
 
-	var defendantID string
+	var defendantID uuid.UUID
 	switch input.ReporterID {
 	case booking.PassengerID:
 		defendantID = trip.DriverID
@@ -83,7 +91,10 @@ func (s *DisputeService) OpenDispute(ctx context.Context, input ports.OpenDisput
 		return nil, domain.ErrUnauthorized
 	}
 
-	escrow, err := s.escrowRepo.FindByBookingID(ctx, booking.ID)
+	if s.settlement == nil {
+		return nil, domain.ErrEscrowNotFound
+	}
+	escrow, err := s.settlement.GetEscrowByBookingID(ctx, booking.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -103,10 +114,12 @@ func (s *DisputeService) OpenDispute(ctx context.Context, input ports.OpenDisput
 	reason := input.Reason
 	if strings.TrimSpace(string(reason)) == "" {
 		reason = domain.DisputeReasonOther
+	} else if !reason.IsValid() {
+		return nil, domain.ErrInvalidDisputeData
 	}
 
 	dispute, err := domain.NewDispute(domain.DisputeParams{
-		ID:                  uuid.New().String(),
+		ID:                  domain.NewUUIDv7(),
 		EscrowTransactionID: escrow.ID,
 		BookingID:           booking.ID,
 		TripID:              trip.ID,
@@ -121,15 +134,8 @@ func (s *DisputeService) OpenDispute(ctx context.Context, input ports.OpenDisput
 		return nil, err
 	}
 
-	now := s.clock().UTC()
-	if escrow.Status == domain.EscrowStatusHeld {
-		if err := escrow.OpenDispute(now); err != nil {
-			return nil, err
-		}
-	}
-
 	if err := s.runInTx(ctx, func(txCtx context.Context) error {
-		if err := s.escrowRepo.UpdateEscrowStatus(txCtx, escrow.ID, domain.EscrowStatusDisputed); err != nil {
+		if err := s.settlement.FreezeEscrowForDispute(txCtx, escrow); err != nil {
 			return err
 		}
 		if err := s.disputeRepo.Save(txCtx, dispute); err != nil {
@@ -143,9 +149,9 @@ func (s *DisputeService) OpenDispute(ctx context.Context, input ports.OpenDisput
 	return toDisputeDTO(dispute), nil
 }
 
-// GetDisputeByID recupera el detalle de una disputa por su ID
-func (s *DisputeService) GetDisputeByID(ctx context.Context, disputeID string) (*ports.DisputeDTO, error) {
-	if strings.TrimSpace(disputeID) == "" {
+// GetDisputeByID recupera el detalle de una disputa por su ID.
+func (s *DisputeService) GetDisputeByID(ctx context.Context, disputeID uuid.UUID) (*ports.DisputeDTO, error) {
+	if disputeID == uuid.Nil {
 		return nil, domain.ErrInvalidDisputeData
 	}
 
@@ -156,7 +162,7 @@ func (s *DisputeService) GetDisputeByID(ctx context.Context, disputeID string) (
 	return toDisputeDTO(dispute), nil
 }
 
-// ListDisputes consulta las disputas de forma paginada usando limit y offset
+// ListDisputes consulta las disputas de forma paginada usando limit y offset.
 func (s *DisputeService) ListDisputes(ctx context.Context, limit, offset int) ([]*ports.DisputeDTO, error) {
 	if limit <= 0 {
 		limit = 20
@@ -180,29 +186,11 @@ func (s *DisputeService) ListDisputes(ctx context.Context, limit, offset int) ([
 	return result, nil
 }
 
-// ListDisputesByBooking consulta las disputas asociadas a una reserva a partir de su escrow
-func (s *DisputeService) ListDisputesByBooking(ctx context.Context, bookingID string) ([]*domain.Dispute, error) {
-	if strings.TrimSpace(bookingID) == "" || s.escrowRepo == nil {
-		return []*domain.Dispute{}, nil
-	}
-
-	escrow, err := s.escrowRepo.FindByBookingID(ctx, bookingID)
-	if err != nil {
-		return []*domain.Dispute{}, nil
-	}
-
-	dispute, err := s.disputeRepo.FindByEscrowID(ctx, escrow.ID)
-	if err != nil {
-		return []*domain.Dispute{}, nil
-	}
-	return []*domain.Dispute{dispute}, nil
-}
-
-// ResolveDispute dictamina una resolución administrativa válida y ejecuta atómicamente la liquidación o reembolso del escrow
+// ResolveDispute dictamina una resolución administrativa válida y delega la liquidación o reembolso a SettlementService.
 func (s *DisputeService) ResolveDispute(ctx context.Context, input ports.ResolveDisputeInput) (*ports.DisputeDTO, error) {
-	if strings.TrimSpace(input.DisputeID) == "" ||
-		strings.TrimSpace(input.AdminID) == "" ||
-		!domain.IsValidDisputeResolution(input.Resolution) {
+	if input.DisputeID == uuid.Nil ||
+		input.AdminID == uuid.Nil ||
+		!input.Resolution.IsValidResolution() {
 		return nil, domain.ErrInvalidDisputeData
 	}
 
@@ -219,7 +207,10 @@ func (s *DisputeService) ResolveDispute(ctx context.Context, input ports.Resolve
 		return nil, domain.ErrInvalidDisputeData
 	}
 
-	escrow, err := s.escrowRepo.FindByBookingID(ctx, dispute.BookingID)
+	if s.settlement == nil {
+		return nil, domain.ErrEscrowNotFound
+	}
+	escrow, err := s.settlement.GetEscrowByBookingID(ctx, dispute.BookingID)
 	if err != nil {
 		return nil, err
 	}
@@ -231,57 +222,15 @@ func (s *DisputeService) ResolveDispute(ctx context.Context, input ports.Resolve
 		if err := dispute.ResolvePassengerRefund(input.AdminID, input.AdminNotes, now); err != nil {
 			return nil, err
 		}
-		if err := escrow.RefundFull(now); err != nil {
-			return nil, err
-		}
-		if s.paymentGateway == nil {
-			return nil, domain.ErrPaymentFailed
-		}
 
-		refundResult, err := s.paymentGateway.ProcessRefund(
+		reason := fmt.Sprintf("Resolución de disputa %s: %s", dispute.ID.String(), strings.TrimSpace(input.AdminNotes))
+		if _, err := s.settlement.SettleDisputeRefund(
 			ctx,
-			escrow.PaymentGatewayRef,
-			escrow.Amount,
-			fmt.Sprintf("Resolución de disputa %s: %s", dispute.ID, strings.TrimSpace(input.AdminNotes)),
-		)
-		if err != nil {
-			return nil, fmt.Errorf("%w: %v", domain.ErrPaymentFailed, err)
-		}
-
-		refundAmount := escrow.Amount
-		gatewayRefundRef := ""
-		if refundResult != nil {
-			if refundResult.Amount > 0 {
-				refundAmount = refundResult.Amount
-			}
-			gatewayRefundRef = refundResult.GatewayRefundRef
-		}
-
-		refundTx, err := domain.NewRefundTransaction(
-			uuid.New().String(),
-			escrow.ID,
-			escrow.BookingID,
-			refundAmount,
-			0,
-			domain.RefundTypeAdminDispute,
-			gatewayRefundRef,
-		)
-		if err != nil {
-			return nil, err
-		}
-
-		if err := s.runInTx(ctx, func(txCtx context.Context) error {
-			if err := s.escrowRepo.UpdateEscrowStatus(txCtx, escrow.ID, escrow.Status); err != nil {
-				return err
-			}
-			if err := s.escrowRepo.RecordRefund(txCtx, refundTx); err != nil {
-				return err
-			}
-			if err := s.disputeRepo.Update(txCtx, dispute); err != nil {
-				return err
-			}
-			return nil
-		}); err != nil {
+			DisputeRefundInput{Escrow: escrow, Reason: reason},
+			func(txCtx context.Context) error {
+				return s.disputeRepo.Update(txCtx, dispute)
+			},
+		); err != nil {
 			return nil, err
 		}
 
@@ -289,18 +238,12 @@ func (s *DisputeService) ResolveDispute(ctx context.Context, input ports.Resolve
 		if err := dispute.ResolveDriverPayout(input.AdminID, input.AdminNotes, now); err != nil {
 			return nil, err
 		}
-		if err := escrow.Release(now); err != nil {
-			return nil, err
-		}
 
 		if err := s.runInTx(ctx, func(txCtx context.Context) error {
-			if err := s.escrowRepo.UpdateEscrowStatus(txCtx, escrow.ID, escrow.Status); err != nil {
+			if err := s.settlement.ReleaseEscrow(txCtx, escrow); err != nil {
 				return err
 			}
-			if err := s.disputeRepo.Update(txCtx, dispute); err != nil {
-				return err
-			}
-			return nil
+			return s.disputeRepo.Update(txCtx, dispute)
 		}); err != nil {
 			return nil, err
 		}
@@ -309,18 +252,12 @@ func (s *DisputeService) ResolveDispute(ctx context.Context, input ports.Resolve
 		if err := dispute.Reject(input.AdminID, input.AdminNotes, now); err != nil {
 			return nil, err
 		}
-		if err := escrow.RestoreHeld(now); err != nil {
-			return nil, err
-		}
 
 		if err := s.runInTx(ctx, func(txCtx context.Context) error {
-			if err := s.escrowRepo.UpdateEscrowStatus(txCtx, escrow.ID, escrow.Status); err != nil {
+			if err := s.settlement.RestoreEscrowHeld(txCtx, escrow); err != nil {
 				return err
 			}
-			if err := s.disputeRepo.Update(txCtx, dispute); err != nil {
-				return err
-			}
-			return nil
+			return s.disputeRepo.Update(txCtx, dispute)
 		}); err != nil {
 			return nil, err
 		}

@@ -10,10 +10,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/thumbi/auth-kyc-service/internal/adapters/handlers/http/middleware"
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
+	"github.com/thumbi/backend/internal/adapters/handlers/http/middleware"
+	"github.com/thumbi/backend/internal/core/domain"
 )
 
 // MockRateLimiter es una implementación en memoria de ports.RateLimiter para pruebas unitarias de middlewares
@@ -126,7 +127,9 @@ func TestRateLimitByUser(t *testing.T) {
 		r.Use(func(c *gin.Context) {
 			authHeader := c.GetHeader("X-User-ID")
 			if authHeader != "" {
-				c.Set(middleware.CtxUserIDKey, authHeader)
+				if uid, err := uuid.Parse(authHeader); err == nil {
+					c.Set(middleware.CtxUserIDKey, uid)
+				}
 				c.Set(middleware.CtxUserRoleKey, domain.UserRolePassenger)
 			}
 			c.Next()
@@ -135,10 +138,13 @@ func TestRateLimitByUser(t *testing.T) {
 			c.JSON(http.StatusCreated, gin.H{"booking": "created"})
 		})
 
+		aliceID := uuid.MustParse("01960000-0000-7000-8000-000000000001").String()
+		bobID := uuid.MustParse("01960000-0000-7000-8000-000000000002").String()
+
 		// Usuario 1 realiza 2 peticiones (límite: 2)
 		for i := 0; i < 2; i++ {
 			req, _ := http.NewRequest(http.MethodPost, "/bookings", nil)
-			req.Header.Set("X-User-ID", "user-alice")
+			req.Header.Set("X-User-ID", aliceID)
 			w := httptest.NewRecorder()
 			r.ServeHTTP(w, req)
 			assert.Equal(t, http.StatusCreated, w.Code, "intento %d de user-alice", i+1)
@@ -146,14 +152,14 @@ func TestRateLimitByUser(t *testing.T) {
 
 		// Usuario 1 realiza la 3ª petición -> 429
 		req3, _ := http.NewRequest(http.MethodPost, "/bookings", nil)
-		req3.Header.Set("X-User-ID", "user-alice")
+		req3.Header.Set("X-User-ID", aliceID)
 		w3 := httptest.NewRecorder()
 		r.ServeHTTP(w3, req3)
 		assert.Equal(t, http.StatusTooManyRequests, w3.Code)
 
 		// Usuario 2 realiza una petición -> Debe permitirse ya que el límite es por usuario
 		reqBob, _ := http.NewRequest(http.MethodPost, "/bookings", nil)
-		reqBob.Header.Set("X-User-ID", "user-bob")
+		reqBob.Header.Set("X-User-ID", bobID)
 		wBob := httptest.NewRecorder()
 		r.ServeHTTP(wBob, reqBob)
 		assert.Equal(t, http.StatusCreated, wBob.Code)

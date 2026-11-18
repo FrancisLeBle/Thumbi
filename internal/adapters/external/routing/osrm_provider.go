@@ -11,15 +11,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/thumbi/auth-kyc-service/internal/core/domain"
-	"github.com/thumbi/auth-kyc-service/internal/core/ports"
+	"github.com/thumbi/backend/internal/core/domain"
+	"github.com/thumbi/backend/internal/core/ports"
 )
 
 // OSRMResponse representa la estructura de respuesta estándar de la API de OSRM (Open Source Routing Machine)
 type OSRMResponse struct {
-	Code   string      `json:"code"`
-	Routes []OSRMRoute `json:"routes"`
-	Message string     `json:"message,omitempty"`
+	Code    string      `json:"code"`
+	Routes  []OSRMRoute `json:"routes"`
+	Message string      `json:"message,omitempty"`
 }
 
 // OSRMRoute contiene métricas de distancia, duración y la geometría en GeoJSON
@@ -41,6 +41,8 @@ type osrmProvider struct {
 }
 
 const defaultOSRMBaseURL = "https://router.project-osrm.org"
+
+var defaultTollRatePerStation = domain.MoneyFromCents(150000, domain.CurrencyARS) // $1500.00 ARS por estación de peaje
 
 // NewSecureHTTPClient construye un cliente HTTP endurecido con TLS 1.2+ mínimo y timeout acotado.
 func NewSecureHTTPClient(timeout time.Duration) *http.Client {
@@ -155,10 +157,9 @@ func (p *osrmProvider) CalculateRoute(ctx context.Context, req ports.RouteCalcul
 
 	// Estimación de peajes según distancia interurbana (promedio 1 peaje cada 130 km)
 	tollsCount := int(distanceKm / 130.0)
-	const tollRatePerStation domain.Money = 150000 // $1500.00 ARS por estación de peaje (en centavos)
-	estimatedTollCost := domain.Money(tollsCount) * tollRatePerStation
+	estimatedTollCost := defaultTollRatePerStation.Mul(int64(tollsCount))
 
-	fuelEstimate := domain.CalculateFuelEstimate(distanceKm, 0, 0)
+	fuelEstimate := domain.CalculateFuelEstimate(distanceKm, 0, domain.DefaultFuelPricePerLiter)
 
 	return &ports.RouteDetails{
 		RoutePath:         routeLine,
@@ -170,24 +171,18 @@ func (p *osrmProvider) CalculateRoute(ctx context.Context, req ports.RouteCalcul
 	}, nil
 }
 
-// calculateDeterministicFallback calcula una ruta geométrica precisa en base a geodésicas y factores viales
+// calculateDeterministicFallback construye una polilínea interpolada de respaldo cuando OSRM no está disponible,
+// delegando el cálculo geodésico de distancia a PostGIS.
 func (p *osrmProvider) calculateDeterministicFallback(req ports.RouteCalculationRequest) *ports.RouteDetails {
-	// Construir lista de puntos de control
 	allControlPoints := []domain.Coordinates{req.Origin}
 	allControlPoints = append(allControlPoints, req.Waypoints...)
 	allControlPoints = append(allControlPoints, req.Destination)
 
 	var fullCoordinates []domain.Coordinates
-	var rawDistanceKm float64
-
 	for i := 0; i < len(allControlPoints)-1; i++ {
 		p1 := allControlPoints[i]
 		p2 := allControlPoints[i+1]
 
-		segmentDist := p1.DistanceHaversineKm(p2)
-		rawDistanceKm += segmentDist
-
-		// Añadir punto inicial del segmento
 		fullCoordinates = append(fullCoordinates, p1)
 
 		// Generar 3 puntos intermedios interpolados con leve curvatura realista
@@ -197,7 +192,6 @@ func (p *osrmProvider) calculateDeterministicFallback(req ports.RouteCalculation
 			interLat := p1.Latitude + fraction*(p2.Latitude-p1.Latitude)
 			interLon := p1.Longitude + fraction*(p2.Longitude-p1.Longitude)
 
-			// Curvatura sinusoidal para simular trazado de ruta real
 			curveFactor := math.Sin(fraction*math.Pi) * 0.015
 			interLat += curveFactor
 
@@ -210,28 +204,7 @@ func (p *osrmProvider) calculateDeterministicFallback(req ports.RouteCalculation
 
 	routeLine, _ := domain.NewLineString(fullCoordinates)
 
-	// Factor de sinuosidad vial interurbana (~1.18x sobre distancia en línea recta)
-	const roadWindingFactor = 1.18
-	distanceKm := math.Round((rawDistanceKm*roadWindingFactor)*100) / 100
-
-	// Velocidad promedio interurbana ~85 km/h
-	durationMinutes := int(math.Round((distanceKm / 85.0) * 60.0))
-	if durationMinutes < 15 {
-		durationMinutes = 15
-	}
-
-	tollsCount := int(distanceKm / 130.0)
-	const tollRatePerStation domain.Money = 150000
-	estimatedTollCost := domain.Money(tollsCount) * tollRatePerStation
-
-	fuelEstimate := domain.CalculateFuelEstimate(distanceKm, 0, 0)
-
 	return &ports.RouteDetails{
-		RoutePath:         routeLine,
-		DistanceKm:        distanceKm,
-		DurationMinutes:   durationMinutes,
-		EstimatedTollCost: estimatedTollCost,
-		TollsCount:        tollsCount,
-		EstimatedFuelCost: fuelEstimate.TotalFuelCost,
+		RoutePath: routeLine,
 	}
 }
