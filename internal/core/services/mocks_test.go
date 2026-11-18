@@ -651,3 +651,20 @@ func (m *MockSettlementService) SettleDisputeRefund(ctx context.Context, input s
 	return args.Get(0).(*domain.RefundTransaction), nil
 }
 
+// MockPricingConfigRepository
+type MockPricingConfigRepository struct {
+	mock.Mock
+}
+
+func (m *MockPricingConfigRepository) GetActive(ctx context.Context) (*domain.PlatformPricingConfig, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.PlatformPricingConfig), args.Error(1)
+}
+
+func (m *MockPricingConfigRepository) UpdateActive(ctx context.Context, cfg *domain.PlatformPricingConfig) error {
+	args := m.Called(ctx, cfg)
+	return args.Error(0)
+}

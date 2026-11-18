@@ -39,12 +39,12 @@ func (r *escrowRepository) CreateEscrow(ctx context.Context, escrow *domain.Escr
 	query := `
 		INSERT INTO escrow_transactions (
 			id, booking_id, trip_id, payer_id, payee_id,
-			amount, currency, payment_gateway_ref, status,
+			amount, base_amount, platform_fee, currency, payment_gateway_ref, status,
 			held_at, created_at, updated_at
 		) VALUES (
 			$1, $2, $3, $4, $5,
-			$6, $7, $8, $9,
-			$10, $11, $12
+			$6, $7, $8, $9, $10, $11,
+			$12, $13, $14
 		)
 	`
 
@@ -57,6 +57,8 @@ func (r *escrowRepository) CreateEscrow(ctx context.Context, escrow *domain.Escr
 		escrow.PayerID,
 		escrow.PayeeID,
 		moneyToPGNumeric(escrow.Amount),
+		moneyToPGNumeric(escrow.BaseAmount),
+		moneyToPGNumeric(escrow.PlatformFee),
 		parsedCur.String(),
 		escrow.PaymentGatewayRef,
 		escrow.Status.String(),
@@ -79,17 +81,19 @@ func (r *escrowRepository) FindByBookingID(ctx context.Context, bookingID uuid.U
 	query := `
 		SELECT 
 			id, booking_id, trip_id, payer_id, payee_id,
-			amount, currency, payment_gateway_ref, status,
+			amount, base_amount, platform_fee, currency, payment_gateway_ref, status,
 			held_at, released_at, refunded_at, created_at, updated_at
 		FROM escrow_transactions
 		WHERE booking_id = $1
 	`
 
 	var (
-		e           domain.EscrowTransaction
-		amountNum   pgtype.Numeric
-		currencyStr string
-		statusStr   string
+		e              domain.EscrowTransaction
+		amountNum      pgtype.Numeric
+		baseAmountNum  pgtype.Numeric
+		platformFeeNum pgtype.Numeric
+		currencyStr    string
+		statusStr      string
 	)
 
 	err := executor(ctx, r.db).QueryRow(ctx, query, bookingID).Scan(
@@ -99,6 +103,8 @@ func (r *escrowRepository) FindByBookingID(ctx context.Context, bookingID uuid.U
 		&e.PayerID,
 		&e.PayeeID,
 		&amountNum,
+		&baseAmountNum,
+		&platformFeeNum,
 		&currencyStr,
 		&e.PaymentGatewayRef,
 		&statusStr,
@@ -124,6 +130,12 @@ func (r *escrowRepository) FindByBookingID(ctx context.Context, bookingID uuid.U
 
 	if e.Amount, err = pgNumericToMoney(amountNum, cur); err != nil {
 		return nil, fmt.Errorf("error convirtiendo monto de escrow: %w", err)
+	}
+	if e.BaseAmount, err = pgNumericToMoney(baseAmountNum, cur); err != nil {
+		return nil, fmt.Errorf("error convirtiendo base_amount de escrow: %w", err)
+	}
+	if e.PlatformFee, err = pgNumericToMoney(platformFeeNum, cur); err != nil {
+		return nil, fmt.Errorf("error convirtiendo platform_fee de escrow: %w", err)
 	}
 
 	e.Status = domain.EscrowStatus(statusStr)
@@ -170,14 +182,14 @@ func (r *escrowRepository) RecordRefund(ctx context.Context, refund *domain.Refu
 	query := `
 		INSERT INTO refund_transactions (
 			id, escrow_transaction_id, booking_id,
-			passenger_refund_amount, driver_compensation_amount,
+			passenger_refund_amount, driver_compensation_amount, platform_retained_amount,
 			refund_type, gateway_refund_ref,
 			processed_at, created_at
 		) VALUES (
 			$1, $2, $3,
-			$4, $5,
-			$6, $7,
-			$8, $9
+			$4, $5, $6,
+			$7, $8,
+			$9, $10
 		)
 	`
 
@@ -189,6 +201,7 @@ func (r *escrowRepository) RecordRefund(ctx context.Context, refund *domain.Refu
 		refund.BookingID,
 		moneyToPGNumeric(refund.PassengerRefundAmount),
 		moneyToPGNumeric(refund.DriverCompensationAmount),
+		moneyToPGNumeric(refund.PlatformRetainedAmount),
 		refund.RefundType.String(),
 		refund.GatewayRefundRef,
 		refund.ProcessedAt,

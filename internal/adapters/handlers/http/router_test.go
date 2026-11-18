@@ -23,6 +23,7 @@ func baseTestRouterConfig() adapterHttp.RouterConfig {
 		BookingHandler: adapterHttp.NewBookingHandler(nil),
 		ReviewHandler:  adapterHttp.NewReviewHandler(nil),
 		DisputeHandler: adapterHttp.NewDisputeHandler(nil),
+		PricingHandler: adapterHttp.NewPricingHandler(nil),
 		HealthHandler:  adapterHttp.NewHealthHandler(nil),
 		AuthMiddleware: func(c *gin.Context) {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": "UNAUTHORIZED"})
@@ -64,6 +65,7 @@ func TestSetupRouter_FailFastOnMissingDependencies(t *testing.T) {
 		{"falta BookingHandler", func(c *adapterHttp.RouterConfig) { c.BookingHandler = nil }, "BookingHandler"},
 		{"falta ReviewHandler", func(c *adapterHttp.RouterConfig) { c.ReviewHandler = nil }, "ReviewHandler"},
 		{"falta DisputeHandler", func(c *adapterHttp.RouterConfig) { c.DisputeHandler = nil }, "DisputeHandler"},
+		{"falta PricingHandler", func(c *adapterHttp.RouterConfig) { c.PricingHandler = nil }, "PricingHandler"},
 		{"falta HealthHandler", func(c *adapterHttp.RouterConfig) { c.HealthHandler = nil }, "HealthHandler"},
 		{"falta AuthMiddleware", func(c *adapterHttp.RouterConfig) { c.AuthMiddleware = nil }, "AuthMiddleware"},
 		{"falta WebhookSecret", func(c *adapterHttp.RouterConfig) { c.WebhookSecret = "" }, "WebhookSecret"},

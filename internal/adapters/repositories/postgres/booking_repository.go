@@ -85,13 +85,13 @@ func (r *bookingRepository) CreateWithHold(ctx context.Context, booking *domain.
 			return errHoldNotApplied
 		}
 
-		// 2. Insertar la reserva en estado PENDING_PAYMENT con TTL
+		// 2. Insertar la reserva en estado PENDING_PAYMENT con TTL y desglose base_amount + platform_fee
 		insertBookingQuery := `
 			INSERT INTO bookings (
-				id, trip_id, passenger_id, seats_booked, currency, unit_price, total_price,
+				id, trip_id, passenger_id, seats_booked, currency, unit_price, base_amount, platform_fee, total_price,
 				status, pickup_stop_id, dropoff_stop_id, payment_intent_id, expires_at, created_at, updated_at
 			) VALUES (
-				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
 			)
 		`
 		if _, err = tx.Exec(
@@ -103,6 +103,8 @@ func (r *bookingRepository) CreateWithHold(ctx context.Context, booking *domain.
 			booking.SeatsBooked,
 			parsedCur.String(),
 			moneyToPGNumeric(booking.UnitPrice),
+			moneyToPGNumeric(booking.BaseAmount),
+			moneyToPGNumeric(booking.PlatformFee),
 			moneyToPGNumeric(booking.TotalPrice),
 			booking.Status.String(),
 			booking.PickupStopID,
@@ -138,7 +140,7 @@ func (r *bookingRepository) FindByID(ctx context.Context, id uuid.UUID) (*domain
 	}
 	query := `
 		SELECT 
-			id, trip_id, passenger_id, seats_booked, currency, unit_price, total_price,
+			id, trip_id, passenger_id, seats_booked, currency, unit_price, base_amount, platform_fee, total_price,
 			status, pickup_stop_id, dropoff_stop_id, payment_intent_id, expires_at, confirmed_at, cancelled_at,
 			cancellation_reason, created_at, updated_at
 		FROM bookings
@@ -146,11 +148,13 @@ func (r *bookingRepository) FindByID(ctx context.Context, id uuid.UUID) (*domain
 	`
 
 	var (
-		b             domain.Booking
-		currencyStr   string
-		unitPriceNum  pgtype.Numeric
-		totalPriceNum pgtype.Numeric
-		statusStr     string
+		b              domain.Booking
+		currencyStr    string
+		unitPriceNum   pgtype.Numeric
+		baseAmountNum  pgtype.Numeric
+		platformFeeNum pgtype.Numeric
+		totalPriceNum  pgtype.Numeric
+		statusStr      string
 	)
 
 	err := executor(ctx, r.db).QueryRow(ctx, query, id).Scan(
@@ -160,6 +164,8 @@ func (r *bookingRepository) FindByID(ctx context.Context, id uuid.UUID) (*domain
 		&b.SeatsBooked,
 		&currencyStr,
 		&unitPriceNum,
+		&baseAmountNum,
+		&platformFeeNum,
 		&totalPriceNum,
 		&statusStr,
 		&b.PickupStopID,
@@ -189,6 +195,12 @@ func (r *bookingRepository) FindByID(ctx context.Context, id uuid.UUID) (*domain
 	if b.UnitPrice, err = pgNumericToMoney(unitPriceNum, cur); err != nil {
 		return nil, fmt.Errorf("error convirtiendo unit_price: %w", err)
 	}
+	if b.BaseAmount, err = pgNumericToMoney(baseAmountNum, cur); err != nil {
+		return nil, fmt.Errorf("error convirtiendo base_amount: %w", err)
+	}
+	if b.PlatformFee, err = pgNumericToMoney(platformFeeNum, cur); err != nil {
+		return nil, fmt.Errorf("error convirtiendo platform_fee: %w", err)
+	}
 	if b.TotalPrice, err = pgNumericToMoney(totalPriceNum, cur); err != nil {
 		return nil, fmt.Errorf("error convirtiendo total_price: %w", err)
 	}
@@ -204,7 +216,7 @@ func (r *bookingRepository) FindByID(ctx context.Context, id uuid.UUID) (*domain
 func (r *bookingRepository) FindByPaymentIntentID(ctx context.Context, intentID string) (*domain.Booking, error) {
 	query := `
 		SELECT 
-			id, trip_id, passenger_id, seats_booked, currency, unit_price, total_price,
+			id, trip_id, passenger_id, seats_booked, currency, unit_price, base_amount, platform_fee, total_price,
 			status, pickup_stop_id, dropoff_stop_id, payment_intent_id, expires_at, confirmed_at, cancelled_at,
 			cancellation_reason, created_at, updated_at
 		FROM bookings
@@ -212,11 +224,13 @@ func (r *bookingRepository) FindByPaymentIntentID(ctx context.Context, intentID 
 	`
 
 	var (
-		b             domain.Booking
-		currencyStr   string
-		unitPriceNum  pgtype.Numeric
-		totalPriceNum pgtype.Numeric
-		statusStr     string
+		b              domain.Booking
+		currencyStr    string
+		unitPriceNum   pgtype.Numeric
+		baseAmountNum  pgtype.Numeric
+		platformFeeNum pgtype.Numeric
+		totalPriceNum  pgtype.Numeric
+		statusStr      string
 	)
 
 	err := executor(ctx, r.db).QueryRow(ctx, query, intentID).Scan(
@@ -226,6 +240,8 @@ func (r *bookingRepository) FindByPaymentIntentID(ctx context.Context, intentID 
 		&b.SeatsBooked,
 		&currencyStr,
 		&unitPriceNum,
+		&baseAmountNum,
+		&platformFeeNum,
 		&totalPriceNum,
 		&statusStr,
 		&b.PickupStopID,
@@ -254,6 +270,12 @@ func (r *bookingRepository) FindByPaymentIntentID(ctx context.Context, intentID 
 
 	if b.UnitPrice, err = pgNumericToMoney(unitPriceNum, cur); err != nil {
 		return nil, fmt.Errorf("error convirtiendo unit_price: %w", err)
+	}
+	if b.BaseAmount, err = pgNumericToMoney(baseAmountNum, cur); err != nil {
+		return nil, fmt.Errorf("error convirtiendo base_amount: %w", err)
+	}
+	if b.PlatformFee, err = pgNumericToMoney(platformFeeNum, cur); err != nil {
+		return nil, fmt.Errorf("error convirtiendo platform_fee: %w", err)
 	}
 	if b.TotalPrice, err = pgNumericToMoney(totalPriceNum, cur); err != nil {
 		return nil, fmt.Errorf("error convirtiendo total_price: %w", err)
@@ -338,7 +360,7 @@ func (r *bookingRepository) UpdateStatus(ctx context.Context, bookingID uuid.UUI
 func (r *bookingRepository) GetActiveBookingsByTrip(ctx context.Context, tripID uuid.UUID) ([]*domain.Booking, error) {
 	query := `
 		SELECT
-			id, trip_id, passenger_id, seats_booked, currency, unit_price, total_price,
+			id, trip_id, passenger_id, seats_booked, currency, unit_price, base_amount, platform_fee, total_price,
 			status, pickup_stop_id, dropoff_stop_id, expires_at, confirmed_at, cancelled_at,
 			cancellation_reason, created_at, updated_at
 		FROM bookings
@@ -356,11 +378,13 @@ func (r *bookingRepository) GetActiveBookingsByTrip(ctx context.Context, tripID 
 	var bookings []*domain.Booking
 	for rows.Next() {
 		var (
-			b             domain.Booking
-			currencyStr   string
-			unitPriceNum  pgtype.Numeric
-			totalPriceNum pgtype.Numeric
-			statusStr     string
+			b              domain.Booking
+			currencyStr    string
+			unitPriceNum   pgtype.Numeric
+			baseAmountNum  pgtype.Numeric
+			platformFeeNum pgtype.Numeric
+			totalPriceNum  pgtype.Numeric
+			statusStr      string
 		)
 		if err := rows.Scan(
 			&b.ID,
@@ -369,6 +393,8 @@ func (r *bookingRepository) GetActiveBookingsByTrip(ctx context.Context, tripID 
 			&b.SeatsBooked,
 			&currencyStr,
 			&unitPriceNum,
+			&baseAmountNum,
+			&platformFeeNum,
 			&totalPriceNum,
 			&statusStr,
 			&b.PickupStopID,
@@ -389,6 +415,12 @@ func (r *bookingRepository) GetActiveBookingsByTrip(ctx context.Context, tripID 
 		b.Currency = cur
 		if b.UnitPrice, err = pgNumericToMoney(unitPriceNum, cur); err != nil {
 			return nil, fmt.Errorf("error convirtiendo unit_price: %w", err)
+		}
+		if b.BaseAmount, err = pgNumericToMoney(baseAmountNum, cur); err != nil {
+			return nil, fmt.Errorf("error convirtiendo base_amount: %w", err)
+		}
+		if b.PlatformFee, err = pgNumericToMoney(platformFeeNum, cur); err != nil {
+			return nil, fmt.Errorf("error convirtiendo platform_fee: %w", err)
 		}
 		if b.TotalPrice, err = pgNumericToMoney(totalPriceNum, cur); err != nil {
 			return nil, fmt.Errorf("error convirtiendo total_price: %w", err)
@@ -411,7 +443,7 @@ func (r *bookingRepository) GetActiveBookingsByTrip(ctx context.Context, tripID 
 func (r *bookingRepository) GetPassengerBookings(ctx context.Context, passengerID uuid.UUID, limit, offset int) ([]*domain.Booking, error) {
 	query := `
 		SELECT
-			id, trip_id, passenger_id, seats_booked, currency, unit_price, total_price,
+			id, trip_id, passenger_id, seats_booked, currency, unit_price, base_amount, platform_fee, total_price,
 			status, pickup_stop_id, dropoff_stop_id, expires_at, confirmed_at, cancelled_at,
 			cancellation_reason, created_at, updated_at
 		FROM bookings
@@ -429,11 +461,13 @@ func (r *bookingRepository) GetPassengerBookings(ctx context.Context, passengerI
 	var bookings []*domain.Booking
 	for rows.Next() {
 		var (
-			b             domain.Booking
-			currencyStr   string
-			unitPriceNum  pgtype.Numeric
-			totalPriceNum pgtype.Numeric
-			statusStr     string
+			b              domain.Booking
+			currencyStr    string
+			unitPriceNum   pgtype.Numeric
+			baseAmountNum  pgtype.Numeric
+			platformFeeNum pgtype.Numeric
+			totalPriceNum  pgtype.Numeric
+			statusStr      string
 		)
 		if err := rows.Scan(
 			&b.ID,
@@ -442,6 +476,8 @@ func (r *bookingRepository) GetPassengerBookings(ctx context.Context, passengerI
 			&b.SeatsBooked,
 			&currencyStr,
 			&unitPriceNum,
+			&baseAmountNum,
+			&platformFeeNum,
 			&totalPriceNum,
 			&statusStr,
 			&b.PickupStopID,
@@ -462,6 +498,12 @@ func (r *bookingRepository) GetPassengerBookings(ctx context.Context, passengerI
 		b.Currency = cur
 		if b.UnitPrice, err = pgNumericToMoney(unitPriceNum, cur); err != nil {
 			return nil, fmt.Errorf("error convirtiendo unit_price: %w", err)
+		}
+		if b.BaseAmount, err = pgNumericToMoney(baseAmountNum, cur); err != nil {
+			return nil, fmt.Errorf("error convirtiendo base_amount: %w", err)
+		}
+		if b.PlatformFee, err = pgNumericToMoney(platformFeeNum, cur); err != nil {
+			return nil, fmt.Errorf("error convirtiendo platform_fee: %w", err)
 		}
 		if b.TotalPrice, err = pgNumericToMoney(totalPriceNum, cur); err != nil {
 			return nil, fmt.Errorf("error convirtiendo total_price: %w", err)
@@ -551,7 +593,7 @@ func (r *bookingRepository) LockExpiredPendingBookings(
 
 	query := `
 		SELECT
-			id, trip_id, passenger_id, seats_booked, currency, unit_price, total_price,
+			id, trip_id, passenger_id, seats_booked, currency, unit_price, base_amount, platform_fee, total_price,
 			status, pickup_stop_id, dropoff_stop_id, payment_intent_id, expires_at, confirmed_at, cancelled_at,
 			cancellation_reason, created_at, updated_at
 		FROM bookings
@@ -571,11 +613,13 @@ func (r *bookingRepository) LockExpiredPendingBookings(
 	var bookings []*domain.Booking
 	for rows.Next() {
 		var (
-			b             domain.Booking
-			currencyStr   string
-			unitPriceNum  pgtype.Numeric
-			totalPriceNum pgtype.Numeric
-			statusStr     string
+			b              domain.Booking
+			currencyStr    string
+			unitPriceNum   pgtype.Numeric
+			baseAmountNum  pgtype.Numeric
+			platformFeeNum pgtype.Numeric
+			totalPriceNum  pgtype.Numeric
+			statusStr      string
 		)
 		if err := rows.Scan(
 			&b.ID,
@@ -584,6 +628,8 @@ func (r *bookingRepository) LockExpiredPendingBookings(
 			&b.SeatsBooked,
 			&currencyStr,
 			&unitPriceNum,
+			&baseAmountNum,
+			&platformFeeNum,
 			&totalPriceNum,
 			&statusStr,
 			&b.PickupStopID,
@@ -605,6 +651,12 @@ func (r *bookingRepository) LockExpiredPendingBookings(
 		b.Currency = cur
 		if b.UnitPrice, err = pgNumericToMoney(unitPriceNum, cur); err != nil {
 			return nil, fmt.Errorf("error convirtiendo unit_price: %w", err)
+		}
+		if b.BaseAmount, err = pgNumericToMoney(baseAmountNum, cur); err != nil {
+			return nil, fmt.Errorf("error convirtiendo base_amount: %w", err)
+		}
+		if b.PlatformFee, err = pgNumericToMoney(platformFeeNum, cur); err != nil {
+			return nil, fmt.Errorf("error convirtiendo platform_fee: %w", err)
 		}
 		if b.TotalPrice, err = pgNumericToMoney(totalPriceNum, cur); err != nil {
 			return nil, fmt.Errorf("error convirtiendo total_price: %w", err)

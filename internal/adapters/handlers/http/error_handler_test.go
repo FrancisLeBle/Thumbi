@@ -91,6 +91,12 @@ func TestHandleError_DomainErrors(t *testing.T) {
 			expectedStatus: http.StatusConflict,
 			expectedCode:   "CONCURRENT_MODIFICATION",
 		},
+		{
+			name:           "ErrInvalidPricingConfig maps to 400 INVALID_PRICING_CONFIG",
+			inputErr:       domain.ErrInvalidPricingConfig,
+			expectedStatus: http.StatusBadRequest,
+			expectedCode:   "INVALID_PRICING_CONFIG",
+		},
 	}
 
 	for _, tc := range tests {

@@ -77,4 +77,5 @@ var (
 	ErrCurrencyMismatch           = errors.New("currency mismatch")
 	ErrInvalidStatus              = errors.New("invalid status")
 	ErrConcurrentModification     = errors.New("concurrent modification conflict")
+	ErrInvalidPricingConfig       = errors.New("invalid platform pricing configuration")
 )

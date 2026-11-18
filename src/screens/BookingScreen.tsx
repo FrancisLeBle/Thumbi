@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ChevronLeft,
   Share2,
@@ -14,7 +14,7 @@ import {
   PlusCircle,
   User,
 } from 'lucide-react';
-import { Trip, Booking, TripSearchResult } from '../types';
+import { Trip, Booking, TripSearchResult, PlatformPricingConfig } from '../types';
 import { bookingService } from '../services/bookingService';
 import { ApiClientError } from '../services/apiClient';
 import { getErrorMessage } from '../utils/errorHelpers';
@@ -92,10 +92,35 @@ export const BookingScreen: React.FC<BookingScreenProps> = ({
   const [confirmedBooking, setConfirmedBooking] = useState<Booking | null>(null);
   const [tripPinCode, setTripPinCode] = useState<string>('4829');
   const [isContactModalOpen, setIsContactModalOpen] = useState<boolean>(false);
+  const [pricingConfig, setPricingConfig] = useState<Pick<
+    PlatformPricingConfig,
+    'passenger_service_fee_bps' | 'passenger_service_fee_percent' | 'passenger_fixed_fee'
+  >>({
+    passenger_service_fee_bps: 1500,
+    passenger_service_fee_percent: 15,
+    passenger_fixed_fee: { amount: 0, currency: 'ARS' },
+  });
   const [toast, setToast] = useState<{
     message: string;
     type: 'error' | 'success';
   } | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    bookingService
+      .getPricingConfig()
+      .then((cfg) => {
+        if (active && cfg && typeof cfg.passenger_service_fee_bps === 'number') {
+          setPricingConfig(cfg);
+        }
+      })
+      .catch(() => {
+        // Fallback offline/demo: mantiene el 15% estándar (1500 bps)
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const isBusy = isLoading || isTripLoading;
 
@@ -152,10 +177,18 @@ export const BookingScreen: React.FC<BookingScreenProps> = ({
     .substring(0, 2)
     .toUpperCase() || 'CM';
 
-  // Cálculos de costo
+  // Cálculos de costo con desglose transparente (Base para el conductor + Service Fee parametrizable)
   const seatPrice = trip.pricePerSeat || 3500;
-  const serviceFee = 0;
-  const totalPrice = seatPrice * seatsRequested + serviceFee;
+  const baseAmount = seatPrice * seatsRequested;
+  const baseCents = Math.round(baseAmount * 100);
+  const feeBps = Math.max(0, pricingConfig.passenger_service_fee_bps);
+  const pctFeeCents = Math.floor((baseCents * feeBps + 5000) / 10000);
+  const fixedFeeCents = Math.max(0, pricingConfig.passenger_fixed_fee?.amount ?? 0);
+  const serviceFee = (pctFeeCents + fixedFeeCents) / 100;
+  const totalPrice = (baseCents + pctFeeCents + fixedFeeCents) / 100;
+  const serviceFeePercentLabel = Number.isInteger(pricingConfig.passenger_service_fee_percent)
+    ? pricingConfig.passenger_service_fee_percent.toFixed(0)
+    : pricingConfig.passenger_service_fee_percent.toFixed(1);
 
   const handleShare = async () => {
     const shareText = `Viaje en Thumbi con ${driverName}: ${trip.origin} → ${trip.destination} a las ${departureTimeFormatted}`;
@@ -785,10 +818,14 @@ export const BookingScreen: React.FC<BookingScreenProps> = ({
                   </div>
                 )}
 
-                {/* Row 2: Service fee */}
+                {/* Row 2: Service fee parametrizable */}
                 <div className="flex items-center justify-between text-[14px]">
-                  <span className="text-[#6B7280]">Gastos de servicio</span>
-                  <span className="font-semibold text-[#1A1A1A]">$0</span>
+                  <span className="text-[#6B7280]">
+                    Tarifa de servicio ({serviceFeePercentLabel}%)
+                  </span>
+                  <span className="font-semibold text-[#1A1A1A]">
+                    ${serviceFee.toLocaleString('es-AR', { maximumFractionDigits: 2 })}
+                  </span>
                 </div>
 
                 {/* Divider */}

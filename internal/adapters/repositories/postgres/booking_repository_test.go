@@ -33,6 +33,7 @@ func TestBookingRepository_CreateWithHold(t *testing.T) {
 		DriverID:    driverID,
 		SeatsBooked: 2,
 		UnitPrice:   domain.MoneyFromCents(150000, domain.CurrencyARS),
+		PlatformFee: domain.MoneyFromCents(45000, domain.CurrencyARS),
 		TTL:         15 * time.Minute,
 	})
 	require.NoError(t, err)
@@ -104,20 +105,25 @@ func TestBookingRepository_CreateWithHold(t *testing.T) {
 		txExec.On("Exec", ctx, mock.MatchedBy(func(sql string) bool {
 			return strings.Contains(sql, "INSERT INTO bookings") &&
 				strings.Contains(sql, "seats_booked") &&
-				strings.Contains(sql, "currency") &&
+				strings.Contains(sql, "base_amount") &&
+				strings.Contains(sql, "platform_fee") &&
 				strings.Contains(sql, "total_price")
 		}), mock.MatchedBy(func(args []any) bool {
 			unitNum, okUnit := args[5].(pgtype.Numeric)
-			totalNum, okTotal := args[6].(pgtype.Numeric)
-			return len(args) == 14 &&
+			baseNum, okBase := args[6].(pgtype.Numeric)
+			feeNum, okFee := args[7].(pgtype.Numeric)
+			totalNum, okTotal := args[8].(pgtype.Numeric)
+			return len(args) == 16 &&
 				args[0] == bookingID &&
 				args[1] == tripID &&
 				args[2] == passengerID &&
 				args[3] == 2 &&
 				args[4] == "ARS" &&
 				okUnit && unitNum.Valid && unitNum.Exp == -2 && unitNum.Int.Cmp(big.NewInt(150000)) == 0 &&
-				okTotal && totalNum.Valid && totalNum.Exp == -2 && totalNum.Int.Cmp(big.NewInt(300000)) == 0 &&
-				args[7] == "PENDING_PAYMENT"
+				okBase && baseNum.Valid && baseNum.Exp == -2 && baseNum.Int.Cmp(big.NewInt(300000)) == 0 &&
+				okFee && feeNum.Valid && feeNum.Exp == -2 && feeNum.Int.Cmp(big.NewInt(45000)) == 0 &&
+				okTotal && totalNum.Valid && totalNum.Exp == -2 && totalNum.Int.Cmp(big.NewInt(345000)) == 0 &&
+				args[9] == "PENDING_PAYMENT"
 		})).Return(pgconn.NewCommandTag("INSERT 0 1"), nil)
 
 		txExec.On("Commit", ctx).Return(nil)
@@ -228,16 +234,18 @@ func TestBookingRepository_FindByID(t *testing.T) {
 				*dest[4].(*string) = "ARS"
 				*dest[5].(*pgtype.Numeric) = pgtype.Numeric{Int: big.NewInt(150000), Exp: -2, Valid: true}
 				*dest[6].(*pgtype.Numeric) = pgtype.Numeric{Int: big.NewInt(300000), Exp: -2, Valid: true}
-				*dest[7].(*string) = "CONFIRMED"
-				*dest[8].(**uuid.UUID) = nil
-				*dest[9].(**uuid.UUID) = nil
-				*dest[10].(**string) = &intentID
-				*dest[11].(*time.Time) = now.Add(15 * time.Minute)
-				*dest[12].(**time.Time) = &now
-				*dest[13].(**time.Time) = nil
-				*dest[14].(**string) = nil
-				*dest[15].(*time.Time) = now
-				*dest[16].(*time.Time) = now
+				*dest[7].(*pgtype.Numeric) = pgtype.Numeric{Int: big.NewInt(45000), Exp: -2, Valid: true}
+				*dest[8].(*pgtype.Numeric) = pgtype.Numeric{Int: big.NewInt(345000), Exp: -2, Valid: true}
+				*dest[9].(*string) = "CONFIRMED"
+				*dest[10].(**uuid.UUID) = nil
+				*dest[11].(**uuid.UUID) = nil
+				*dest[12].(**string) = &intentID
+				*dest[13].(*time.Time) = now.Add(15 * time.Minute)
+				*dest[14].(**time.Time) = &now
+				*dest[15].(**time.Time) = nil
+				*dest[16].(**string) = nil
+				*dest[17].(*time.Time) = now
+				*dest[18].(*time.Time) = now
 				return nil
 			},
 		})
@@ -248,7 +256,9 @@ func TestBookingRepository_FindByID(t *testing.T) {
 		assert.Equal(t, bookingID, b.ID)
 		assert.Equal(t, domain.BookingStatusConfirmed, b.Status)
 		assert.Equal(t, domain.CurrencyARS, b.Currency)
-		assert.Equal(t, domain.MoneyFromCents(300000, domain.CurrencyARS), b.TotalPrice)
+		assert.Equal(t, domain.MoneyFromCents(300000, domain.CurrencyARS), b.BaseAmount)
+		assert.Equal(t, domain.MoneyFromCents(45000, domain.CurrencyARS), b.PlatformFee)
+		assert.Equal(t, domain.MoneyFromCents(345000, domain.CurrencyARS), b.TotalPrice)
 		assert.NotNil(t, b.ConfirmedAt)
 	})
 }
@@ -332,8 +342,8 @@ func TestBookingRepository_GetActiveBookingsByTrip(t *testing.T) {
 	repo := postgres.NewBookingRepository(mockDB)
 
 	rows := NewMockRows([][]any{
-		{b1ID, tripID, p1ID, 1, "ARS", domain.MoneyFromCents(100000, domain.CurrencyARS), domain.MoneyFromCents(100000, domain.CurrencyARS), "PENDING_PAYMENT", nil, nil, now.Add(10 * time.Minute), nil, nil, nil, now, now},
-		{b2ID, tripID, p2ID, 2, "ARS", domain.MoneyFromCents(100000, domain.CurrencyARS), domain.MoneyFromCents(200000, domain.CurrencyARS), "CONFIRMED", nil, nil, now.Add(10 * time.Minute), &now, nil, nil, now, now},
+		{b1ID, tripID, p1ID, 1, "ARS", domain.MoneyFromCents(100000, domain.CurrencyARS), domain.MoneyFromCents(100000, domain.CurrencyARS), domain.MoneyFromCents(15000, domain.CurrencyARS), domain.MoneyFromCents(115000, domain.CurrencyARS), "PENDING_PAYMENT", nil, nil, now.Add(10 * time.Minute), nil, nil, nil, now, now},
+		{b2ID, tripID, p2ID, 2, "ARS", domain.MoneyFromCents(100000, domain.CurrencyARS), domain.MoneyFromCents(200000, domain.CurrencyARS), domain.MoneyFromCents(30000, domain.CurrencyARS), domain.MoneyFromCents(230000, domain.CurrencyARS), "CONFIRMED", nil, nil, now.Add(10 * time.Minute), &now, nil, nil, now, now},
 	})
 
 	mockDB.On("Query", ctx, mock.MatchedBy(func(sql string) bool {
@@ -347,6 +357,7 @@ func TestBookingRepository_GetActiveBookingsByTrip(t *testing.T) {
 	assert.Len(t, list, 2)
 	assert.Equal(t, domain.BookingStatusPendingPayment, list[0].Status)
 	assert.Equal(t, domain.CurrencyARS, list[0].Currency)
+	assert.Equal(t, domain.MoneyFromCents(15000, domain.CurrencyARS), list[0].PlatformFee)
 	assert.Equal(t, domain.BookingStatusConfirmed, list[1].Status)
 }
 
@@ -361,7 +372,7 @@ func TestBookingRepository_GetPassengerBookings(t *testing.T) {
 	repo := postgres.NewBookingRepository(mockDB)
 
 	rows := NewMockRows([][]any{
-		{b1ID, tripID, passengerID, 1, "ARS", domain.MoneyFromCents(100000, domain.CurrencyARS), domain.MoneyFromCents(100000, domain.CurrencyARS), "CONFIRMED", nil, nil, now.Add(10 * time.Minute), &now, nil, nil, now, now},
+		{b1ID, tripID, passengerID, 1, "ARS", domain.MoneyFromCents(100000, domain.CurrencyARS), domain.MoneyFromCents(100000, domain.CurrencyARS), domain.MoneyFromCents(15000, domain.CurrencyARS), domain.MoneyFromCents(115000, domain.CurrencyARS), "CONFIRMED", nil, nil, now.Add(10 * time.Minute), &now, nil, nil, now, now},
 	})
 
 	mockDB.On("Query", ctx, mock.MatchedBy(func(sql string) bool {
@@ -375,6 +386,7 @@ func TestBookingRepository_GetPassengerBookings(t *testing.T) {
 	assert.Len(t, list, 1)
 	assert.Equal(t, b1ID, list[0].ID)
 	assert.Equal(t, domain.CurrencyARS, list[0].Currency)
+	assert.Equal(t, domain.MoneyFromCents(15000, domain.CurrencyARS), list[0].PlatformFee)
 }
 
 func TestBookingRepository_CheckPassengerBookingConstraints(t *testing.T) {
@@ -439,24 +451,39 @@ func TestEscrowRepository(t *testing.T) {
 	driverID := uuid.MustParse("01933e3d-0000-7000-8000-000000000401")
 	refID := uuid.MustParse("01933e3d-0000-7000-8000-000000000501")
 
-	t.Run("CreateEscrow inserta la retención en custodia", func(t *testing.T) {
+	t.Run("CreateEscrow inserta la retención en custodia con base_amount y platform_fee", func(t *testing.T) {
 		mockDB := new(MockDBExecutor)
 		repo := postgres.NewEscrowRepository(mockDB)
 
-		escrow, err := domain.NewEscrowTransaction(escrowID, bookingID, tripID, passengerID, driverID, domain.MoneyFromCents(300000, domain.CurrencyARS), "pi_test_123")
+		escrow, err := domain.NewEscrowTransactionWithBreakdown(
+			escrowID,
+			bookingID,
+			tripID,
+			passengerID,
+			driverID,
+			domain.MoneyFromCents(300000, domain.CurrencyARS),
+			domain.MoneyFromCents(45000, domain.CurrencyARS),
+			"pi_test_123",
+		)
 		require.NoError(t, err)
 
 		mockDB.On("Exec", ctx, mock.MatchedBy(func(sql string) bool {
 			return strings.Contains(sql, "INSERT INTO escrow_transactions") &&
+				strings.Contains(sql, "base_amount") &&
+				strings.Contains(sql, "platform_fee") &&
 				strings.Contains(sql, "payment_gateway_ref")
 		}), mock.MatchedBy(func(args []any) bool {
 			amtNum, okAmt := args[5].(pgtype.Numeric)
-			return len(args) == 12 &&
+			baseNum, okBase := args[6].(pgtype.Numeric)
+			feeNum, okFee := args[7].(pgtype.Numeric)
+			return len(args) == 14 &&
 				args[0] == escrowID &&
 				args[1] == bookingID &&
-				okAmt && amtNum.Valid && amtNum.Exp == -2 && amtNum.Int.Cmp(big.NewInt(300000)) == 0 &&
-				args[6] == "ARS" &&
-				args[8] == "HELD"
+				okAmt && amtNum.Valid && amtNum.Exp == -2 && amtNum.Int.Cmp(big.NewInt(345000)) == 0 &&
+				okBase && baseNum.Valid && baseNum.Exp == -2 && baseNum.Int.Cmp(big.NewInt(300000)) == 0 &&
+				okFee && feeNum.Valid && feeNum.Exp == -2 && feeNum.Int.Cmp(big.NewInt(45000)) == 0 &&
+				args[8] == "ARS" &&
+				args[10] == "HELD"
 		})).Return(pgconn.NewCommandTag("INSERT 0 1"), nil)
 
 		err = repo.CreateEscrow(ctx, escrow)
@@ -464,7 +491,7 @@ func TestEscrowRepository(t *testing.T) {
 		mockDB.AssertExpectations(t)
 	})
 
-	t.Run("FindByBookingID recupera el escrow", func(t *testing.T) {
+	t.Run("FindByBookingID recupera el escrow con desglose", func(t *testing.T) {
 		mockDB := new(MockDBExecutor)
 		repo := postgres.NewEscrowRepository(mockDB)
 
@@ -477,15 +504,17 @@ func TestEscrowRepository(t *testing.T) {
 				*dest[2].(*uuid.UUID) = tripID
 				*dest[3].(*uuid.UUID) = passengerID
 				*dest[4].(*uuid.UUID) = driverID
-				*dest[5].(*pgtype.Numeric) = pgtype.Numeric{Int: big.NewInt(300000), Exp: -2, Valid: true}
-				*dest[6].(*string) = "ARS"
-				*dest[7].(*string) = "pi_test_123"
-				*dest[8].(*string) = "HELD"
-				*dest[9].(*time.Time) = now
-				*dest[10].(**time.Time) = nil
-				*dest[11].(**time.Time) = nil
-				*dest[12].(*time.Time) = now
-				*dest[13].(*time.Time) = now
+				*dest[5].(*pgtype.Numeric) = pgtype.Numeric{Int: big.NewInt(345000), Exp: -2, Valid: true}
+				*dest[6].(*pgtype.Numeric) = pgtype.Numeric{Int: big.NewInt(300000), Exp: -2, Valid: true}
+				*dest[7].(*pgtype.Numeric) = pgtype.Numeric{Int: big.NewInt(45000), Exp: -2, Valid: true}
+				*dest[8].(*string) = "ARS"
+				*dest[9].(*string) = "pi_test_123"
+				*dest[10].(*string) = "HELD"
+				*dest[11].(*time.Time) = now
+				*dest[12].(**time.Time) = nil
+				*dest[13].(**time.Time) = nil
+				*dest[14].(*time.Time) = now
+				*dest[15].(*time.Time) = now
 				return nil
 			},
 		})
@@ -496,7 +525,9 @@ func TestEscrowRepository(t *testing.T) {
 		assert.Equal(t, escrowID, res.ID)
 		assert.Equal(t, domain.EscrowStatusHeld, res.Status)
 		assert.Equal(t, domain.CurrencyARS, res.Currency)
-		assert.Equal(t, domain.MoneyFromCents(300000, domain.CurrencyARS), res.Amount)
+		assert.Equal(t, domain.MoneyFromCents(345000, domain.CurrencyARS), res.Amount)
+		assert.Equal(t, domain.MoneyFromCents(300000, domain.CurrencyARS), res.BaseAmount)
+		assert.Equal(t, domain.MoneyFromCents(45000, domain.CurrencyARS), res.PlatformFee)
 	})
 
 	t.Run("UpdateEscrowStatus actualiza el estado", func(t *testing.T) {
@@ -512,16 +543,17 @@ func TestEscrowRepository(t *testing.T) {
 		require.NoError(t, err)
 	})
 
-	t.Run("RecordRefund inserta la transacción de reembolso inmutable", func(t *testing.T) {
+	t.Run("RecordRefund inserta la transacción de reembolso inmutable con retención de plataforma", func(t *testing.T) {
 		mockDB := new(MockDBExecutor)
 		repo := postgres.NewEscrowRepository(mockDB)
 
-		refund, err := domain.NewRefundTransaction(
+		refund, err := domain.NewRefundTransactionWithRetention(
 			refID,
 			escrowID,
 			bookingID,
 			domain.MoneyFromCents(150000, domain.CurrencyARS),
 			domain.MoneyFromCents(150000, domain.CurrencyARS),
+			domain.MoneyFromCents(45000, domain.CurrencyARS),
 			domain.RefundTypePassengerLate,
 			"re_test_999",
 		)
@@ -529,18 +561,21 @@ func TestEscrowRepository(t *testing.T) {
 
 		mockDB.On("Exec", ctx, mock.MatchedBy(func(sql string) bool {
 			return strings.Contains(sql, "INSERT INTO refund_transactions") &&
-				strings.Contains(sql, "passenger_refund_amount")
+				strings.Contains(sql, "passenger_refund_amount") &&
+				strings.Contains(sql, "platform_retained_amount")
 		}), mock.MatchedBy(func(args []any) bool {
 			pNum, okP := args[3].(pgtype.Numeric)
 			dNum, okD := args[4].(pgtype.Numeric)
-			return len(args) == 9 &&
+			rNum, okR := args[5].(pgtype.Numeric)
+			return len(args) == 10 &&
 				args[0] == refID &&
 				args[1] == escrowID &&
 				args[2] == bookingID &&
 				okP && pNum.Valid && pNum.Exp == -2 && pNum.Int.Cmp(big.NewInt(150000)) == 0 &&
 				okD && dNum.Valid && dNum.Exp == -2 && dNum.Int.Cmp(big.NewInt(150000)) == 0 &&
-				args[5] == "PASSENGER_LATE" &&
-				args[6] == "re_test_999"
+				okR && rNum.Valid && rNum.Exp == -2 && rNum.Int.Cmp(big.NewInt(45000)) == 0 &&
+				args[6] == "PASSENGER_LATE" &&
+				args[7] == "re_test_999"
 		})).Return(pgconn.NewCommandTag("INSERT 0 1"), nil)
 
 		err = repo.RecordRefund(ctx, refund)
@@ -780,7 +815,7 @@ func TestBookingRepository_LockAndExpireBatch(t *testing.T) {
 		repo := postgres.NewBookingRepository(mockDB)
 
 		rows := NewMockRows([][]any{
-			{b1ID, tripID, passengerID, 2, "ARS", domain.MoneyFromCents(100000, domain.CurrencyARS), domain.MoneyFromCents(200000, domain.CurrencyARS), "PENDING_PAYMENT", nil, nil, nil, now.Add(-1 * time.Minute), nil, nil, nil, now.Add(-20 * time.Minute), now.Add(-20 * time.Minute)},
+			{b1ID, tripID, passengerID, 2, "ARS", domain.MoneyFromCents(100000, domain.CurrencyARS), domain.MoneyFromCents(200000, domain.CurrencyARS), domain.MoneyFromCents(30000, domain.CurrencyARS), domain.MoneyFromCents(230000, domain.CurrencyARS), "PENDING_PAYMENT", nil, nil, nil, now.Add(-1 * time.Minute), nil, nil, nil, now.Add(-20 * time.Minute), now.Add(-20 * time.Minute)},
 		})
 
 		mockDB.On("Query", ctx, mock.MatchedBy(func(sql string) bool {

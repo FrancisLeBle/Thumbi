@@ -74,6 +74,8 @@ type EscrowTransaction struct {
 	PayerID           uuid.UUID    `json:"payer_id"` // Pasajero
 	PayeeID           uuid.UUID    `json:"payee_id"` // Conductor
 	Amount            Money        `json:"amount"`
+	BaseAmount        Money        `json:"base_amount"`
+	PlatformFee       Money        `json:"platform_fee"`
 	Currency          Currency     `json:"currency"`
 	PaymentGatewayRef string       `json:"payment_gateway_ref"`
 	Status            EscrowStatus `json:"status"`
@@ -84,26 +86,59 @@ type EscrowTransaction struct {
 	UpdatedAt         time.Time    `json:"updated_at"`
 }
 
+// DriverPayoutAmount retorna el monto neto correspondiente al conductor (BaseAmount si existe desglose, o Amount en registros legados).
+func (e *EscrowTransaction) DriverPayoutAmount() Money {
+	if e == nil {
+		return ZeroMoney()
+	}
+	if e.BaseAmount.Amount > 0 || e.PlatformFee.Amount > 0 {
+		return MoneyFromCents(e.BaseAmount.Amount, e.Currency)
+	}
+	return MoneyFromCents(e.Amount.Amount, e.Currency)
+}
+
 // NewEscrowTransaction crea un registro de retención de fondos en custodia exigiendo moneda explícita válida dentro de Money.
 func NewEscrowTransaction(id, bookingID, tripID, payerID, payeeID uuid.UUID, amount Money, gatewayRef string) (*EscrowTransaction, error) {
+	cur := amount.EffectiveCurrency()
+	return NewEscrowTransactionWithBreakdown(id, bookingID, tripID, payerID, payeeID, amount, ZeroMoney(cur), gatewayRef)
+}
+
+// NewEscrowTransactionWithBreakdown crea un registro de custodia separando el monto base del conductor y la comisión de plataforma.
+func NewEscrowTransactionWithBreakdown(id, bookingID, tripID, payerID, payeeID uuid.UUID, baseAmount, platformFee Money, gatewayRef string) (*EscrowTransaction, error) {
 	if id == uuid.Nil || bookingID == uuid.Nil || tripID == uuid.Nil {
 		return nil, ErrEscrowNotFound
 	}
 	if payerID == uuid.Nil || payeeID == uuid.Nil {
 		return nil, ErrUnauthorized
 	}
-	if amount.Amount <= 0 {
+	if baseAmount.Amount < 0 || platformFee.Amount < 0 || (baseAmount.Amount+platformFee.Amount <= 0) {
 		return nil, ErrPriceExceedsCapPrice
 	}
-	cur, err := ParseCurrency(string(amount.Currency))
+
+	rawCur := string(baseAmount.Currency)
+	if strings.TrimSpace(rawCur) == "" {
+		rawCur = string(platformFee.Currency)
+	}
+	cur, err := ParseCurrency(rawCur)
 	if err != nil {
 		return nil, err
+	}
+	if strings.TrimSpace(string(platformFee.Currency)) != "" {
+		feeCur, err := ParseCurrency(string(platformFee.Currency))
+		if err != nil {
+			return nil, err
+		}
+		if feeCur != cur {
+			return nil, fmt.Errorf("%w: base en %s vs fee en %s", ErrCurrencyMismatch, cur, feeCur)
+		}
 	}
 	if strings.TrimSpace(gatewayRef) == "" {
 		return nil, ErrPaymentFailed
 	}
 
-	normalizedAmount := MoneyFromCents(amount.Amount, cur)
+	normalizedBase := MoneyFromCents(baseAmount.Amount, cur)
+	normalizedFee := MoneyFromCents(platformFee.Amount, cur)
+	normalizedAmount := MoneyFromCents(normalizedBase.Amount+normalizedFee.Amount, cur)
 	nowUTC := time.Now().UTC()
 	return &EscrowTransaction{
 		ID:                id,
@@ -112,6 +147,8 @@ func NewEscrowTransaction(id, bookingID, tripID, payerID, payeeID uuid.UUID, amo
 		PayerID:           payerID,
 		PayeeID:           payeeID,
 		Amount:            normalizedAmount,
+		BaseAmount:        normalizedBase,
+		PlatformFee:       normalizedFee,
 		Currency:          cur,
 		PaymentGatewayRef: gatewayRef,
 		Status:            EscrowStatusHeld,
@@ -184,44 +221,165 @@ func (e *EscrowTransaction) RestoreHeld(now time.Time) error {
 	return nil
 }
 
-// RefundTransaction documenta la trazabilidad y distribución contable de los reembolsos
+// RefundTransaction documenta la trazabilidad y distribución contable de los reembolsos en 3 vías
 type RefundTransaction struct {
 	ID                       uuid.UUID  `json:"id"`
 	EscrowTransactionID      uuid.UUID  `json:"escrow_transaction_id"`
 	BookingID                uuid.UUID  `json:"booking_id"`
 	PassengerRefundAmount    Money      `json:"passenger_refund_amount"`
 	DriverCompensationAmount Money      `json:"driver_compensation_amount"`
+	PlatformRetainedAmount   Money      `json:"platform_retained_amount"`
 	RefundType               RefundType `json:"refund_type"`
 	GatewayRefundRef         string     `json:"gateway_refund_ref,omitempty"`
 	ProcessedAt              time.Time  `json:"processed_at"`
 	CreatedAt                time.Time  `json:"created_at"`
 }
 
-// CalculateCancellationRefund computa la política de reembolsos de gastos compartidos en centavos exactos:
-// - Si cancela el conductor: 100% pasajero, 0% conductor (DRIVER_CANCELLATION)
-// - Si cancela el pasajero con >= 24hs de antelación: 100% pasajero, 0% conductor (PASSENGER_EARLY)
-// - Si cancela el pasajero con < 24hs de antelación: 50% pasajero, 50% compensación conductor (PASSENGER_LATE)
-func CalculateCancellationRefund(escrowAmount Money, departureTime, cancellationTime time.Time, isDriverCancellation bool) (passengerRefund Money, driverCompensation Money, refundType RefundType) {
-	cur := escrowAmount.EffectiveCurrency()
-	normalizedAmount := MoneyFromCents(escrowAmount.Amount, cur)
-	if isDriverCancellation {
-		return normalizedAmount, ZeroMoney(cur), RefundTypeDriverCancellation
-	}
-
-	// Tiempo restante hasta la partida
-	timeUntilDeparture := departureTime.Sub(cancellationTime)
-
-	if timeUntilDeparture >= 24*time.Hour {
-		return normalizedAmount, ZeroMoney(cur), RefundTypePassengerEarly
-	}
-
-	// Cancelación tardía con menos de 24 horas: división entera conservando exactamente el total y la moneda
-	passengerHalf, driverHalf := normalizedAmount.SplitHalf()
-	return passengerHalf, driverHalf, RefundTypePassengerLate
+// CancellationRefundBreakdown detalla la distribución contable exacta de un reembolso por cancelación.
+type CancellationRefundBreakdown struct {
+	PassengerRefund    Money
+	DriverCompensation Money
+	PlatformRetained   Money
+	RefundType         RefundType
 }
 
-// NewRefundTransaction genera el registro inmutable del reembolso procesado
+// CalculateCancellationRefund computa la política estándar sobre un monto único (compatibilidad con llamadas sin desglose).
+func CalculateCancellationRefund(escrowAmount Money, departureTime, cancellationTime time.Time, isDriverCancellation bool) (passengerRefund Money, driverCompensation Money, refundType RefundType) {
+	cur := escrowAmount.EffectiveCurrency()
+	breakdown := CalculateCancellationRefundWithPolicy(
+		escrowAmount,
+		ZeroMoney(cur),
+		departureTime,
+		cancellationTime,
+		isDriverCancellation,
+		DefaultPlatformPricingConfig(),
+	)
+	return breakdown.PassengerRefund, breakdown.DriverCompensation, breakdown.RefundType
+}
+
+// CalculateCancellationRefundWithPolicy computa en centavos exactos la política parametrizada de reembolso y retención operativa:
+// - Si cancela el conductor: 100% pasajero (base + fee), 0% conductor, 0% plataforma.
+// - Si cancela el pasajero tempranamente (>= LateCancelWindowHours): 100% del base al pasajero + retención parametrizada del PlatformFee.
+// - Si cancela el pasajero tardíamente (< LateCancelWindowHours): reparto 3-vías del base (sumando 100%) + retención parametrizada del PlatformFee.
+func CalculateCancellationRefundWithPolicy(
+	baseAmount, platformFee Money,
+	departureTime, cancellationTime time.Time,
+	isDriverCancellation bool,
+	policy PlatformPricingConfig,
+) CancellationRefundBreakdown {
+	cur := baseAmount.EffectiveCurrency()
+	if strings.TrimSpace(string(baseAmount.Currency)) == "" && strings.TrimSpace(string(platformFee.Currency)) != "" {
+		cur = platformFee.EffectiveCurrency()
+	}
+
+	baseCents := baseAmount.Amount
+	if baseCents < 0 {
+		baseCents = 0
+	}
+	feeCents := platformFee.Amount
+	if feeCents < 0 {
+		feeCents = 0
+	}
+
+	if err := policy.Validate(); err != nil {
+		policy = DefaultPlatformPricingConfig()
+	}
+
+	if isDriverCancellation {
+		return CancellationRefundBreakdown{
+			PassengerRefund:    MoneyFromCents(baseCents+feeCents, cur),
+			DriverCompensation: ZeroMoney(cur),
+			PlatformRetained:   ZeroMoney(cur),
+			RefundType:         RefundTypeDriverCancellation,
+		}
+	}
+
+	lateWindow := time.Duration(policy.LateCancelWindowHours) * time.Hour
+	timeUntilDeparture := departureTime.Sub(cancellationTime)
+
+	if timeUntilDeparture >= lateWindow {
+		retainedFee := clampInt64(RoundDivHalfUp(feeCents*policy.EarlyCancelFeeRetentionBps, BpsDenominator), 0, feeCents)
+		refundedFee := feeCents - retainedFee
+		return CancellationRefundBreakdown{
+			PassengerRefund:    MoneyFromCents(baseCents+refundedFee, cur),
+			DriverCompensation: ZeroMoney(cur),
+			PlatformRetained:   MoneyFromCents(retainedFee, cur),
+			RefundType:         RefundTypePassengerEarly,
+		}
+	}
+
+	retainedFee := clampInt64(RoundDivHalfUp(feeCents*policy.LateCancelFeeRetentionBps, BpsDenominator), 0, feeCents)
+	refundedFee := feeCents - retainedFee
+
+	basePassenger, baseDriver, basePlatform := splitAmountByThreeBps(
+		baseCents,
+		policy.LateCancelPassengerRefundBps,
+		policy.LateCancelDriverCompBps,
+		policy.LateCancelPlatformRetentionBps,
+	)
+
+	return CancellationRefundBreakdown{
+		PassengerRefund:    MoneyFromCents(basePassenger+refundedFee, cur),
+		DriverCompensation: MoneyFromCents(baseDriver, cur),
+		PlatformRetained:   MoneyFromCents(retainedFee+basePlatform, cur),
+		RefundType:         RefundTypePassengerLate,
+	}
+}
+
+func splitAmountByThreeBps(total, pBps, dBps, rBps int64) (p, d, r int64) {
+	if total <= 0 {
+		return 0, 0, 0
+	}
+	p = RoundDivHalfUp(total*pBps, BpsDenominator)
+	d = RoundDivHalfUp(total*dBps, BpsDenominator)
+	r = RoundDivHalfUp(total*rBps, BpsDenominator)
+
+	diff := total - (p + d + r)
+	for diff > 0 {
+		switch {
+		case pBps > 0 && pBps >= dBps && pBps >= rBps:
+			p++
+		case dBps > 0 && dBps >= rBps:
+			d++
+		case rBps > 0:
+			r++
+		default:
+			p++
+		}
+		diff--
+	}
+	for diff < 0 {
+		switch {
+		case r > 0:
+			r--
+		case d > 0:
+			d--
+		case p > 0:
+			p--
+		}
+		diff++
+	}
+	return p, d, r
+}
+
+func clampInt64(v, minVal, maxVal int64) int64 {
+	if v < minVal {
+		return minVal
+	}
+	if v > maxVal {
+		return maxVal
+	}
+	return v
+}
+
+// NewRefundTransaction genera el registro inmutable del reembolso procesado (sin retención adicional de plataforma).
 func NewRefundTransaction(id, escrowID, bookingID uuid.UUID, passengerRefund, driverCompensation Money, refundType RefundType, gatewayRefundRef string) (*RefundTransaction, error) {
+	cur := passengerRefund.EffectiveCurrency()
+	return NewRefundTransactionWithRetention(id, escrowID, bookingID, passengerRefund, driverCompensation, ZeroMoney(cur), refundType, gatewayRefundRef)
+}
+
+// NewRefundTransactionWithRetention genera el registro inmutable del reembolso incluyendo el monto retenido por la plataforma.
+func NewRefundTransactionWithRetention(id, escrowID, bookingID uuid.UUID, passengerRefund, driverCompensation, platformRetained Money, refundType RefundType, gatewayRefundRef string) (*RefundTransaction, error) {
 	if id == uuid.Nil || escrowID == uuid.Nil || bookingID == uuid.Nil {
 		return nil, ErrEscrowNotFound
 	}
@@ -230,10 +388,12 @@ func NewRefundTransaction(id, escrowID, bookingID uuid.UUID, passengerRefund, dr
 	}
 	pCur := passengerRefund.EffectiveCurrency()
 	dCur := driverCompensation.EffectiveCurrency()
-	if pCur != dCur {
-		return nil, fmt.Errorf("%w: reembolso en %s vs compensación en %s", ErrCurrencyMismatch, pCur, dCur)
+	rCur := platformRetained.EffectiveCurrency()
+	if pCur != dCur || pCur != rCur {
+		return nil, fmt.Errorf("%w: monedas inconsistentes en reembolso (%s / %s / %s)", ErrCurrencyMismatch, pCur, dCur, rCur)
 	}
-	if passengerRefund.Amount < 0 || driverCompensation.Amount < 0 || (passengerRefund.Amount+driverCompensation.Amount <= 0) {
+	if passengerRefund.Amount < 0 || driverCompensation.Amount < 0 || platformRetained.Amount < 0 ||
+		(passengerRefund.Amount+driverCompensation.Amount+platformRetained.Amount <= 0) {
 		return nil, ErrInvalidRefundAmount
 	}
 
@@ -244,6 +404,7 @@ func NewRefundTransaction(id, escrowID, bookingID uuid.UUID, passengerRefund, dr
 		BookingID:                bookingID,
 		PassengerRefundAmount:    MoneyFromCents(passengerRefund.Amount, pCur),
 		DriverCompensationAmount: MoneyFromCents(driverCompensation.Amount, dCur),
+		PlatformRetainedAmount:   MoneyFromCents(platformRetained.Amount, rCur),
 		RefundType:               refundType,
 		GatewayRefundRef:         gatewayRefundRef,
 		ProcessedAt:              nowUTC,

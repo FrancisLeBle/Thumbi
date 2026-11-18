@@ -1,5 +1,5 @@
 import { apiClient } from './apiClient';
-import type { Booking } from '../types';
+import type { Booking, PlatformPricingConfig, BookingPricingQuote } from '../types';
 
 export interface CreateBookingPayload {
   tripId: string;
@@ -82,13 +82,35 @@ export async function cancelBooking(bookingId: string): Promise<void> {
   await apiClient.delete(`/v1/bookings/${bookingId}`);
 }
 
+/**
+ * Obtiene la configuración activa de tarifas (Service Fee al pasajero y reglas de retención por cancelación).
+ * Endpoint: GET /v1/pricing/config
+ */
+export async function getPricingConfig(): Promise<PlatformPricingConfig> {
+  return apiClient.get<PlatformPricingConfig>('/v1/pricing/config');
+}
+
+/**
+ * Solicita al backend el desglose transparente (Base + Service Fee = Total) para un viaje y plazas dadas.
+ * Endpoint: GET /v1/pricing/quote
+ */
+export async function quoteBookingPrice(
+  tripId: string,
+  seatsRequested: number
+): Promise<BookingPricingQuote> {
+  return apiClient.get<BookingPricingQuote>(
+    `/v1/pricing/quote?trip_id=${encodeURIComponent(tripId)}&seats=${encodeURIComponent(String(seatsRequested))}`
+  );
+}
+
 export const bookingService = {
   createBooking,
   confirmPayment,
   getContactLink,
   getMyBookings,
   cancelBooking,
+  getPricingConfig,
+  quoteBookingPrice,
 };
 
 export default bookingService;
-

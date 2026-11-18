@@ -148,3 +148,9 @@ type DisputeRepository interface {
 	Update(ctx context.Context, dispute *domain.Dispute) error
 	List(ctx context.Context, limit, offset int) ([]*domain.Dispute, error)
 }
+
+// PricingConfigRepository define el contrato de persistencia para la configuración dinámica de comisiones y retenciones
+type PricingConfigRepository interface {
+	GetActive(ctx context.Context) (*domain.PlatformPricingConfig, error)
+	UpdateActive(ctx context.Context, cfg *domain.PlatformPricingConfig) error
+}

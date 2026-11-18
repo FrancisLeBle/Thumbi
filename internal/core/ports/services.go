@@ -239,6 +239,7 @@ type RefundDTO struct {
 	BookingID                uuid.UUID
 	PassengerRefundAmount    domain.Money
 	DriverCompensationAmount domain.Money
+	PlatformRetainedAmount   domain.Money
 	RefundType               domain.RefundType
 	GatewayRefundRef         string
 	ProcessedAt              string
@@ -266,6 +267,8 @@ type BookingDTO struct {
 	SeatsBooked        int
 	Currency           domain.Currency
 	UnitPrice          domain.Money
+	BaseAmount         domain.Money
+	PlatformFee        domain.Money
 	TotalPrice         domain.Money
 	Status             domain.BookingStatus
 	PickupStopID       *uuid.UUID
@@ -351,4 +354,56 @@ type DisputeDTO struct {
 	ResolvedAt          *string
 	CreatedAt           string
 	UpdatedAt           string
+}
+
+// PlatformPricingConfigDTO proyección de aplicación de las reglas parametrizables de monetización y retención en cancelaciones
+type PlatformPricingConfigDTO struct {
+	ID                                 uuid.UUID
+	Currency                           domain.Currency
+	PassengerServiceFeeBps             int64
+	PassengerServiceFeePercent         float64
+	PassengerFixedFee                  domain.Money
+	EarlyCancelFeeRetentionBps         int64
+	EarlyCancelFeeRetentionPercent     float64
+	LateCancelWindowHours              int
+	LateCancelFeeRetentionBps          int64
+	LateCancelFeeRetentionPercent      float64
+	LateCancelPassengerRefundBps       int64
+	LateCancelPassengerRefundPercent   float64
+	LateCancelDriverCompBps            int64
+	LateCancelDriverCompPercent        float64
+	LateCancelPlatformRetentionBps     int64
+	LateCancelPlatformRetentionPercent float64
+	IsActive                           bool
+	UpdatedBy                          *uuid.UUID
+	UpdatedAt                          string
+}
+
+// UpdatePlatformPricingConfigInput parámetros de aplicación para actualizar la configuración de tarifas (Admin)
+type UpdatePlatformPricingConfigInput struct {
+	AdminID                        uuid.UUID
+	Currency                       *domain.Currency
+	PassengerServiceFeeBps         *int64
+	PassengerFixedFeeAmount        *int64
+	EarlyCancelFeeRetentionBps     *int64
+	LateCancelWindowHours          *int
+	LateCancelFeeRetentionBps      *int64
+	LateCancelPassengerRefundBps   *int64
+	LateCancelDriverCompBps        *int64
+	LateCancelPlatformRetentionBps *int64
+}
+
+// BookingPricingQuoteDTO proyección con el desglose transparente para checkout previo a la reserva
+type BookingPricingQuoteDTO struct {
+	TripID            uuid.UUID
+	SeatsRequested    int
+	Currency          domain.Currency
+	UnitPrice         domain.Money
+	BaseAmount        domain.Money
+	PlatformFee       domain.Money
+	TotalPrice        domain.Money
+	DriverPayout      domain.Money
+	ServiceFeeBps     int64
+	ServiceFeePercent float64
+	FixedFee          domain.Money
 }

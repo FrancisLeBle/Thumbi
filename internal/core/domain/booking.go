@@ -57,6 +57,7 @@ type BookingParams struct {
 	SeatsBooked     int
 	Currency        Currency
 	UnitPrice       Money
+	PlatformFee     Money
 	PickupStopID    *uuid.UUID
 	DropoffStopID   *uuid.UUID
 	PaymentIntentID *string
@@ -71,6 +72,8 @@ type Booking struct {
 	SeatsBooked        int           `json:"seats_booked"`
 	Currency           Currency      `json:"currency"`
 	UnitPrice          Money         `json:"unit_price"`
+	BaseAmount         Money         `json:"base_amount"`
+	PlatformFee        Money         `json:"platform_fee"`
 	TotalPrice         Money         `json:"total_price"`
 	Status             BookingStatus `json:"status"`
 	PickupStopID       *uuid.UUID    `json:"pickup_stop_id,omitempty"`
@@ -100,8 +103,8 @@ func NewBooking(params BookingParams) (*Booking, error) {
 		return nil, ErrInvalidSeatCount
 	}
 
-	// Invariante: Precio unitario no puede ser negativo
-	if params.UnitPrice.Amount < 0 {
+	// Invariante: Precio unitario y comisión no pueden ser negativos
+	if params.UnitPrice.Amount < 0 || params.PlatformFee.Amount < 0 {
 		return nil, ErrPriceExceedsCapPrice
 	}
 
@@ -122,9 +125,20 @@ func NewBooking(params BookingParams) (*Booking, error) {
 			return nil, fmt.Errorf("%w: precio unitario en %s incompatible con reserva en %s", ErrCurrencyMismatch, unitCur, parsedCurrency)
 		}
 	}
+	if strings.TrimSpace(string(params.PlatformFee.Currency)) != "" {
+		feeCur, err := ParseCurrency(string(params.PlatformFee.Currency))
+		if err != nil {
+			return nil, err
+		}
+		if feeCur != parsedCurrency {
+			return nil, fmt.Errorf("%w: comisión de plataforma en %s incompatible con reserva en %s", ErrCurrencyMismatch, feeCur, parsedCurrency)
+		}
+	}
 
 	unitPrice := MoneyFromCents(params.UnitPrice.Amount, parsedCurrency)
-	totalPrice := unitPrice.Mul(int64(params.SeatsBooked))
+	baseAmount := unitPrice.Mul(int64(params.SeatsBooked))
+	platformFee := MoneyFromCents(params.PlatformFee.Amount, parsedCurrency)
+	totalPrice := MoneyFromCents(baseAmount.Amount+platformFee.Amount, parsedCurrency)
 
 	ttl := params.TTL
 	if ttl <= 0 {
@@ -140,6 +154,8 @@ func NewBooking(params BookingParams) (*Booking, error) {
 		SeatsBooked:     params.SeatsBooked,
 		Currency:        parsedCurrency,
 		UnitPrice:       unitPrice,
+		BaseAmount:      baseAmount,
+		PlatformFee:     platformFee,
 		TotalPrice:      totalPrice,
 		Status:          BookingStatusPendingPayment,
 		PickupStopID:    params.PickupStopID,

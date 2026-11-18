@@ -23,6 +23,7 @@ type RouterConfig struct {
 	BookingHandler        *BookingHandler
 	ReviewHandler         *ReviewHandler
 	DisputeHandler        *DisputeHandler
+	PricingHandler        *PricingHandler
 	HealthHandler         *HealthHandler
 	AuthMiddleware        gin.HandlerFunc
 	WebhookAuthMiddleware gin.HandlerFunc
@@ -54,6 +55,9 @@ func (cfg RouterConfig) Validate() error {
 	}
 	if cfg.DisputeHandler == nil {
 		missing = append(missing, "DisputeHandler")
+	}
+	if cfg.PricingHandler == nil {
+		missing = append(missing, "PricingHandler")
 	}
 	if cfg.HealthHandler == nil {
 		missing = append(missing, "HealthHandler")
@@ -191,6 +195,20 @@ func SetupRouter(cfg RouterConfig) (*gin.Engine, error) {
 			disputesProtected.GET("/:id", cfg.DisputeHandler.GetDisputeByID)
 			disputesProtected.POST("/:id/resolve", middleware.RequireRole(domain.RoleAdmin), cfg.DisputeHandler.ResolveDispute)
 			disputesProtected.GET("", middleware.RequireRole(domain.RoleAdmin), cfg.DisputeHandler.ListDisputes)
+		}
+
+		// Rutas de Monetización Transparente y Parametrización Administrativa
+		pricingPublic := v1.Group("/pricing")
+		{
+			pricingPublic.GET("/config", cfg.PricingHandler.GetPricingConfig)
+			pricingPublic.GET("/quote", cfg.PricingHandler.QuoteBookingPrice)
+		}
+
+		adminPricing := v1.Group("/admin/pricing-config")
+		adminPricing.Use(cfg.AuthMiddleware, middleware.RequireRole(domain.RoleAdmin))
+		{
+			adminPricing.GET("", cfg.PricingHandler.GetPricingConfig)
+			adminPricing.PUT("", cfg.PricingHandler.UpdatePricingConfig)
 		}
 
 		// Rutas de Observabilidad y Monitoreo (Módulo 5)

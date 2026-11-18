@@ -102,6 +102,8 @@ type BookingResponse struct {
 	SeatsBooked        int                         `json:"seats_booked"`
 	Currency           domain.Currency             `json:"currency"`
 	UnitPrice          domain.Money                `json:"unit_price"`
+	BaseAmount         domain.Money                `json:"base_amount"`
+	PlatformFee        domain.Money                `json:"platform_fee"`
 	TotalPrice         domain.Money                `json:"total_price"`
 	Status             domain.BookingStatus        `json:"status"`
 	PickupStopID       *uuid.UUID                  `json:"pickup_stop_id,omitempty"`
@@ -139,6 +141,7 @@ type RefundResponse struct {
 	BookingID                uuid.UUID         `json:"booking_id"`
 	PassengerRefundAmount    domain.Money      `json:"passenger_refund_amount"`
 	DriverCompensationAmount domain.Money      `json:"driver_compensation_amount"`
+	PlatformRetainedAmount   domain.Money      `json:"platform_retained_amount"`
 	RefundType               domain.RefundType `json:"refund_type"`
 	GatewayRefundRef         string            `json:"gateway_refund_ref,omitempty"`
 	ProcessedAt              string            `json:"processed_at"`
@@ -193,6 +196,8 @@ func toBookingResponse(dto *ports.BookingDTO) *BookingResponse {
 		SeatsBooked:        dto.SeatsBooked,
 		Currency:           dto.Currency,
 		UnitPrice:          dto.UnitPrice,
+		BaseAmount:         dto.BaseAmount,
+		PlatformFee:        dto.PlatformFee,
 		TotalPrice:         dto.TotalPrice,
 		Status:             dto.Status,
 		PickupStopID:       dto.PickupStopID,
@@ -236,6 +241,7 @@ func toRefundResponse(dto *ports.RefundDTO) *RefundResponse {
 		BookingID:                dto.BookingID,
 		PassengerRefundAmount:    dto.PassengerRefundAmount,
 		DriverCompensationAmount: dto.DriverCompensationAmount,
+		PlatformRetainedAmount:   dto.PlatformRetainedAmount,
 		RefundType:               dto.RefundType,
 		GatewayRefundRef:         dto.GatewayRefundRef,
 		ProcessedAt:              dto.ProcessedAt,

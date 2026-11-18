@@ -220,4 +220,131 @@ func TestSettlementService(t *testing.T) {
 		escrowRepo.AssertNotCalled(t, "UpdateEscrowStatus", mock.Anything, mock.Anything, mock.Anything)
 		escrowRepo.AssertNotCalled(t, "RecordRefund", mock.Anything, mock.Anything)
 	})
+
+	t.Run("HoldEscrow con desglose separa BaseAmount del conductor y PlatformFee de plataforma", func(t *testing.T) {
+		escrowRepo := new(MockEscrowRepository)
+		gateway := new(MockPaymentGateway)
+		svc := services.NewSettlementService(escrowRepo, gateway)
+
+		baseAmt := domain.MoneyFromCents(200000, domain.CurrencyARS)
+		feeAmt := domain.MoneyFromCents(30000, domain.CurrencyARS)
+		totalAmt := domain.MoneyFromCents(230000, domain.CurrencyARS)
+
+		escrowRepo.On("CreateEscrow", ctx, mock.MatchedBy(func(e *domain.EscrowTransaction) bool {
+			return e.BaseAmount == baseAmt &&
+				e.PlatformFee == feeAmt &&
+				e.Amount == totalAmt &&
+				e.DriverPayoutAmount() == baseAmt
+		})).Return(nil)
+
+		escrow, err := svc.HoldEscrow(ctx, services.HoldEscrowInput{
+			BookingID:         bookingID,
+			TripID:            tripID,
+			PassengerID:       passengerID,
+			DriverID:          driverID,
+			Amount:            totalAmt,
+			BaseAmount:        baseAmt,
+			PlatformFee:       feeAmt,
+			PaymentGatewayRef: "pi_breakdown_1",
+		})
+		require.NoError(t, err)
+		assert.Equal(t, totalAmt, escrow.Amount)
+		assert.Equal(t, baseAmt, escrow.DriverPayoutAmount())
+		escrowRepo.AssertExpectations(t)
+	})
+
+	t.Run("SettleCancellationRefund en cancelación temprana retiene el service fee y devuelve base al pasajero", func(t *testing.T) {
+		escrowRepo := new(MockEscrowRepository)
+		gateway := new(MockPaymentGateway)
+		pricingRepo := new(MockPricingConfigRepository)
+		svc := services.NewSettlementService(escrowRepo, gateway, pricingRepo)
+
+		now := time.Now().UTC()
+		baseAmt := domain.MoneyFromCents(200000, domain.CurrencyARS)
+		feeAmt := domain.MoneyFromCents(30000, domain.CurrencyARS)
+		escrow, err := domain.NewEscrowTransactionWithBreakdown(escrowID, bookingID, tripID, passengerID, driverID, baseAmt, feeAmt, "pi_early_ret")
+		require.NoError(t, err)
+
+		cfg := domain.DefaultPlatformPricingConfig() // 100% fee retention
+
+		escrowRepo.On("FindByBookingID", ctx, bookingID).Return(escrow, nil)
+		pricingRepo.On("GetActive", ctx).Return(&cfg, nil)
+		gateway.On("ProcessRefund", ctx, "pi_early_ret", baseAmt, string(domain.RefundTypePassengerEarly)).Return(&ports.RefundResult{
+			GatewayRefundRef: "re_early_ret",
+			Amount:           baseAmt,
+			Status:           "succeeded",
+		}, nil)
+		escrowRepo.On("UpdateEscrowStatus", ctx, escrowID, domain.EscrowStatusRefundedPartial).Return(nil)
+		escrowRepo.On("RecordRefund", ctx, mock.MatchedBy(func(r *domain.RefundTransaction) bool {
+			return r.RefundType == domain.RefundTypePassengerEarly &&
+				r.PassengerRefundAmount == baseAmt &&
+				r.PlatformRetainedAmount == feeAmt &&
+				r.DriverCompensationAmount == domain.ZeroMoney(domain.CurrencyARS)
+		})).Return(nil)
+
+		refund, err := svc.SettleCancellationRefund(ctx, services.CancellationRefundInput{
+			BookingID:            bookingID,
+			DepartureTime:        now.Add(48 * time.Hour),
+			CancelledAt:          now,
+			IsDriverCancellation: false,
+		})
+		require.NoError(t, err)
+		require.NotNil(t, refund)
+		assert.Equal(t, baseAmt, refund.PassengerRefundAmount)
+		assert.Equal(t, feeAmt, refund.PlatformRetainedAmount)
+		assert.Equal(t, domain.EscrowStatusRefundedPartial, escrow.Status)
+		pricingRepo.AssertExpectations(t)
+		escrowRepo.AssertExpectations(t)
+	})
+
+	t.Run("SettleCancellationRefund no llama a ProcessRefund si el reembolso al pasajero es 0", func(t *testing.T) {
+		escrowRepo := new(MockEscrowRepository)
+		gateway := new(MockPaymentGateway)
+		pricingRepo := new(MockPricingConfigRepository)
+		svc := services.NewSettlementService(escrowRepo, gateway, pricingRepo)
+
+		now := time.Now().UTC()
+		baseAmt := domain.MoneyFromCents(200000, domain.CurrencyARS)
+		feeAmt := domain.MoneyFromCents(30000, domain.CurrencyARS)
+		escrow, err := domain.NewEscrowTransactionWithBreakdown(escrowID, bookingID, tripID, passengerID, driverID, baseAmt, feeAmt, "pi_zero_refund")
+		require.NoError(t, err)
+
+		noPassengerRefundCfg := domain.PlatformPricingConfig{
+			ID:                             domain.DefaultPlatformPricingConfigID,
+			Currency:                       domain.CurrencyARS,
+			PassengerServiceFeeBps:         1500,
+			PassengerFixedFee:              domain.ZeroMoney(domain.CurrencyARS),
+			EarlyCancelFeeRetentionBps:     10000,
+			LateCancelWindowHours:          24,
+			LateCancelFeeRetentionBps:      10000,
+			LateCancelPassengerRefundBps:   0,
+			LateCancelDriverCompBps:        8000,
+			LateCancelPlatformRetentionBps: 2000,
+			IsActive:                       true,
+		}
+
+		expectedDriverComp := domain.MoneyFromCents(160000, domain.CurrencyARS)
+		expectedPlatformRet := domain.MoneyFromCents(70000, domain.CurrencyARS) // 30000 fee + 40000 base retention
+
+		escrowRepo.On("FindByBookingID", ctx, bookingID).Return(escrow, nil)
+		pricingRepo.On("GetActive", ctx).Return(&noPassengerRefundCfg, nil)
+		escrowRepo.On("UpdateEscrowStatus", ctx, escrowID, domain.EscrowStatusRefundedPartial).Return(nil)
+		escrowRepo.On("RecordRefund", ctx, mock.MatchedBy(func(r *domain.RefundTransaction) bool {
+			return r.PassengerRefundAmount == domain.ZeroMoney(domain.CurrencyARS) &&
+				r.DriverCompensationAmount == expectedDriverComp &&
+				r.PlatformRetainedAmount == expectedPlatformRet
+		})).Return(nil)
+
+		refund, err := svc.SettleCancellationRefund(ctx, services.CancellationRefundInput{
+			BookingID:            bookingID,
+			DepartureTime:        now.Add(2 * time.Hour),
+			CancelledAt:          now,
+			IsDriverCancellation: false,
+		})
+		require.NoError(t, err)
+		require.NotNil(t, refund)
+		gateway.AssertNotCalled(t, "ProcessRefund", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+		escrowRepo.AssertExpectations(t)
+	})
 }
+

@@ -25,14 +25,15 @@ type BookingSettlementService interface {
 
 // BookingService implementa los casos de uso del ciclo de vida y consultas de reservas.
 type BookingService struct {
-	bookingRepo ports.BookingRepository
-	tripRepo    ports.TripRepository
-	userRepo    ports.UserRepository
-	vehicleRepo ports.VehicleRepository
-	settlement  BookingSettlementService
-	notifier    ports.Notifier
-	txManager   ports.TransactionManager
-	clock       func() time.Time
+	bookingRepo       ports.BookingRepository
+	tripRepo          ports.TripRepository
+	userRepo          ports.UserRepository
+	vehicleRepo       ports.VehicleRepository
+	settlement        BookingSettlementService
+	notifier          ports.Notifier
+	pricingConfigRepo ports.PricingConfigRepository
+	txManager         ports.TransactionManager
+	clock             func() time.Time
 }
 
 // NewBookingService instancia el servicio del ciclo de vida de reservas.
@@ -55,8 +56,11 @@ func NewBookingService(
 		clock:       time.Now,
 	}
 	for _, opt := range optionalDeps {
-		if tm, ok := opt.(ports.TransactionManager); ok {
-			svc.txManager = tm
+		switch dep := opt.(type) {
+		case ports.TransactionManager:
+			svc.txManager = dep
+		case ports.PricingConfigRepository:
+			svc.pricingConfigRepo = dep
 		}
 	}
 	return svc
@@ -170,6 +174,22 @@ func (s *BookingService) CreateBooking(ctx context.Context, input ports.CreateBo
 		}
 
 		if booking == nil {
+			pricingCfg := domain.DefaultPlatformPricingConfig()
+			if s.pricingConfigRepo != nil {
+				activeCfg, cfgErr := s.pricingConfigRepo.GetActive(ctx)
+				if cfgErr != nil {
+					return nil, cfgErr
+				}
+				if activeCfg != nil {
+					pricingCfg = *activeCfg
+				}
+			}
+
+			breakdown, err := pricingCfg.CalculateBookingBreakdown(trip.PricePerSeat, input.SeatsRequested)
+			if err != nil {
+				return nil, err
+			}
+
 			booking, err = domain.NewBooking(domain.BookingParams{
 				ID:            domain.NewUUIDv7(),
 				TripID:        trip.ID,
@@ -178,6 +198,7 @@ func (s *BookingService) CreateBooking(ctx context.Context, input ports.CreateBo
 				SeatsBooked:   input.SeatsRequested,
 				Currency:      trip.Currency,
 				UnitPrice:     trip.PricePerSeat,
+				PlatformFee:   breakdown.PlatformFee,
 				PickupStopID:  input.PickupStopID,
 				DropoffStopID: input.DropoffStopID,
 				TTL:           domain.DefaultBookingTTL,
@@ -302,6 +323,8 @@ func (s *BookingService) ConfirmBookingPayment(ctx context.Context, input ports.
 			PassengerID:       booking.PassengerID,
 			DriverID:          trip.DriverID,
 			Amount:            booking.TotalPrice,
+			BaseAmount:        booking.BaseAmount,
+			PlatformFee:       booking.PlatformFee,
 			PaymentGatewayRef: input.PaymentGatewayRef,
 		})
 		return err
@@ -480,6 +503,8 @@ func (s *BookingService) toBookingDTO(b *domain.Booking, tripSummary *ports.Book
 		SeatsBooked:        b.SeatsBooked,
 		Currency:           b.Currency,
 		UnitPrice:          b.UnitPrice,
+		BaseAmount:         b.BaseAmount,
+		PlatformFee:        b.PlatformFee,
 		TotalPrice:         b.TotalPrice,
 		Status:             b.Status,
 		PickupStopID:       b.PickupStopID,
@@ -505,6 +530,7 @@ func toRefundDTO(r *domain.RefundTransaction) *ports.RefundDTO {
 		BookingID:                r.BookingID,
 		PassengerRefundAmount:    r.PassengerRefundAmount,
 		DriverCompensationAmount: r.DriverCompensationAmount,
+		PlatformRetainedAmount:   r.PlatformRetainedAmount,
 		RefundType:               r.RefundType,
 		GatewayRefundRef:         r.GatewayRefundRef,
 		ProcessedAt:              formatTimeRFC3339(r.ProcessedAt),

@@ -119,6 +119,7 @@ var domainErrorTable = []ErrorSpec{
 	{Err: domain.ErrCurrencyMismatch, StatusCode: http.StatusBadRequest, Code: "CURRENCY_MISMATCH", Message: "Las monedas de los montos involucrados no coinciden"},
 	{Err: domain.ErrInvalidMoneyFormat, StatusCode: http.StatusBadRequest, Code: "INVALID_MONEY_FORMAT", Message: "Formato monetario inválido"},
 	{Err: domain.ErrInvalidStatus, StatusCode: http.StatusBadRequest, Code: "INVALID_STATUS", Message: "El valor de estado proporcionado no es válido"},
+	{Err: domain.ErrInvalidPricingConfig, StatusCode: http.StatusBadRequest, Code: "INVALID_PRICING_CONFIG", Message: "Los parámetros de tarifas, comisiones o reparto de cancelación son inválidos"},
 }
 
 // respondError resuelve cualquier error devuelto por la capa de servicio usando la tabla centralizada
@@ -186,4 +187,9 @@ func RespondUnauthorized(c *gin.Context, message, code string) {
 // RespondForbidden responde con un error 403 estructurado y seguro.
 func RespondForbidden(c *gin.Context, message, code string) {
 	respondJSONError(c, http.StatusForbidden, message, code)
+}
+
+// RespondInternalError responde con un error 500 estructurado y seguro sin exponer detalles internos.
+func RespondInternalError(c *gin.Context, message string) {
+	respondJSONError(c, http.StatusInternalServerError, message, "INTERNAL_SERVER_ERROR")
 }

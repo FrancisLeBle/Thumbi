@@ -19,6 +19,8 @@ type HoldEscrowInput struct {
 	PassengerID       uuid.UUID
 	DriverID          uuid.UUID
 	Amount            domain.Money
+	BaseAmount        domain.Money
+	PlatformFee       domain.Money
 	PaymentGatewayRef string
 }
 
@@ -40,10 +42,11 @@ type DisputeRefundInput struct {
 // la constitución/transición de fondos en Escrow y el registro contable de reembolsos
 // tanto para cancelaciones de reservas como para arbitraje de disputas.
 type SettlementService struct {
-	escrowRepo     ports.EscrowRepository
-	paymentGateway ports.PaymentGateway
-	txManager      ports.TransactionManager
-	clock          func() time.Time
+	escrowRepo        ports.EscrowRepository
+	paymentGateway    ports.PaymentGateway
+	pricingConfigRepo ports.PricingConfigRepository
+	txManager         ports.TransactionManager
+	clock             func() time.Time
 }
 
 // NewSettlementService instancia el servicio compartido de liquidación y custodia financiera.
@@ -58,8 +61,11 @@ func NewSettlementService(
 		clock:          time.Now,
 	}
 	for _, opt := range optionalDeps {
-		if tm, ok := opt.(ports.TransactionManager); ok {
-			svc.txManager = tm
+		switch dep := opt.(type) {
+		case ports.TransactionManager:
+			svc.txManager = dep
+		case ports.PricingConfigRepository:
+			svc.pricingConfigRepo = dep
 		}
 	}
 	return svc
@@ -106,15 +112,32 @@ func (s *SettlementService) HoldEscrow(ctx context.Context, input HoldEscrowInpu
 		return nil, domain.ErrEscrowNotFound
 	}
 
-	escrow, err := domain.NewEscrowTransaction(
-		domain.NewUUIDv7(),
-		input.BookingID,
-		input.TripID,
-		input.PassengerID,
-		input.DriverID,
-		input.Amount,
-		input.PaymentGatewayRef,
+	var (
+		escrow *domain.EscrowTransaction
+		err    error
 	)
+	if input.BaseAmount.IsPositive() || input.PlatformFee.IsPositive() {
+		escrow, err = domain.NewEscrowTransactionWithBreakdown(
+			domain.NewUUIDv7(),
+			input.BookingID,
+			input.TripID,
+			input.PassengerID,
+			input.DriverID,
+			input.BaseAmount,
+			input.PlatformFee,
+			input.PaymentGatewayRef,
+		)
+	} else {
+		escrow, err = domain.NewEscrowTransaction(
+			domain.NewUUIDv7(),
+			input.BookingID,
+			input.TripID,
+			input.PassengerID,
+			input.DriverID,
+			input.Amount,
+			input.PaymentGatewayRef,
+		)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +201,8 @@ func (s *SettlementService) RestoreEscrowHeld(ctx context.Context, escrow *domai
 	return s.escrowRepo.UpdateEscrowStatus(ctx, escrow.ID, escrow.Status)
 }
 
-// SettleCancellationRefund calcula y liquida el reembolso de Escrow aplicable a una reserva cancelada.
+// SettleCancellationRefund calcula y liquida el reembolso de Escrow aplicando la política parametrizada
+// de retención operativa en cancelaciones tempranas, tardías y por parte del conductor.
 // Si la reserva no tiene Escrow asociado (por ejemplo, cancelada en PENDING_PAYMENT), retorna (nil, nil).
 func (s *SettlementService) SettleCancellationRefund(ctx context.Context, input CancellationRefundInput) (*domain.RefundTransaction, error) {
 	if input.BookingID == uuid.Nil || s.escrowRepo == nil {
@@ -200,14 +224,43 @@ func (s *SettlementService) SettleCancellationRefund(ctx context.Context, input 
 		cancelledAt = cancelledAt.UTC()
 	}
 
-	pRefund, dComp, refundType := domain.CalculateCancellationRefund(
-		escrow.Amount,
+	policy := domain.DefaultPlatformPricingConfig()
+	if s.pricingConfigRepo != nil {
+		activeCfg, cfgErr := s.pricingConfigRepo.GetActive(ctx)
+		if cfgErr != nil {
+			return nil, cfgErr
+		}
+		if activeCfg != nil {
+			policy = *activeCfg
+		}
+	}
+
+	baseAmount := escrow.BaseAmount
+	platformFee := escrow.PlatformFee
+	if !baseAmount.IsPositive() && !platformFee.IsPositive() {
+		baseAmount = escrow.Amount
+		platformFee = domain.ZeroMoney(escrow.Currency)
+	}
+
+	breakdown := domain.CalculateCancellationRefundWithPolicy(
+		baseAmount,
+		platformFee,
 		input.DepartureTime,
 		cancelledAt,
 		input.IsDriverCancellation,
+		policy,
 	)
 
-	return s.settleRefund(ctx, escrow, pRefund, dComp, refundType, refundType.String(), cancelledAt)
+	return s.settleRefund(
+		ctx,
+		escrow,
+		breakdown.PassengerRefund,
+		breakdown.DriverCompensation,
+		breakdown.PlatformRetained,
+		breakdown.RefundType,
+		breakdown.RefundType.String(),
+		cancelledAt,
+	)
 }
 
 // SettleDisputeRefund ejecuta el reembolso total ordenado en una disputa y persiste atómicamente
@@ -223,13 +276,15 @@ func (s *SettlementService) SettleDisputeRefund(
 
 	now := s.clock().UTC()
 	refundAmount := input.Escrow.Amount
-	zeroComp := domain.ZeroMoney(refundAmount.EffectiveCurrency())
+	cur := refundAmount.EffectiveCurrency()
+	zeroAmount := domain.ZeroMoney(cur)
 
 	return s.settleRefund(
 		ctx,
 		input.Escrow,
 		refundAmount,
-		zeroComp,
+		zeroAmount,
+		zeroAmount,
 		domain.RefundTypeAdminDispute,
 		input.Reason,
 		now,
@@ -242,6 +297,7 @@ func (s *SettlementService) settleRefund(
 	escrow *domain.EscrowTransaction,
 	passengerRefund domain.Money,
 	driverCompensation domain.Money,
+	platformRetained domain.Money,
 	refundType domain.RefundType,
 	reason string,
 	settledAt time.Time,
@@ -271,7 +327,7 @@ func (s *SettlementService) settleRefund(
 		}
 	}
 
-	if refundType == domain.RefundTypePassengerLate || driverCompensation.IsPositive() {
+	if refundType == domain.RefundTypePassengerLate || driverCompensation.IsPositive() || platformRetained.IsPositive() {
 		if err := escrow.RefundPartial(settledAt); err != nil {
 			return nil, err
 		}
@@ -281,12 +337,13 @@ func (s *SettlementService) settleRefund(
 		}
 	}
 
-	refundTx, err := domain.NewRefundTransaction(
+	refundTx, err := domain.NewRefundTransactionWithRetention(
 		domain.NewUUIDv7(),
 		escrow.ID,
 		escrow.BookingID,
 		passengerRefund,
 		driverCompensation,
+		platformRetained,
 		refundType,
 		gatewayRefundRef,
 	)

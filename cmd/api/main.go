@@ -85,6 +85,7 @@ func main() {
 	disputeRepo := postgres.NewDisputeRepository(dbPool)
 	identityRepo := postgres.NewIdentityRepository(dbPool)
 	sessionRepo := postgres.NewSessionRepository(dbPool)
+	pricingConfigRepo := postgres.NewPricingConfigRepository(dbPool)
 
 	// 3.2 Proveedores Externos (OAuth, Biometría, Notificaciones, Ruteo OSRM, Pasarela de Pagos)
 	googleProvider := oauth.NewGoogleOAuthProviderWithEnv(cfg.GoogleClientID, cfg.Environment)
@@ -128,6 +129,7 @@ func main() {
 		escrowRepo,
 		paymentGateway,
 		unitOfWork,
+		pricingConfigRepo,
 	)
 	bookingService := services.NewBookingService(
 		bookingRepo,
@@ -137,6 +139,7 @@ func main() {
 		settlementService,
 		notifierService,
 		unitOfWork,
+		pricingConfigRepo,
 	)
 	contactLinkService := services.NewContactLinkService(
 		bookingRepo,
@@ -161,6 +164,10 @@ func main() {
 		settlementService,
 		unitOfWork,
 	)
+	platformPricingService := services.NewPlatformPricingService(
+		pricingConfigRepo,
+		tripRepo,
+	)
 
 	// 3.5 Handlers y Middleware HTTP
 	authHandler := adapterHttp.NewAuthHandler(authService)
@@ -170,6 +177,7 @@ func main() {
 	bookingHandler := adapterHttp.NewBookingHandler(bookingService, contactLinkService)
 	reviewHandler := adapterHttp.NewReviewHandler(reputationService)
 	disputeHandler := adapterHttp.NewDisputeHandler(disputeService)
+	pricingHandler := adapterHttp.NewPricingHandler(platformPricingService)
 	healthHandler := adapterHttp.NewHealthHandler(dbPool)
 	authMiddleware := middleware.AuthMiddleware(authService)
 
@@ -209,6 +217,7 @@ func main() {
 		BookingHandler: bookingHandler,
 		ReviewHandler:  reviewHandler,
 		DisputeHandler: disputeHandler,
+		PricingHandler: pricingHandler,
 		HealthHandler:  healthHandler,
 		AuthMiddleware: authMiddleware,
 		RateLimiter:    rateLimiter,
