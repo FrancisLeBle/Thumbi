@@ -115,7 +115,7 @@ jobs:
           echo "ENV=development" >> "$GITHUB_ENV"
           echo "DATABASE_URL=postgres://${PG_USER}:${PG_PASS}@localhost:5432/${PG_DB}?sslmode=disable" >> "$GITHUB_ENV"
           echo "WEBHOOK_SECRET=${WEBHOOK_SEC}" >> "$GITHUB_ENV"
-          echo "REDIS_ADDR=localhost:6379" >> "$GITHUB_ENV"
+          echo "RATE_LIMIT_STORE=memory" >> "$GITHUB_ENV"
           echo "SESSION_TTL=20m" >> "$GITHUB_ENV"
         env:
           CI_POSTGRES_PASSWORD: ${{ secrets.CI_POSTGRES_PASSWORD }}

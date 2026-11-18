@@ -108,9 +108,20 @@ func (r *PostgresSessionRepository) Delete(ctx context.Context, sessionID uuid.U
 	return nil
 }
 
-// PurgeExpired elimina en PostgreSQL las sesiones cuyo TTL ya expiró.
+// PurgeExpired elimina en PostgreSQL lotes acotados de sesiones expiradas mediante FOR UPDATE SKIP LOCKED
+// para evitar contención de bloqueos entre múltiples réplicas ejecutando limpieza concurrente.
 func (r *PostgresSessionRepository) PurgeExpired(ctx context.Context) (int64, error) {
-	query := `DELETE FROM sessions WHERE expires_at <= NOW()`
+	query := `
+		DELETE FROM sessions
+		WHERE id IN (
+			SELECT id
+			FROM sessions
+			WHERE expires_at <= NOW()
+			ORDER BY expires_at ASC
+			LIMIT 1000
+			FOR UPDATE SKIP LOCKED
+		)
+	`
 	tag, err := executor(ctx, r.db).Exec(ctx, query)
 	if err != nil {
 		return 0, fmt.Errorf("error al depurar sesiones expiradas: %w", err)

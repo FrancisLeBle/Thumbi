@@ -14,7 +14,7 @@ func setValidProdEnv(t *testing.T) {
 	t.Setenv("ENV", "production")
 	t.Setenv("DATABASE_URL", "postgres://produser:StrongRdsSecret#928@db.internal:5432/thumbi?sslmode=require")
 	t.Setenv("WEBHOOK_SECRET", "super-secure-webhook-secret-key-with-at-least-32-chars")
-	t.Setenv("REDIS_ADDR", "redis.internal:6379")
+	t.Setenv("RATE_LIMIT_STORE", "postgres")
 	t.Setenv("GOOGLE_CLIENT_ID", "1234567890-abc.apps.googleusercontent.com")
 	t.Setenv("APPLE_CLIENT_ID", "app.thumbi.carpooling.client")
 	t.Setenv("OSRM_BASE_URL", DefaultOSRMBaseURL)
@@ -28,9 +28,7 @@ func clearConfigEnv(t *testing.T) {
 		"DATABASE_URL_FILE",
 		"WEBHOOK_SECRET",
 		"WEBHOOK_SECRET_FILE",
-		"REDIS_ADDR",
-		"REDIS_URL",
-		"REDIS_URL_FILE",
+		"RATE_LIMIT_STORE",
 		"GOOGLE_CLIENT_ID",
 		"APPLE_CLIENT_ID",
 		"OSRM_BASE_URL",
@@ -90,15 +88,14 @@ func TestConfig_ProductionValidation_FailsOnMissingSecretsOrDeps(t *testing.T) {
 		assert.Contains(t, err.Error(), "32")
 	})
 
-	t.Run("falla sin REDIS_ADDR ni REDIS_URL", func(t *testing.T) {
+	t.Run("falla con RATE_LIMIT_STORE inválido", func(t *testing.T) {
 		setValidProdEnv(t)
-		_ = os.Unsetenv("REDIS_ADDR")
-		_ = os.Unsetenv("REDIS_URL")
+		t.Setenv("RATE_LIMIT_STORE", "redis")
 
 		cfg, err := LoadConfigWithEnvFile("")
 		assert.Error(t, err)
 		assert.Nil(t, cfg)
-		assert.Contains(t, err.Error(), "REDIS")
+		assert.Contains(t, err.Error(), "RATE_LIMIT_STORE")
 	})
 
 	t.Run("falla sin GOOGLE_CLIENT_ID o APPLE_CLIENT_ID", func(t *testing.T) {
@@ -172,8 +169,7 @@ func TestConfig_DevelopmentAndLocalMode_RequireDotEnv_NoHardcodedFallbacks(t *te
 
 			content := []byte("ENV=" + envName + "\n" +
 				"DATABASE_URL=postgres://devuser:localpass@localhost:5432/thumbi_dev?sslmode=disable\n" +
-				"WEBHOOK_SECRET=local-dev-webhook-secret-from-dotenv-file\n" +
-				"REDIS_ADDR=localhost:6379\n")
+				"WEBHOOK_SECRET=local-dev-webhook-secret-from-dotenv-file\n")
 			require.NoError(t, os.WriteFile(envPath, content, 0600))
 
 			cfg, err := LoadConfigWithEnvFile(envPath)
@@ -181,6 +177,7 @@ func TestConfig_DevelopmentAndLocalMode_RequireDotEnv_NoHardcodedFallbacks(t *te
 			assert.NotNil(t, cfg)
 			assert.True(t, cfg.IsLocalOrDev())
 			assert.Equal(t, envName, cfg.Environment)
+			assert.Equal(t, "memory", cfg.RateLimitStore)
 			assert.Equal(t, int64(1200), int64(cfg.SessionTTL.Seconds()))
 			assert.Equal(t, DefaultOSRMBaseURL, cfg.OSRMBaseURL)
 		}
@@ -199,7 +196,7 @@ func TestConfig_SecretFilesInjection(t *testing.T) {
 	t.Setenv("ENV", "production")
 	t.Setenv("DATABASE_URL_FILE", dbFile)
 	t.Setenv("WEBHOOK_SECRET_FILE", webhookFile)
-	t.Setenv("REDIS_URL", "redis://redis.internal:6379")
+	t.Setenv("RATE_LIMIT_STORE", "postgres")
 	t.Setenv("GOOGLE_CLIENT_ID", "1234567890-abc.apps.googleusercontent.com")
 	t.Setenv("APPLE_CLIENT_ID", "app.thumbi.carpooling.client")
 	t.Setenv("OSRM_BASE_URL", DefaultOSRMBaseURL)
@@ -207,7 +204,7 @@ func TestConfig_SecretFilesInjection(t *testing.T) {
 	cfg, err := LoadConfigWithEnvFile("")
 	require.NoError(t, err)
 	assert.Equal(t, "file-mounted-webhook-secret-at-least-32-chars", cfg.WebhookSecret)
-	assert.Equal(t, "redis://redis.internal:6379", cfg.RedisAddr)
+	assert.Equal(t, "postgres", cfg.RateLimitStore)
 }
 
 func TestConfig_LoadDotEnvFile(t *testing.T) {

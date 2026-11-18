@@ -28,9 +28,8 @@ type Config struct {
 	DBMaxConns  int32  `env:"DB_MAX_CONNS" envDefault:"20"`
 	DBMinConns  int32  `env:"DB_MIN_CONNS" envDefault:"5"`
 
-	// Redis para Rate Limiting y Caché Distribuido (configurado explícitamente en .env / entorno)
-	RedisAddr string `env:"REDIS_ADDR"`
-	RedisURL  string `env:"REDIS_URL"`
+	// Backend de Rate Limiting sin Redis ("memory" en-memoria por defecto, o "postgres" multi-réplica)
+	RateLimitStore string `env:"RATE_LIMIT_STORE" envDefault:"memory"`
 
 	// Sesiones opacas (TTL estricto de 20 minutos)
 	SessionTTL time.Duration `env:"SESSION_TTL" envDefault:"20m"` // RF-04: exactamente 20 minutos
@@ -74,8 +73,6 @@ func isLocalOrDevEnv(envName string) bool {
 var secretFileMappings = []string{
 	"DATABASE_URL",
 	"WEBHOOK_SECRET",
-	"REDIS_URL",
-	"REDIS_ADDR",
 	"GOOGLE_CLIENT_ID",
 	"APPLE_CLIENT_ID",
 }
@@ -128,7 +125,7 @@ func MustLoadConfig() *Config {
 // En ningún entorno existen secretos o cadenas de conexión de respaldo hardcodeadas:
 // en 'local'/'development' deben proveerse explícitamente vía .env o variables de entorno;
 // en 'production' (o cualquier entorno distinto a 'local'/'development') se aplican controles
-// adicionales de entropía, TLS, Redis y Client IDs de OAuth.
+// adicionales de entropía, TLS, OSRM HTTPS y Client IDs de OAuth.
 func (c *Config) Validate() error {
 	envName := strings.TrimSpace(c.Environment)
 	if envName == "" {
@@ -167,16 +164,15 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	// 3. Redis (Rate Limiting y caché): obligatorio fuera de local/development (en local/dev puede venir de .env)
-	if strings.TrimSpace(c.RedisAddr) == "" && strings.TrimSpace(c.RedisURL) == "" {
-		if !isLocalOrDev {
-			return fmt.Errorf("REDIS_ADDR o REDIS_URL es obligatorio en el entorno %q", envName)
-		}
-		return errors.New("REDIS_ADDR o REDIS_URL es obligatorio; defínalo en su archivo .env local")
+	// 3. Backend de Rate Limiting sin Redis ("memory" o "postgres")
+	rateLimitStore := strings.ToLower(strings.TrimSpace(c.RateLimitStore))
+	if rateLimitStore == "" {
+		rateLimitStore = "memory"
 	}
-	if strings.TrimSpace(c.RedisAddr) == "" && strings.TrimSpace(c.RedisURL) != "" {
-		c.RedisAddr = c.RedisURL
+	if rateLimitStore != "memory" && rateLimitStore != "postgres" {
+		return fmt.Errorf("RATE_LIMIT_STORE inválido (%q): valores permitidos son 'memory' o 'postgres'", c.RateLimitStore)
 	}
+	c.RateLimitStore = rateLimitStore
 
 	// 4. Proveedores OAuth: obligatorios fuera de local/development para impedir omitir validación de audiencia (aud)
 	if !isLocalOrDev {

@@ -18,7 +18,7 @@ import (
 	"github.com/thumbi/backend/internal/adapters/external/notifier"
 	"github.com/thumbi/backend/internal/adapters/external/oauth"
 	"github.com/thumbi/backend/internal/adapters/external/payment"
-	"github.com/thumbi/backend/internal/adapters/external/redis"
+	"github.com/thumbi/backend/internal/adapters/external/ratelimit"
 	"github.com/thumbi/backend/internal/adapters/external/routing"
 	adapterHttp "github.com/thumbi/backend/internal/adapters/handlers/http"
 	"github.com/thumbi/backend/internal/adapters/handlers/http/middleware"
@@ -173,8 +173,20 @@ func main() {
 	healthHandler := adapterHttp.NewHealthHandler(dbPool)
 	authMiddleware := middleware.AuthMiddleware(authService)
 
-	// 3.6 Router de Gin con Rate Limiting respaldado por Redis y CORS restringido a orígenes de confianza
-	rateLimiter := redis.NewRateLimiter(cfg.RedisAddr)
+	// 3.6 Router de Gin con Rate Limiting en memoria o PostgreSQL (cero dependencia de Redis)
+	var rateLimiter ports.RateLimiter
+	var startRateLimitCleanup func(context.Context)
+	if cfg.RateLimitStore == "postgres" {
+		pgLimiter := ratelimit.NewPostgresRateLimiter(dbPool)
+		rateLimiter = pgLimiter
+		startRateLimitCleanup = func(c context.Context) { pgLimiter.StartCleanup(c, 5*time.Minute) }
+		log.Println("[INFO] Rate Limiter inicializado con respaldo PostgreSQL (tabla UNLOGGED rate_limits).")
+	} else {
+		memLimiter := ratelimit.NewMemoryRateLimiter()
+		rateLimiter = memLimiter
+		startRateLimitCleanup = func(c context.Context) { memLimiter.StartCleanup(c, 1*time.Minute) }
+		log.Println("[INFO] Rate Limiter inicializado en memoria local thread-safe (costo cero).")
+	}
 
 	allowedOrigins := []string{}
 	if cfg.AppURL != "" {
@@ -207,13 +219,14 @@ func main() {
 		log.Fatalf("[FATAL] Error inicializando router HTTP: %v", err)
 	}
 
-	// 3.7 Workers en segundo plano: expiración de reservas (15 min TTL) y limpieza de sesiones expiradas
+	// 3.7 Workers en segundo plano: expiración de reservas (15 min TTL), limpieza de sesiones y rate limits expirados
 	workerCtx, cancelWorker := context.WithCancel(context.Background())
 	defer cancelWorker()
 
 	expirationWorker := worker.NewExpirationWorker(bookingExpirationService, 1*time.Minute)
 	go expirationWorker.Start(workerCtx)
 	go sessionRepo.StartCleanup(workerCtx, 5*time.Minute)
+	go startRateLimitCleanup(workerCtx)
 
 	// 4. Configurar Servidor HTTP
 	httpServer := &http.Server{

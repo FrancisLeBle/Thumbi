@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/thumbi/backend/internal/adapters/external/ratelimit"
 	"github.com/thumbi/backend/internal/adapters/handlers/http/middleware"
 	"github.com/thumbi/backend/internal/core/domain"
 )
@@ -166,9 +167,28 @@ func TestRateLimitByUser(t *testing.T) {
 	})
 }
 
-func TestRedisRateLimiter_Fallback(t *testing.T) {
-	// Probar que el RateLimiter de Redis funciona fluidamente con su fallback en memoria si Redis no está activo
-	fromRedis := middleware.RateLimitByIP(nil, 5, time.Minute, "fallback")
-	require.NotNil(t, fromRedis)
-	assert.NotEmpty(t, strconv.Itoa(5))
+func TestInMemoryRateLimiter_Integration(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	limiter := ratelimit.NewMemoryRateLimiter()
+	mw := middleware.RateLimitByIP(limiter, 2, time.Minute, "in_memory")
+	require.NotNil(t, mw)
+
+	r := gin.New()
+	r.GET("/ping", mw, func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	})
+
+	for i := 0; i < 2; i++ {
+		req, _ := http.NewRequest(http.MethodGet, "/ping", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+	}
+
+	req3, _ := http.NewRequest(http.MethodGet, "/ping", nil)
+	w3 := httptest.NewRecorder()
+	r.ServeHTTP(w3, req3)
+	assert.Equal(t, http.StatusTooManyRequests, w3.Code)
+	assert.NotEmpty(t, strconv.Itoa(w3.Code))
 }

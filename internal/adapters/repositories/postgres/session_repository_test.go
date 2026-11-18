@@ -180,12 +180,14 @@ func TestPostgresSessionRepository_DeleteAndPurge(t *testing.T) {
 		mockDB.AssertExpectations(t)
 	})
 
-	t.Run("PurgeExpired elimina sesiones expiradas", func(t *testing.T) {
+	t.Run("PurgeExpired elimina sesiones expiradas en lotes usando FOR UPDATE SKIP LOCKED", func(t *testing.T) {
 		mockDB := new(MockDBExecutor)
 		repo := postgres.NewSessionRepository(mockDB)
 
 		mockDB.On("Exec", ctx, mock.MatchedBy(func(sql string) bool {
-			return strings.Contains(sql, "DELETE FROM sessions") && strings.Contains(sql, "expires_at <= NOW()")
+			return strings.Contains(sql, "DELETE FROM sessions") &&
+				strings.Contains(sql, "expires_at <= NOW()") &&
+				strings.Contains(sql, "FOR UPDATE SKIP LOCKED")
 		}), mock.Anything).Return(pgconn.NewCommandTag("DELETE 5"), nil)
 
 		deleted, err := repo.PurgeExpired(ctx)
