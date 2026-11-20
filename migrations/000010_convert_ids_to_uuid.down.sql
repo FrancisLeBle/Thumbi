@@ -28,6 +28,9 @@ BEGIN
     END LOOP;
 END$$;
 
+-- Eliminar temporalmente el trigger dependiente de reviews.reviewee_id antes de revertir su tipo
+DROP TRIGGER IF EXISTS trg_reviews_update_reputation ON reviews;
+
 ALTER TABLE disputes
     ALTER COLUMN id TYPE VARCHAR(64) USING id::text,
     ALTER COLUMN escrow_transaction_id TYPE VARCHAR(64) USING escrow_transaction_id::text,
@@ -202,3 +205,8 @@ BEGIN
     RETURN NULL;
 END;
 $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_reviews_update_reputation
+AFTER INSERT OR UPDATE OF rating, reviewee_id OR DELETE ON reviews
+FOR EACH ROW
+EXECUTE FUNCTION fn_update_user_reputation();

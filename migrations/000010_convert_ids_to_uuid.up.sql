@@ -30,6 +30,9 @@ BEGIN
     END LOOP;
 END$$;
 
+-- 1b. Eliminar temporalmente el trigger dependiente de reviews.reviewee_id antes de cambiar su tipo
+DROP TRIGGER IF EXISTS trg_reviews_update_reputation ON reviews;
+
 -- 2. Convertir columnas PK y FK a UUID nativo en las 12 tablas
 ALTER TABLE users
     ALTER COLUMN id TYPE UUID USING id::uuid;
@@ -207,3 +210,8 @@ BEGIN
     RETURN NULL;
 END;
 $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_reviews_update_reputation
+AFTER INSERT OR UPDATE OF rating, reviewee_id OR DELETE ON reviews
+FOR EACH ROW
+EXECUTE FUNCTION fn_update_user_reputation();
