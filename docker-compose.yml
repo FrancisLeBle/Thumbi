@@ -56,7 +56,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-thumbi} -d ${POSTGRES_DB:-thumbi_carpooling}"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U ${POSTGRES_USER:-thumbi} -d ${POSTGRES_DB:-thumbi_carpooling}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -83,7 +83,7 @@ services:
         condition: service_healthy
     networks:
       - thumbi-network
-    restart: "no"
+    restart: "on-failure:5"
 
 volumes:
   postgres_data:
