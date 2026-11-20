@@ -28,6 +28,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
       interval: 10s
@@ -53,7 +55,6 @@ services:
       - POSTGRES_DB=${POSTGRES_DB:-thumbi_carpooling}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-thumbi} -d ${POSTGRES_DB:-thumbi_carpooling}"]
       interval: 5s
@@ -62,6 +63,27 @@ services:
     networks:
       - thumbi-network
     restart: unless-stopped
+
+  # Ejecutor explícito de migraciones DDL (.up.sql) antes de levantar la API
+  migrate:
+    image: migrate/migrate:v4.17.1
+    container_name: thumbi-migrate
+    env_file:
+      - path: .env
+        required: true
+    volumes:
+      - ./migrations:/migrations:ro
+    command:
+      - -path=/migrations
+      - -database
+      - postgres://${POSTGRES_USER:-thumbi}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-thumbi_carpooling}?sslmode=disable
+      - up
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - thumbi-network
+    restart: "no"
 
 volumes:
   postgres_data:
